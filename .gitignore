@@ -1,0 +1,69 @@
+# =========================
+# Node / Backend
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# PM2 Logs
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Dependency directories
+jspm_packages/
+
+# =========================
+# Frontend (React/Vite)
+# =========================
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+
+# Editor settings
+.vscode/
+.idea/
+
+# =========================
+# SQL Server
+# =========================
+# Local DB backups or exports
+*.bak
+*.bak*
+*.trn
+*.mdf
+*.ldf
+
+# SQL scripts you don't want tracked
+temp_sql/
+*.sql.tmp
+
+# =========================
+# OS / System Files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Build outputs
+# =========================
+dist/
+build/
+
+# =========================
+# Others
+# =========================
+*.local
+*.cache/
+.cache/
