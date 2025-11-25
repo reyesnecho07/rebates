@@ -1,0 +1,68 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RebateWebDev Project</title>
+    <link href="./dist/output.css" rel="stylesheet">
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <nav class="bg-white shadow-lg">
+        <div class="container mx-auto px-4">
+            <div class="flex justify-between items-center py-4">
+                <div class="text-2xl font-bold text-blue-600">RebateWebDev</div>
+                <div class="hidden md:flex space-x-6">
+                    <a href="#" class="text-gray-700 hover:text-blue-600">Home</a>
+                    <a href="#" class="text-gray-700 hover:text-blue-600">Features</a>
+                    <a href="#" class="text-gray-700 hover:text-blue-600">About</a>
+                    <a href="#" class="text-gray-700 hover:text-blue-600">Contact</a>
+                </div>
+                <button class="btn-primary">Get Started</button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container mx-auto px-4 py-8">
+        <section class="text-center py-16">
+            <h1 class="text-5xl font-bold text-gray-800 mb-6">Welcome to RebateWebDev</h1>
+            <p class="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">Your Tailwind CSS project is ready for development.</p>
+            <div class="space-x-4">
+                <button class="btn-primary">Primary Button</button>
+                <button class="btn-secondary">Secondary Button</button>
+            </div>
+        </section>
+
+        <section class="grid md:grid-cols-3 gap-8 py-12">
+            <div class="card text-center">
+                <h3 class="text-xl font-semibold mb-4">Easy Conversion</h3>
+                <p class="text-gray-600">Convert your existing CSS to Tailwind</p>
+            </div>
+            <div class="card text-center">
+                <h3 class="text-xl font-semibold mb-4">Responsive Design</h3>
+                <p class="text-gray-600">Built-in responsive utilities</p>
+            </div>
+            <div class="card text-center">
+                <h3 class="text-xl font-semibold mb-4">Fast Development</h3>
+                <p class="text-gray-600">Rapid prototyping approach</p>
+            </div>
+        </section>
+
+        <section class="max-w-md mx-auto card">
+            <h2 class="text-2xl font-bold mb-6">Sample Form</h2>
+            <form>
+                <div class="mb-4">
+                    <label class="block text-gray-700 mb-2">Email</label>
+                    <input type="email" class="input-field" placeholder="Enter your email">
+                </div>
+                <div class="mb-4">
+                    <label class="block text-gray-700 mb-2">Password</label>
+                    <input type="password" class="input-field" placeholder="Enter your password">
+                </div>
+                <button type="submit" class="btn-primary w-full">Sign In</button>
+            </form>
+        </section>
+    </main>
+
+    <script src="./src/js/main.js"></script>
+</body>
+</html>
