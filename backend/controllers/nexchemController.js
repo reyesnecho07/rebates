@@ -27,8 +27,7 @@ const getItems = async (req, res) => {
         .query(`
           SELECT 
             ItemCode,
-            ItemName,
-            FrgnName
+            ItemName
           FROM OITM
           ORDER BY ItemCode
         `);
@@ -81,12 +80,19 @@ const getInvoices = async (req, res) => {
             T1.ItemCode,
             T1.Dscription,
             T1.Quantity,
-            T1.LineTotal
+            T1.LineTotal,
+            T1.PriceAfVAt
           FROM
             OINV T0
             INNER JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
+            LEFT JOIN OITM T2 ON T1.ItemCode = T2.ItemCode
           WHERE
             T1.TreeType <> 'S'
+            AND T0.DocType = 'I'
+            AND T2.InvntItem = 'Y'
+            AND T1.Dscription NOT LIKE '%Free%'
+            AND T1.Dscription NOT LIKE '%Discount%'
+            AND T1.Dscription NOT LIKE '%fee%'
         `);
       console.log(`🟦 NEXCHEM Invoices: ${result.recordset.length} records`);
       return result.recordset;
@@ -97,6 +103,8 @@ const getInvoices = async (req, res) => {
     res.status(500).json({ error: "Failed to fetch NEXCHEM invoices", details: err.message });
   }
 };
+
+
 
 export default {
   getSalesEmployees,

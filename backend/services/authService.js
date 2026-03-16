@@ -1,65 +1,76 @@
-import sql from 'mssql';
-import { handleDatabaseOperation } from './databaseService.js';
+// controllers/authController.js - FIXED VERSION
+import { authenticateUser, changePassword } from '../services/userService.js';
 
-export const authenticateUser = async (username, password, database) => {
-  if (!username || !password || !database) {
-    throw new Error("Username, password, and database are required");
-  }
+export const login = async (req, res) => {
+  try {
+    const { userCode, password } = req.body;
 
-  // Fixed password validation
-  if (password !== "abc123") {
-    throw new Error("Invalid password. Please use 'abc123'");
-  }
+    console.log('🔐 Login request received for user:', userCode);
 
-  const user = await handleDatabaseOperation(database, async (pool) => {
-    const result = await pool.request()
-      .input('username', sql.VarChar, username)
-      .query(`
-        SELECT USER_CODE, U_NAME 
-        FROM OUSR 
-        WHERE USER_CODE = @username
-      `);
-
-    if (result.recordset.length === 0) {
-      throw new Error("User not found in selected database");
+    if (!userCode || !password) {
+      return res.status(400).json({
+        success: false,
+        error: "Username and password are required"
+      });
     }
 
-    return result.recordset[0];
-  });
+    // Authenticate user using UsersDB_v1.1 ONLY
+    const authResult = await authenticateUser(userCode, password);
 
-  return user;
+    console.log('✅ Authentication successful');
+    console.log('📊 User details:', {
+      userCode: authResult.user.User_ID,
+      displayName: authResult.user.DisplayName,
+      oneLogPwd: authResult.user.OneLogPwd,
+      isFirstLogin: authResult.isFirstLogin
+    });
+
+    return res.status(200).json({
+      success: true,
+      user: authResult.user,
+      isFirstLogin: authResult.isFirstLogin,
+      message: "Authentication successful"
+    });
+
+  } catch (error) {
+    console.error('🔴 Login error:', error.message);
+    return res.status(401).json({
+      success: false,
+      error: error.message || "Authentication failed"
+    });
+  }
 };
 
-export const simpleAuthenticate = async (userCode, database) => {
-  if (!userCode || !database) {
-    throw new Error("User code and database are required");
-  }
+export const changeUserPassword = async (req, res) => {
+  try {
+    const { userCode, currentPassword, newPassword } = req.body;
 
-  const user = await handleDatabaseOperation(database, async (pool) => {
-    const result = await pool.request()
-      .input('userCode', sql.VarChar, userCode)
-      .query(`
-        SELECT USER_CODE, U_NAME 
-        FROM OUSR 
-        WHERE USER_CODE = @userCode
-      `);
+    console.log('🔑 Password change request for user:', userCode);
 
-    if (result.recordset.length === 0) {
-      throw new Error("User not found in selected database");
+    if (!userCode || !currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        error: "All fields are required"
+      });
     }
 
-    return result.recordset[0];
-  });
+    // Change password in UsersDB_v1.1
+    const result = await changePassword(userCode, currentPassword, newPassword);
 
-  return user;
-};
+    console.log('✅ Password changed successfully');
+    console.log('📊 Updated user:', result.user);
 
-export const formatUserName = (uName) => {
-  let fullName = uName || "";
-  let parts = fullName.trim().split(" ");
-  if (parts.length > 1) {
-    parts.shift();
-    fullName = parts.join(" ");
+    return res.status(200).json({
+      success: true,
+      user: result.user,
+      message: "Password changed successfully"
+    });
+
+  } catch (error) {
+    console.error('🔴 Password change error:', error.message);
+    return res.status(400).json({
+      success: false,
+      error: error.message || "Password change failed"
+    });
   }
-  return fullName;
 };

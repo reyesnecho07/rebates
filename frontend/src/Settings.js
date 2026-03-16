@@ -1,777 +1,684 @@
 import React, { useState, useEffect } from "react";
 import {
-  Home,
-  FileText,
-  BarChart2,
-  Users,
-  Package,
   Settings as SettingsIcon,
-  User,
-  IdCardLanyard,
-  LogOut,
-  ChevronLeft,
-  ChevronRight,
-  Save,
-  Bell,
-  Shield,
-  Palette,
-  Eye,
-  EyeOff,
-  Check,
-  Mail,
-  Phone,
-  Building,
-  Briefcase,
-  Globe,
-  Calendar,
+  Database,
+  Sun,
+  Moon,
   Monitor,
-  Lock,
+  Upload,
+  Camera,
+  X,
+  Loader2,
+  CheckCircle
 } from "lucide-react";
-import { Link } from "react-router-dom";
-import Logo from "./Logo";
+import { useLocation } from "react-router-dom";
+import userpreference from "./assets/userpreference.png";
+import Sidebar from "./components/Sidebar";
+import Header from './components/Header';
+import { useTheme } from './context/ThemeContext';
+import axios from 'axios';
 
 function Settings() {
-  // Layout state
+  const location = useLocation();
+  const { theme, updateTheme } = useTheme();
+  
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+  const [showVanDropdown, setShowVanDropdown] = useState(false);
+  const [showNexchemDropdown, setShowNexchemDropdown] = useState(false);
+  const [showVcpDropdown, setShowVcpDropdown] = useState(false);
+  const [profileImage, setProfileImage] = useState(null);
+  const [userName, setUserName] = useState("");
+  const [userCode, setUserCode] = useState("");
+  const [userId, setUserId] = useState("");
+  const [actualUserId, setActualUserId] = useState("");
+  const [initials, setInitials] = useState("");
   const [collapsed, setCollapsed] = useState(false);
-  const [activeNav, setActiveNav] = useState("/settings");
   
-  // Settings state
-  const [activeSettingsTab, setActiveSettingsTab] = useState("profile");
-  const [saveStatus, setSaveStatus] = useState("");
-  
-  // Profile Settings
-  const [profileData, setProfileData] = useState({
-    firstName: "",
-    lastName: "",
-    email: "",
-    phone: "",
-    department: "",
-    position: ""
+  const [databaseOrder, setDatabaseOrder] = useState({
+    van: 1,
+    nexchem: 2,
+    vcp: 3
   });
 
-  // Security Settings
-  const [securityData, setSecurityData] = useState({
-    currentPassword: "",
-    newPassword: "",
-    confirmPassword: ""
-  });
-  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
-  const [showNewPassword, setShowNewPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-
-  // Notification Settings
-  const [notifications, setNotifications] = useState({
-    emailNotifications: true,
-    pushNotifications: false,
-    salesAlerts: true,
-    systemUpdates: true,
-    monthlyReports: false
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadPreview, setUploadPreview] = useState(null);
+  const [themeSaveStatus, setThemeSaveStatus] = useState({
+    saving: false,
+    saved: false,
+    error: false,
+    message: ""
   });
 
-  // System Preferences
-  const [preferences, setPreferences] = useState({
-    language: "english",
-    timezone: "UTC+08:00",
-    dateFormat: "MM/DD/YYYY",
-    autoLogout: 30,
-    recordsPerPage: 25
-  });
+  // API Base URL - Update this to your backend server
+  const API_BASE = 'http://192.168.100.193:3006/api';
+  const DB_NAME = 'USER';
 
-  // Initialize user data
+  // Initialize user data and preferences
   useEffect(() => {
-    const storedUser = JSON.parse(localStorage.getItem("user")) || {};
+    const storedUser = JSON.parse(localStorage.getItem("currentUser")) || {};
+    const username = storedUser.DisplayName || storedUser.Username || "John Smith";
+    const userCode = storedUser.User_ID || storedUser.UserCode || "USR001";
+    const userId = storedUser.UserID || storedUser.User_ID || "";
     
-    // Initialize profile data with user info
-    setProfileData({
-      firstName: storedUser.firstName || "John",
-      lastName: storedUser.lastName || "Doe",
-      email: storedUser.email || "john.doe@company.com",
-      phone: storedUser.phone || "+1 (555) 123-4567",
-      department: storedUser.department || "Sales",
-      position: storedUser.position || "Sales Manager"
-    });
+    setUserName(username);
+    setUserCode(userCode);
+    setUserId(userId);
+
+    const getInitials = (name) => {
+      if (!name) return "??";
+      const parts = name.trim().split(" ");
+      if (parts.length === 1) {
+        return parts[0][0].toUpperCase();
+      }
+      return (
+        parts[0][0].toUpperCase() + parts[parts.length - 1][0].toUpperCase()
+      );
+    };
+
+    setInitials(getInitials(username));
+
+    const savedProfileImage = localStorage.getItem('profileImage');
+    if (savedProfileImage) {
+      setProfileImage(savedProfileImage);
+    }
+
+    const savedDatabaseOrder = JSON.parse(localStorage.getItem('databaseOrder')) || {
+      van: 1,
+      nexchem: 2,
+      vcp: 3
+    };
+    
+    setDatabaseOrder(savedDatabaseOrder);
+
+    // Load theme from database if user is logged in
+    if (userId) {
+      loadThemeFromDatabase(userId);
+    }
   }, []);
 
-  // ✅ Get user from localStorage
-  const storedUser = JSON.parse(localStorage.getItem("user")) || {};
-  const username = storedUser.username || "Unknown User";
-  const role = storedUser.role || "Unknown Role";
-
-  // ✅ Generate initials
-  const getInitials = (name) => {
-    if (!name) return "??";
-    const parts = name.trim().split(" ");
-    return parts.length === 1
-      ? parts[0][0].toUpperCase()
-      : parts[0][0].toUpperCase() + parts[parts.length - 1][0].toUpperCase();
-  };
-  const initials = getInitials(username);
-
-  // Settings handlers
-  const handleProfileChange = (field, value) => {
-    setProfileData(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
-
-  const handleSecurityChange = (field, value) => {
-    setSecurityData(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
-
-  const handleNotificationChange = (field) => {
-    setNotifications(prev => ({
-      ...prev,
-      [field]: !prev[field]
-    }));
-  };
-
-  const handlePreferenceChange = (field, value) => {
-    setPreferences(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
-
-  const handleSaveSettings = (section) => {
-    setSaveStatus(`${section} settings saved successfully!`);
-    
-    setTimeout(() => {
-      setSaveStatus("");
-    }, 3000);
-
-    console.log(`Saving ${section} settings:`, {
-      profile: profileData,
-      security: securityData,
-      notifications,
-      preferences
-    });
-  };
-
-  const handleResetSettings = (section) => {
-    if (section === 'security') {
-      setSecurityData({
-        currentPassword: "",
-        newPassword: "",
-        confirmPassword: ""
-      });
+  // Load theme from database
+  const loadThemeFromDatabase = async (userIdentifier) => {
+    try {
+      const response = await axios.get(`${API_BASE}/user/preferences/${userIdentifier}/theme?db=${DB_NAME}`);
+      
+      if (response.data.success && response.data.value) {
+        const dbTheme = response.data.value.toLowerCase();
+        if (dbTheme !== theme) {
+          console.log('Loading theme from database:', dbTheme);
+          updateTheme(dbTheme);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading theme from database:', error);
+      const localTheme = localStorage.getItem('userTheme');
+      if (localTheme && localTheme !== theme) {
+        updateTheme(localTheme);
+      }
     }
   };
 
-  return (
-    <div className="flex min-h-screen w-full bg-white font-poppins text-black">
-      {/* Sidebar - Fixed */}
-      <aside
-        className={`fixed top-0 left-0 h-screen bg-white border-r border-gray-300 flex flex-col transition-all duration-300 z-50 ${
-          collapsed ? "w-20" : "w-64"
-        }`}
-      >
-        {/* Header with Toggle */}
-        <div className="flex items-center justify-between p-4 border-gray-200 relative">
-          {!collapsed && (
-            <h2 className="font-bold text-gray-800 whitespace-nowrap">
-              Rebate Management
-            </h2>
-          )}
+  const handleThemeChange = async (newTheme) => {
+    setThemeSaveStatus({
+      saving: true,
+      saved: false,
+      error: false,
+      message: "Saving theme preference..."
+    });
+    
+    try {
+      updateTheme(newTheme);
+      
+      if (userId) {
+        try {
+          const response = await axios.post(`${API_BASE}/user/preferences/save?db=${DB_NAME}`, {
+            userId: userId,
+            preferenceKey: 'theme',
+            preferenceValue: newTheme.charAt(0).toUpperCase() + newTheme.slice(1)
+          });
+          
+          if (response.data.success) {
+            console.log('Theme saved to database:', response.data);
+            
+            if (response.data.actualUserId) {
+              setActualUserId(response.data.actualUserId);
+            }
+            
+            setThemeSaveStatus({
+              saving: false,
+              saved: true,
+              error: false,
+              message: "Theme saved to database successfully!"
+            });
+          }
+        } catch (dbError) {
+          console.error('Database save error:', dbError);
+          setThemeSaveStatus({
+            saving: false,
+            saved: true,
+            error: false,
+            message: "Theme saved locally (database error)"
+          });
+        }
+      } else {
+        setThemeSaveStatus({
+          saving: false,
+          saved: true,
+          error: false,
+          message: "Theme saved locally"
+        });
+      }
+      
+      setTimeout(() => {
+        setThemeSaveStatus({
+          saving: false,
+          saved: false,
+          error: false,
+          message: ""
+        });
+      }, 3000);
+      
+    } catch (error) {
+      console.error('Error changing theme:', error);
+      setThemeSaveStatus({
+        saving: false,
+        saved: false,
+        error: true,
+        message: "Error saving theme"
+      });
+      
+      setTimeout(() => {
+        setThemeSaveStatus({
+          saving: false,
+          saved: false,
+          error: false,
+          message: ""
+        });
+      }, 3000);
+    }
+  };
+
+  const handleDatabaseOrderChange = (newOrder) => {
+    setDatabaseOrder(newOrder);
+    localStorage.setItem('databaseOrder', JSON.stringify(newOrder));
+  };
+
+  const handleProfileImageUpload = (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const imageDataUrl = reader.result;
+        setUploadPreview(imageDataUrl);
+        setShowUploadModal(true);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const saveProfileImage = () => {
+    if (uploadPreview) {
+      setProfileImage(uploadPreview);
+      localStorage.setItem('profileImage', uploadPreview);
+      setShowUploadModal(false);
+      setUploadPreview(null);
+    }
+  };
+
+  const removeProfileImage = () => {
+    setProfileImage(null);
+    localStorage.removeItem('profileImage');
+    setShowUploadModal(false);
+    setUploadPreview(null);
+  };
+
+  const ThemeSelector = ({ currentTheme, onThemeChange }) => {
+    const themes = [
+      { id: 'light', name: 'Light', icon: Sun, description: 'Bright and clear' },
+      { id: 'dark', name: 'Dark', icon: Moon, description: 'Easy on the eyes' },
+    ];
+    
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          {themes.map((themeOption) => (
+            <button
+              key={themeOption.id}
+              onClick={() => !themeSaveStatus.saving && onThemeChange(themeOption.id)}
+              disabled={themeSaveStatus.saving}
+              className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all duration-300 relative ${
+                currentTheme === themeOption.id
+                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                  : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+              } ${themeSaveStatus.saving ? 'opacity-75 cursor-not-allowed' : 'cursor-pointer'}`}
+            >
+              {themeSaveStatus.saving && currentTheme === themeOption.id && (
+                <div className="absolute top-2 right-2">
+                  <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+                </div>
+              )}
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 ${
+                currentTheme === themeOption.id
+                  ? 'bg-blue-100 dark:bg-blue-800'
+                  : 'bg-gray-100 dark:bg-gray-800'
+              }`}>
+                <themeOption.icon className={`w-5 h-5 ${
+                  currentTheme === themeOption.id
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-gray-500 dark:text-gray-400'
+                }`} />
+              </div>
+              <span className={`font-medium text-sm ${
+                currentTheme === themeOption.id
+                  ? 'text-blue-700 dark:text-blue-300'
+                  : 'text-gray-700 dark:text-gray-300'
+              }`}>
+                {themeOption.name}
+              </span>
+              <span className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                {themeOption.description}
+              </span>
+            </button>
+          ))}
+        </div>
+        
+        {themeSaveStatus.saving && (
+          <div className={`p-3 rounded text-sm flex items-center gap-2 ${
+            theme === 'dark' ? 'bg-blue-900/30 text-blue-300' : 'bg-blue-50 text-blue-700'
+          }`}>
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>{themeSaveStatus.message}</span>
+          </div>
+        )}
+        
+        {themeSaveStatus.saved && !themeSaveStatus.error && (
+          <div className={`p-3 rounded text-sm flex items-center gap-2 ${
+            theme === 'dark' ? 'bg-green-900/30 text-green-300' : 'bg-green-50 text-green-600'
+          }`}>
+            <CheckCircle className="w-4 h-4" />
+            <span>{themeSaveStatus.message}</span>
+          </div>
+        )}
+        
+        {themeSaveStatus.error && (
+          <div className={`p-3 rounded text-sm flex items-center gap-2 ${
+            theme === 'dark' ? 'bg-red-900/30 text-red-300' : 'bg-red-50 text-red-600'
+          }`}>
+            <X className="w-4 h-4" />
+            <span>{themeSaveStatus.message}</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const DatabaseOrderPreferences = ({ currentOrder, onOrderChange }) => {
+    const [dragItem, setDragItem] = useState(null);
+    const [dragOverItem, setDragOverItem] = useState(null);
+    const [localOrder, setLocalOrder] = useState(currentOrder);
+
+    const databases = [
+      { id: 'van', name: 'VAN Database', color: 'from-blue-500 to-blue-600', icon: Database },
+      { id: 'nexchem', name: 'NEXCHEM Database', color: 'from-purple-500 to-purple-600', icon: Database },
+      { id: 'vcp', name: 'VCP Database', color: 'from-emerald-500 to-emerald-600', icon: Database }
+    ];
+
+    const sortedDatabases = [...databases].sort((a, b) => localOrder[a.id] - localOrder[b.id]);
+
+    const handleDragStart = (e, index) => {
+      setDragItem(index);
+      e.dataTransfer.effectAllowed = 'move';
+    };
+
+    const handleDragOver = (e, index) => {
+      e.preventDefault();
+      setDragOverItem(index);
+    };
+
+    const handleDrop = (e, dropIndex) => {
+      e.preventDefault();
+      if (dragItem === null || dragItem === dropIndex) return;
+
+      const newOrder = { ...localOrder };
+      const draggedId = sortedDatabases[dragItem].id;
+      const dropId = sortedDatabases[dropIndex].id;
+      
+      const tempOrder = newOrder[draggedId];
+      newOrder[draggedId] = newOrder[dropId];
+      newOrder[dropId] = tempOrder;
+
+      setLocalOrder(newOrder);
+      setDragItem(null);
+      setDragOverItem(null);
+      
+      onOrderChange(newOrder);
+    };
+
+    const handleDragEnd = () => {
+      setDragItem(null);
+      setDragOverItem(null);
+    };
+
+    return (
+      <div className="space-y-3">
+        <div className="space-y-2">
+          {sortedDatabases.map((db, index) => (
+            <div
+              key={db.id}
+              draggable
+              onDragStart={(e) => handleDragStart(e, index)}
+              onDragOver={(e) => handleDragOver(e, index)}
+              onDrop={(e) => handleDrop(e, index)}
+              onDragEnd={handleDragEnd}
+              className={`flex items-center justify-between p-3 rounded-lg border-2 cursor-move transition-all duration-300 ${
+                dragItem === index
+                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 opacity-50'
+                  : dragOverItem === index
+                  ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
+                  : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div className={`w-8 h-8 rounded-md bg-gradient-to-br ${db.color} flex items-center justify-center`}>
+                  <db.icon className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <div className="font-medium text-gray-800 dark:text-gray-200">{db.name}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Order: {localOrder[db.id]} of {databases.length}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex space-x-1">
+                  {[1, 2, 3].map((num) => (
+                    <div
+                      key={num}
+                      className={`w-2 h-2 rounded-full ${
+                        localOrder[db.id] === num
+                          ? 'bg-blue-500'
+                          : 'bg-gray-300 dark:bg-gray-600'
+                      }`}
+                    />
+                  ))}
+                </div>
+                <div className="text-gray-400">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
           <button
-            onClick={() => setCollapsed(!collapsed)}
-            className={`p-2 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors ${
-              collapsed ? "absolute top-4 left-5" : ""
-            }`}
+            onClick={() => {
+              const defaultOrder = { van: 1, nexchem: 2, vcp: 3 };
+              setLocalOrder(defaultOrder);
+              onOrderChange(defaultOrder);
+            }}
+            className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
           >
-            {collapsed ? (
-              <ChevronRight className="w-4 h-4 text-gray-600" />
-            ) : (
-              <ChevronLeft className="w-4 h-4 text-gray-600" />
-            )}
+            Reset to default order
           </button>
         </div>
+      </div>
+    );
+  };
 
-        <nav className="flex-1 py-4">
-          <ul className="space-y-1 px-3">
-            <li>
-              <Link 
-                to="/dashboard" 
-                className={`flex items-center text-gray-700 px-3 py-3 rounded-lg transition-all ${
-                  activeNav === "/dashboard"
-                    ? "bg-blue-50 text-blue-600 border-r-2 border-blue-600"
-                    : "hover:bg-gray-50 hover:text-blue-500"
-                }`}
-                onClick={() => setActiveNav("/dashboard")}
+  const ProfileUploadModal = () => {
+    if (!showUploadModal) return null;
+
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
+                Update Profile Picture
+              </h3>
+              <button
+                onClick={() => {
+                  setShowUploadModal(false);
+                  setUploadPreview(null);
+                }}
+                className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
               >
-                <Home className="w-5 h-5 flex-shrink-0" strokeWidth={1.8} />
-                <span className={`ml-3 font-medium text-sm whitespace-nowrap transition-opacity ${
-                  collapsed ? "opacity-0 w-0" : "opacity-100"
-                }`}>
-                  Dashboard
-                </span>
-              </Link>
-            </li>
-
-            <li>
-              <Link 
-                to="/rebatesetup" 
-                className={`flex items-center text-gray-700 px-3 py-3 rounded-lg transition-all ${
-                  activeNav === "/rebatesetup"
-                    ? "bg-blue-50 text-blue-600 border-r-2 border-blue-600"
-                    : "hover:bg-gray-50 hover:text-blue-500"
-                }`}
-                onClick={() => setActiveNav("/rebatesetup")}
-              >
-                <FileText className="w-5 h-5 flex-shrink-0" strokeWidth={1.8} />
-                <span className={`ml-3 font-medium text-sm whitespace-nowrap transition-opacity ${
-                  collapsed ? "opacity-0 w-0" : "opacity-100"
-                }`}>
-                  Rebate Setup
-                </span>
-              </Link>
-            </li>
-
-            <li>
-              <Link 
-                to="/nexchemreports" 
-                className={`flex items-center text-gray-700 px-3 py-3 rounded-lg transition-all ${
-                  activeNav === "/nexchemreports"
-                    ? "bg-blue-50 text-blue-600 border-r-2 border-blue-600"
-                    : "hover:bg-gray-50 hover:text-blue-500"
-                }`}
-                onClick={() => setActiveNav("/nexchemreports")}
-              >
-                <BarChart2 className="w-5 h-5 flex-shrink-0" strokeWidth={1.8} />
-                <span className={`ml-3 font-medium text-sm whitespace-nowrap transition-opacity ${
-                  collapsed ? "opacity-0 w-0" : "opacity-100"
-                }`}>
-                  Reports
-                </span>
-              </Link>
-            </li>
-
-            <li>
-              <Link 
-                to="/customer" 
-                className={`flex items-center text-gray-700 px-3 py-3 rounded-lg transition-all ${
-                  activeNav === "/customer"
-                    ? "bg-blue-50 text-blue-600 border-r-2 border-blue-600"
-                    : "hover:bg-gray-50 hover:text-blue-500"
-                }`}
-                onClick={() => setActiveNav("/customer")}
-              >
-                <Users className="w-5 h-5 flex-shrink-0" strokeWidth={1.8} />
-                <span className={`ml-3 font-medium text-sm whitespace-nowrap transition-opacity ${
-                  collapsed ? "opacity-0 w-0" : "opacity-100"
-                }`}>
-                  Customer
-                </span>
-              </Link>
-            </li>
-
-            <li>
-              <Link 
-                to="/items" 
-                className={`flex items-center text-gray-700 px-3 py-3 rounded-lg transition-all ${
-                  activeNav === "/items"
-                    ? "bg-blue-50 text-blue-600 border-r-2 border-blue-600"
-                    : "hover:bg-gray-50 hover:text-blue-500"
-                }`}
-                onClick={() => setActiveNav("/items")}
-              >
-                <Package className="w-5 h-5 flex-shrink-0" strokeWidth={1.8} />
-                <span className={`ml-3 font-medium text-sm whitespace-nowrap transition-opacity ${
-                  collapsed ? "opacity-0 w-0" : "opacity-100"
-                }`}>
-                  Items
-                </span>
-              </Link>
-            </li>
-
-            <li>
-              <Link 
-                to="/salesemployee" 
-                className={`flex items-center text-gray-700 px-3 py-3 rounded-lg transition-all ${
-                  activeNav === "/salesemployee"
-                    ? "bg-blue-50 text-blue-600 border-r-2 border-blue-600"
-                    : "hover:bg-gray-50 hover:text-blue-500"
-                }`}
-                onClick={() => setActiveNav("/salesemployee")}
-              >
-                <IdCardLanyard className="w-5 h-5 flex-shrink-0" strokeWidth={1.8} />
-                <span className={`ml-3 font-medium text-sm whitespace-nowrap transition-opacity ${
-                  collapsed ? "opacity-0 w-0" : "opacity-100"
-                }`}>
-                  Sales Employee
-                </span>
-              </Link>
-            </li>
-          </ul>
-        </nav>
-
-        <div className="mt-auto p-3">
-          <ul className="space-y-1">
-            <li>
-              <Link 
-                to="/settings" 
-                className={`flex items-center text-gray-700 px-3 py-3 rounded-lg transition-all ${
-                  activeNav === "/settings"
-                    ? "bg-blue-50 text-blue-600 border-r-2 border-blue-600"
-                    : "hover:bg-gray-50 hover:text-blue-500"
-                }`}
-                onClick={() => setActiveNav("/settings")}
-              >
-                <SettingsIcon className="w-5 h-5 flex-shrink-0" strokeWidth={1.8} />
-                <span className={`ml-3 font-medium text-sm whitespace-nowrap transition-opacity ${
-                  collapsed ? "opacity-0 w-0" : "opacity-100"
-                }`}>
-                  Settings
-                </span>
-              </Link>
-            </li>
-
-            <li>
-              <Link 
-                to="/accountsetup" 
-                className={`flex items-center text-gray-700 px-3 py-3 rounded-lg transition-all ${
-                  activeNav === "/accountsetup"
-                    ? "bg-blue-50 text-blue-600 border-r-2 border-blue-600"
-                    : "hover:bg-gray-50 hover:text-blue-500"
-                }`}
-                onClick={() => setActiveNav("/accountsetup")}
-              >
-                <User className="w-5 h-5 flex-shrink-0" strokeWidth={1.8} />
-                <span className={`ml-3 font-medium text-sm whitespace-nowrap transition-opacity ${
-                  collapsed ? "opacity-0 w-0" : "opacity-100"
-                }`}>
-                  Account Setup
-                </span>
-              </Link>
-            </li>
-
-            <li>
-              <Link 
-                to="/login" 
-                className="flex items-center text-gray-700 px-3 py-3 rounded-lg transition-all hover:bg-gray-50 hover:text-blue-500"
-              >
-                <LogOut className="w-5 h-5 flex-shrink-0" strokeWidth={1.8} />
-                <span className={`ml-3 font-medium text-sm whitespace-nowrap transition-opacity ${
-                  collapsed ? "opacity-0 w-0" : "opacity-100"
-                }`}>
-                  Logout
-                </span>
-              </Link>
-            </li>
-          </ul>
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <main
-        className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${
-          collapsed ? "ml-20" : "ml-64"
-        }`}
-      >
-        {/* Header - Fixed */}
-        <header 
-          className="fixed top-0 right-0 h-16 flex items-center px-6 bg-white border-b border-gray-300 z-40 transition-all duration-300"
-          style={{ 
-            left: collapsed ? '80px' : '256px',
-            width: collapsed ? 'calc(100% - 80px)' : 'calc(100% - 256px)'
-          }}
-        >
-          <div className="absolute left-1/2 transform -translate-x-1/2">
-            <Logo size={90} />
-          </div>
-
-          {/* User Profile */}
-          <div className="flex items-center gap-4 ml-auto mr-8">
-            <div className="w-10 h-10 rounded-full bg-blue-500 text-white font-semibold text-sm flex items-center justify-center uppercase shadow-sm">
-              {initials}
-            </div>
-            <div className="flex flex-col text-right">
-              <p className="text-base font-semibold text-gray-800 whitespace-nowrap max-w-[150px] overflow-hidden">
-                {username}
-              </p>
-              <p className="text-xs text-gray-600 text-left">
-                {role}
-              </p>
-            </div>
-          </div>
-        </header>
-
-        {/* Settings Content Area */}
-        <div className="pt-16 flex-1 p-6 overflow-auto">
-          <div className="bg-gradient-to-br from-white to-blue-50 rounded-2xl border border-blue-100 shadow-lg p-8 w-full max-w-[1600px] mx-auto mt-6">
-            {/* Modern Header */}
-            <div className="flex items-center gap-4 mb-8 pb-6 border-b border-blue-200">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg">
-                <SettingsIcon className="w-7 h-7 text-white" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-gray-800">Settings</h1>
-                <p className="text-sm text-gray-600">Manage your account settings and preferences</p>
-              </div>
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
             </div>
 
-            {saveStatus && (
-              <div className="flex items-center gap-2 p-4 mb-6 bg-green-50 text-green-700 rounded-xl border border-green-200 text-sm">
-                <Check size={16} className="text-green-600" />
-                {saveStatus}
-              </div>
-            )}
-
-            <div className="flex flex-col lg:flex-row gap-8">
-              {/* Modern Settings Sidebar */}
-              <div className="lg:w-80 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 h-fit">
-                <h3 className="text-lg font-semibold text-gray-800 mb-4">Settings Menu</h3>
-                <div className="space-y-2">
-                  <button 
-                    className={`flex items-center gap-3 w-full p-4 rounded-xl text-left transition-all duration-200 ${
-                      activeSettingsTab === 'profile' 
-                        ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-200' 
-                        : 'text-gray-700 hover:bg-blue-50 hover:text-blue-600 border border-transparent hover:border-blue-200'
-                    }`}
-                    onClick={() => setActiveSettingsTab('profile')}
-                  >
-                    <div className={`p-2 rounded-lg ${activeSettingsTab === 'profile' ? 'bg-white/20' : 'bg-blue-100 text-blue-600'}`}>
-                      <User size={18} />
+            <div className="mb-6">
+              <div className="flex justify-center mb-4">
+                <div className="w-32 h-32 rounded-full overflow-hidden border-4 border-white dark:border-gray-700 shadow-lg">
+                  {uploadPreview ? (
+                    <img
+                      src={uploadPreview}
+                      alt="Preview"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : profileImage ? (
+                    <img
+                      src={profileImage}
+                      alt="Profile"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+                      <span className="text-3xl font-bold text-white">{initials}</span>
                     </div>
-                    <div>
-                      <div className="font-medium">Profile</div>
-                      <div className="text-xs opacity-80">Personal information</div>
-                    </div>
-                  </button>
-                  
-                  <button 
-                    className={`flex items-center gap-3 w-full p-4 rounded-xl text-left transition-all duration-200 ${
-                      activeSettingsTab === 'security' 
-                        ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-200' 
-                        : 'text-gray-700 hover:bg-blue-50 hover:text-blue-600 border border-transparent hover:border-blue-200'
-                    }`}
-                    onClick={() => setActiveSettingsTab('security')}
-                  >
-                    <div className={`p-2 rounded-lg ${activeSettingsTab === 'security' ? 'bg-white/20' : 'bg-blue-100 text-blue-600'}`}>
-                      <Shield size={18} />
-                    </div>
-                    <div>
-                      <div className="font-medium">Security</div>
-                      <div className="text-xs opacity-80">Password & protection</div>
-                    </div>
-                  </button>
-                  
-                  <button 
-                    className={`flex items-center gap-3 w-full p-4 rounded-xl text-left transition-all duration-200 ${
-                      activeSettingsTab === 'notifications' 
-                        ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-200' 
-                        : 'text-gray-700 hover:bg-blue-50 hover:text-blue-600 border border-transparent hover:border-blue-200'
-                    }`}
-                    onClick={() => setActiveSettingsTab('notifications')}
-                  >
-                    <div className={`p-2 rounded-lg ${activeSettingsTab === 'notifications' ? 'bg-white/20' : 'bg-blue-100 text-blue-600'}`}>
-                      <Bell size={18} />
-                    </div>
-                    <div>
-                      <div className="font-medium">Notifications</div>
-                      <div className="text-xs opacity-80">Alerts & updates</div>
-                    </div>
-                  </button>
-                  
-                  <button 
-                    className={`flex items-center gap-3 w-full p-4 rounded-xl text-left transition-all duration-200 ${
-                      activeSettingsTab === 'preferences' 
-                        ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-200' 
-                        : 'text-gray-700 hover:bg-blue-50 hover:text-blue-600 border border-transparent hover:border-blue-200'
-                    }`}
-                    onClick={() => setActiveSettingsTab('preferences')}
-                  >
-                    <div className={`p-2 rounded-lg ${activeSettingsTab === 'preferences' ? 'bg-white/20' : 'bg-blue-100 text-blue-600'}`}>
-                      <Palette size={18} />
-                    </div>
-                    <div>
-                      <div className="font-medium">Preferences</div>
-                      <div className="text-xs opacity-80">System settings</div>
-                    </div>
-                  </button>
+                  )}
                 </div>
               </div>
 
-              {/* Modern Settings Content */}
-              <div className="flex-1">
-                {/* Profile Settings */}
-                {activeSettingsTab === 'profile' && (
-                  <div className="animate-fadeIn">
-                    <div className="flex items-center gap-3 mb-6">
-                      <div className="p-3 bg-blue-100 rounded-xl">
-                        <User className="w-6 h-6 text-blue-600" />
-                      </div>
-                      <div>
-                        <h2 className="text-xl font-bold text-gray-800">Profile Information</h2>
-                        <p className="text-sm text-gray-600">Update your personal information and contact details</p>
-                      </div>
-                    </div>
+              <div className="text-center mb-6">
+                <p className="text-sm text-gray-600 dark:text-gray-300">
+                  Upload a new profile picture. Supported formats: JPG, PNG, GIF
+                </p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Max file size: 5MB
+                </p>
+              </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                      {[
-                        { field: 'firstName', label: 'First Name', icon: User },
-                        { field: 'lastName', label: 'Last Name', icon: User },
-                        { field: 'email', label: 'Email Address', icon: Mail },
-                        { field: 'phone', label: 'Phone Number', icon: Phone },
-                        { field: 'department', label: 'Department', icon: Building },
-                        { field: 'position', label: 'Position', icon: Briefcase }
-                      ].map(({ field, label, icon: Icon }) => (
-                        <div key={field} className="bg-white rounded-xl border border-gray-200 p-4 hover:border-blue-300 transition-colors">
-                          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-3">
-                            <Icon size={16} className="text-blue-500" />
-                            {label}
-                          </label>
-                          {field === 'department' ? (
-                            <select
-                              value={profileData[field]}
-                              onChange={(e) => handleProfileChange(field, e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            >
-                              <option value="Sales">Sales</option>
-                              <option value="Marketing">Marketing</option>
-                              <option value="Finance">Finance</option>
-                              <option value="Operations">Operations</option>
-                              <option value="IT">IT</option>
-                            </select>
-                          ) : (
-                            <input
-                              type={field === 'email' ? 'email' : field === 'phone' ? 'tel' : 'text'}
-                              value={profileData[field]}
-                              onChange={(e) => handleProfileChange(field, e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder={`Enter your ${label.toLowerCase()}`}
-                            />
-                          )}
-                        </div>
-                      ))}
-                    </div>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl hover:border-blue-500 dark:hover:border-blue-400 cursor-pointer transition-colors">
+                  <Upload className="w-6 h-6 text-gray-500 dark:text-gray-400 mb-2" />
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Upload New
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleProfileImageUpload}
+                    className="hidden"
+                  />
+                </label>
 
-                    <div className="flex gap-3">
-                      <button 
-                        className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl"
-                        onClick={() => handleSaveSettings('profile')}
-                      >
-                        <Save size={16} />
-                        Save Changes
-                      </button>
-                      <button className="px-6 py-3 border border-gray-300 text-gray-700 hover:bg-gray-50 rounded-xl transition-colors">
-                        Cancel
-                      </button>
+                <button
+                  onClick={() => {
+                    alert("Camera functionality would open here in a real app");
+                  }}
+                  className="flex flex-col items-center justify-center p-4 border-2 border-gray-300 dark:border-gray-600 rounded-xl hover:border-blue-500 dark:hover:border-blue-400 cursor-pointer transition-colors"
+                >
+                  <Camera className="w-6 h-6 text-gray-500 dark:text-gray-400 mb-2" />
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Take Photo
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={removeProfileImage}
+                className="flex-1 py-2.5 px-4 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 font-medium rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+              >
+                Remove
+              </button>
+              <button
+                onClick={saveProfileImage}
+                disabled={!uploadPreview && !profileImage}
+                className={`flex-1 py-2.5 px-4 font-medium rounded-lg transition-colors ${
+                  uploadPreview || profileImage
+                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                }`}
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex min-h-screen w-full bg-gradient-to-br from-slate-50 to-blue-50 dark:from-gray-900 dark:to-gray-800 font-poppins text-slate-900 dark:text-gray-100">
+
+      {/* Use the Sidebar component */}
+      <Sidebar
+        collapsed={collapsed}
+        setCollapsed={setCollapsed}
+        showVanDropdown={showVanDropdown}
+        setShowVanDropdown={setShowVanDropdown}
+        showNexchemDropdown={showNexchemDropdown}
+        setShowNexchemDropdown={setShowNexchemDropdown}
+        showVcpDropdown={showVcpDropdown}
+        setShowVcpDropdown={setShowVcpDropdown}
+        theme={theme}
+      />
+
+      <main
+        className={`flex-1 flex flex-col min-h-screen transition-all duration-500 ${
+          collapsed ? "ml-20" : "ml-64"
+        }`}
+      >
+        {/* Enhanced Header */}
+        <Header
+          collapsed={collapsed}
+          userName={userName}
+          userCode={userCode}
+          initials={initials}
+          logo={userpreference}
+          theme={theme}
+        />
+
+        <div className="pt-16 flex-1 p-8 overflow-auto">
+          <div className={`bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-3xl border ${
+            theme === 'dark' 
+              ? 'border-gray-700/50' 
+              : 'border-white/50'
+          } shadow-2xl p-8 w-full max-w-[1600px] mx-auto mt-6`}>
+            <div className={`flex items-center gap-4 mb-8 pb-6 border-b ${
+              theme === 'dark' ? 'border-blue-800' : 'border-blue-200'
+            }`}>
+              <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg">
+                <SettingsIcon className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h1 className={`text-2xl font-bold ${
+                  theme === 'dark' ? 'text-gray-100' : 'text-gray-800'
+                }`}>User Preferences</h1>
+                <p className={`text-sm ${
+                  theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
+                }`}>Manage your account settings and preferences</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div className={`bg-white dark:bg-gray-800 rounded-2xl border ${
+                theme === 'dark' ? 'border-gray-700' : 'border-gray-200'
+              } p-6 shadow-sm`}>
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center">
+                      <Sun className="w-4 h-4 text-white" />
                     </div>
+                    <h2 className={`text-lg font-semibold ${
+                      theme === 'dark' ? 'text-gray-200' : 'text-gray-800'
+                    }`}>Theme Settings</h2>
                   </div>
-                )}
-
-                {/* Security Settings */}
-                {activeSettingsTab === 'security' && (
-                  <div className="animate-fadeIn">
-                    <div className="flex items-center gap-3 mb-6">
-                      <div className="p-3 bg-blue-100 rounded-xl">
-                        <Shield className="w-6 h-6 text-blue-600" />
-                      </div>
-                      <div>
-                        <h2 className="text-xl font-bold text-gray-800">Security Settings</h2>
-                        <p className="text-sm text-gray-600">Manage your password and security preferences</p>
-                      </div>
+                  
+                  {themeSaveStatus.saving && (
+                    <div className="flex items-center gap-1 text-xs text-blue-500">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <span>Saving...</span>
                     </div>
-
-                    <div className="space-y-6 mb-8">
-                      {[
-                        { field: 'currentPassword', label: 'Current Password', show: showCurrentPassword, setShow: setShowCurrentPassword },
-                        { field: 'newPassword', label: 'New Password', show: showNewPassword, setShow: setShowNewPassword },
-                        { field: 'confirmPassword', label: 'Confirm New Password', show: showConfirmPassword, setShow: setShowConfirmPassword }
-                      ].map(({ field, label, show, setShow }) => (
-                        <div key={field} className="bg-white rounded-xl border border-gray-200 p-4 hover:border-blue-300 transition-colors">
-                          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-3">
-                            <Lock size={16} className="text-blue-500" />
-                            {label}
-                          </label>
-                          <div className="relative">
-                            <input
-                              type={show ? "text" : "password"}
-                              value={securityData[field]}
-                              onChange={(e) => handleSecurityChange(field, e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-10"
-                              placeholder={`Enter ${label.toLowerCase()}`}
-                            />
-                            <button
-                              type="button"
-                              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700"
-                              onClick={() => setShow(!show)}
-                            >
-                              {show ? <EyeOff size={16} /> : <Eye size={16} />}
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                  )}
+                  {themeSaveStatus.saved && !themeSaveStatus.error && (
+                    <div className="flex items-center gap-1 text-xs text-green-500">
+                      <CheckCircle className="w-3 h-3" />
+                      <span>Saved!</span>
                     </div>
-
-                    <div className="bg-blue-50 rounded-xl p-4 mb-6 border border-blue-200">
-                      <h4 className="font-medium text-blue-800 mb-2">Password Requirements:</h4>
-                      <ul className="text-sm text-blue-700 space-y-1">
-                        <li className="flex items-center gap-2">• Minimum 8 characters</li>
-                        <li className="flex items-center gap-2">• At least one uppercase letter</li>
-                        <li className="flex items-center gap-2">• At least one number</li>
-                        <li className="flex items-center gap-2">• At least one special character</li>
-                      </ul>
+                  )}
+                  {themeSaveStatus.error && (
+                    <div className="flex items-center gap-1 text-xs text-red-500">
+                      <X className="w-3 h-3" />
+                      <span>Error</span>
                     </div>
+                  )}
+                </div>
+                <p className={`text-sm ${
+                  theme === 'dark' ? 'text-gray-300' : 'text-gray-600'
+                } mb-6`}>Choose your preferred application theme</p>
+                
+                <ThemeSelector 
+                  currentTheme={theme}
+                  onThemeChange={handleThemeChange}
+                />
+                
+                <div className={`mt-6 pt-4 border-t ${
+                  theme === 'dark' ? 'border-gray-700' : 'border-gray-100'
+                }`}>
+                  <p className={`text-xs ${
+                    theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
+                  }`}>
+                    {userId 
+                      ? `Your theme preference is saved to ${DB_NAME} database and will sync across all your devices.`
+                      : 'Theme saved locally. Sign in to sync across devices.'
+                    }
+                  </p>
+                </div>
+              </div>
 
-                    <div className="flex gap-3">
-                      <button 
-                        className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl"
-                        onClick={() => handleSaveSettings('security')}
-                      >
-                        <Save size={16} />
-                        Update Password
-                      </button>
-                      <button 
-                        className="px-6 py-3 border border-gray-300 text-gray-700 hover:bg-gray-50 rounded-xl transition-colors"
-                        onClick={() => handleResetSettings('security')}
-                      >
-                        Cancel
-                      </button>
-                    </div>
+              <div className={`bg-white dark:bg-gray-800 rounded-2xl border ${
+                theme === 'dark' ? 'border-gray-700' : 'border-gray-200'
+              } p-6 shadow-sm`}>
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center">
+                    <Database className="w-4 h-4 text-white" />
                   </div>
-                )}
-
-                {/* Notification Settings */}
-                {activeSettingsTab === 'notifications' && (
-                  <div className="animate-fadeIn">
-                    <div className="flex items-center gap-3 mb-6">
-                      <div className="p-3 bg-blue-100 rounded-xl">
-                        <Bell className="w-6 h-6 text-blue-600" />
-                      </div>
-                      <div>
-                        <h2 className="text-xl font-bold text-gray-800">Notification Preferences</h2>
-                        <p className="text-sm text-gray-600">Choose how you want to be notified about system activities</p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4 mb-8">
-                      {Object.entries(notifications).map(([key, value]) => (
-                        <div key={key} className="bg-white rounded-xl border border-gray-200 p-4 hover:border-blue-300 transition-colors">
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <h4 className="font-medium text-gray-800 capitalize">
-                                {key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
-                              </h4>
-                              <p className="text-sm text-gray-600 mt-1">
-                                {key === 'emailNotifications' && 'Receive important updates via email'}
-                                {key === 'pushNotifications' && 'Get real-time alerts in your browser'}
-                                {key === 'salesAlerts' && 'Notifications about sales targets and achievements'}
-                                {key === 'systemUpdates' && 'Important system maintenance and updates'}
-                                {key === 'monthlyReports' && 'Automated monthly performance reports'}
-                              </p>
-                            </div>
-                            <label className="relative inline-flex items-center cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={value}
-                                onChange={() => handleNotificationChange(key)}
-                                className="sr-only peer"
-                              />
-                              <div className="w-11 h-6 bg-gray-200 peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                            </label>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="flex gap-3">
-                      <button 
-                        className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl"
-                        onClick={() => handleSaveSettings('notifications')}
-                      >
-                        <Save size={16} />
-                        Save Preferences
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Preferences Settings */}
-                {activeSettingsTab === 'preferences' && (
-                  <div className="animate-fadeIn">
-                    <div className="flex items-center gap-3 mb-6">
-                      <div className="p-3 bg-blue-100 rounded-xl">
-                        <Palette className="w-6 h-6 text-blue-600" />
-                      </div>
-                      <div>
-                        <h2 className="text-xl font-bold text-gray-800">System Preferences</h2>
-                        <p className="text-sm text-gray-600">Customize your system experience and display preferences</p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                      {[
-                        { field: 'language', label: 'Language', icon: Globe, options: [
-                          { value: 'english', label: 'English' },
-                          { value: 'spanish', label: 'Spanish' },
-                          { value: 'french', label: 'French' },
-                          { value: 'german', label: 'German' }
-                        ]},
-                        { field: 'timezone', label: 'Timezone', icon: Globe, options: [
-                          { value: 'UTC+08:00', label: 'UTC+08:00 (Philippine Time)' },
-                          { value: 'UTC-05:00', label: 'UTC-05:00 (Eastern Time)' },
-                          { value: 'UTC+00:00', label: 'UTC+00:00 (GMT)' },
-                          { value: 'UTC+01:00', label: 'UTC+01:00 (Central European Time)' }
-                        ]},
-                        { field: 'dateFormat', label: 'Date Format', icon: Calendar, options: [
-                          { value: 'MM/DD/YYYY', label: 'MM/DD/YYYY' },
-                          { value: 'DD/MM/YYYY', label: 'DD/MM/YYYY' },
-                          { value: 'YYYY-MM-DD', label: 'YYYY-MM-DD' }
-                        ]},
-                        { field: 'autoLogout', label: 'Auto Logout', icon: Lock, options: [
-                          { value: '15', label: '15 minutes' },
-                          { value: '30', label: '30 minutes' },
-                          { value: '60', label: '1 hour' },
-                          { value: '120', label: '2 hours' }
-                        ]},
-                        { field: 'recordsPerPage', label: 'Records Per Page', icon: Monitor, options: [
-                          { value: '10', label: '10 records' },
-                          { value: '25', label: '25 records' },
-                          { value: '50', label: '50 records' },
-                          { value: '100', label: '100 records' }
-                        ]}
-                      ].map(({ field, label, icon: Icon, options }) => (
-                        <div key={field} className="bg-white rounded-xl border border-gray-200 p-4 hover:border-blue-300 transition-colors">
-                          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-3">
-                            <Icon size={16} className="text-blue-500" />
-                            {label}
-                          </label>
-                          <select
-                            value={preferences[field]}
-                            onChange={(e) => handlePreferenceChange(field, e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          >
-                            {options.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="flex gap-3">
-                      <button 
-                        className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl"
-                        onClick={() => handleSaveSettings('preferences')}
-                      >
-                        <Save size={16} />
-                        Save Preferences
-                      </button>
-                    </div>
-                  </div>
-                )}
+                  <h2 className={`text-lg font-semibold ${
+                    theme === 'dark' ? 'text-gray-200' : 'text-gray-800'
+                  }`}>Database Order</h2>
+                </div>
+                <p className={`text-sm ${
+                  theme === 'dark' ? 'text-gray-300' : 'text-gray-600'
+                } mb-6`}>Drag to reorder your database sections in the sidebar</p>
+                
+                <DatabaseOrderPreferences 
+                  currentOrder={databaseOrder}
+                  onOrderChange={handleDatabaseOrderChange}
+                />
+                
+                <div className={`mt-6 pt-4 border-t ${
+                  theme === 'dark' ? 'border-gray-700' : 'border-gray-100'
+                }`}>
+                  <p className={`text-xs ${
+                    theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
+                  }`}>
+                    Changes are applied immediately and will be reflected in your sidebar.
+                  </p>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </main>
+
+      <ProfileUploadModal />
     </div>
   );
 }

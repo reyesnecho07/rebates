@@ -54,3 +54,60 @@ html {
     transform: rotate(360deg);
   }
 }
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0) translateX(0);
+    opacity: 0.2;
+  }
+  33% {
+    transform: translateY(-10px) translateX(5px);
+    opacity: 0.4;
+  }
+  66% {
+    transform: translateY(5px) translateX(-5px);
+    opacity: 0.3;
+  }
+}
+
+.animate-float {
+  animation: float 8s ease-in-out infinite;
+}
+
+.bg-radial-gradient {
+  background-image: radial-gradient(var(--tw-gradient-stops));
+}
+
+/* Tailwind CSS dark mode support */
+.dark {
+  color-scheme: dark;
+}
+
+.light {
+  color-scheme: light;
+}
+
+/* Ensure the html element has proper classes */
+html.dark {
+  background-color: #111827;
+}
+
+html.light {
+  background-color: #ffffff;
+}
+
+/* Body styles for theme switching */
+body.dark {
+  background-color: #111827;
+  color: #f9fafb;
+}
+
+body.light {
+  background-color: #ffffff;
+  color: #111827;
+}
+
+/* Smooth transitions */
+* {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}

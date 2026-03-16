@@ -19,6 +19,15 @@ export const initializePools = async () => {
   }
 };
 
+// ADD THIS FUNCTION - Get pool for a specific database
+export const getPool = (database) => {
+  const pool = pools[database];
+  if (!pool) {
+    throw new Error(`Database pool not found for ${database}. Please check connection.`);
+  }
+  return pool;
+};
+
 // Enhanced database operation handler with connection pooling
 export const handleDatabaseOperation = async (database, operation) => {
   try {
@@ -60,5 +69,19 @@ export const testDatabaseConnection = async (database) => {
       status: '❌ Failed',
       error: err.message
     };
+  }
+};
+
+// ADD THIS FUNCTION - Close all pools (useful for graceful shutdown)
+export const closePools = async () => {
+  try {
+    for (const [dbName, pool] of Object.entries(pools)) {
+      if (pool && pool.connected) {
+        await pool.close();
+        console.log(`✅ Database pool closed: ${dbName}`);
+      }
+    }
+  } catch (error) {
+    console.error('Error closing database pools:', error);
   }
 };

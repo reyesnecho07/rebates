@@ -1,10 +1,13 @@
+// routes/authRoutes.js
 import express from 'express';
-import { login, simpleLogin } from '../controllers/authController.js';
-import { asyncHandler } from '../middleware/errorHandler.js';
+import { login, changeUserPassword } from '../controllers/authController.js';
 
 const router = express.Router();
 
-router.post('/login', asyncHandler(login));
-router.post('/simple-login', asyncHandler(simpleLogin));
+// Login endpoint - only checks UsersDB_v1.1
+router.post('/login', login);
+
+// Change password endpoint - only updates UsersDB_v1.1
+router.post('/change-password', changeUserPassword);
 
 export default router;

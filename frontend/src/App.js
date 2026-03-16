@@ -1,10 +1,13 @@
-// App.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 
 // Import components
 import AuthPage from "./components/AuthPage";
+import HomePage from "./HomePage";
+import { ThemeProvider } from './context/ThemeContext';
+import { AuthProvider } from './context/AuthContext';
+import { DatabaseAccessProvider } from './context/DatabaseAccessContext';
 
 // Import NEXCHEM components
 import Nexchem_Dashboard from "./NEXCHEM/Nexchem_Dashboard";
@@ -13,7 +16,6 @@ import Nexchem_SalesEmployee from "./NEXCHEM/Nexchem_SalesEmployee";
 import Nexchem_CustomerRecords from "./NEXCHEM/Nexchem_CustomerRecords";
 import Nexchem_RebateSetup from "./NEXCHEM/Nexchem_RebateSetup";
 import Nexchem_Reports from "./NEXCHEM/Nexchem_Reports";
-import Nexchem_Settings from "./NEXCHEM/Nexchem_Settings";
 
 // Import VAN components
 import Van_Dashboard from "./VAN/Van_Dashboard";
@@ -22,7 +24,6 @@ import Van_SalesEmployee from "./VAN/Van_SalesEmployee";
 import Van_CustomerRecords from "./VAN/Van_CustomerRecords";
 import Van_RebateSetup from "./VAN/Van_RebateSetup";
 import Van_Reports from "./VAN/Van_Reports";
-import Van_Settings from "./VAN/Van_Settings";
 
 // Import VCP components
 import Vcp_Dashboard from "./VCP/Vcp_Dashboard";
@@ -31,11 +32,12 @@ import Vcp_SalesEmployee from "./VCP/Vcp_SalesEmployee";
 import Vcp_CustomerRecords from "./VCP/Vcp_CustomerRecords";
 import Vcp_RebateSetup from "./VCP/Vcp_RebateSetup";
 import Vcp_Reports from "./VCP/Vcp_Reports";
-import Vcp_Settings from "./VCP/Vcp_Settings";
 
 // Common components
 import Settings from "./Settings";
 import AccountSetup from "./AccountSetup";
+
+import { AccessControlProvider } from './context/AccessControlContext';
 
 // PrivateRoute wrapper
 function PrivateRoute({ isAuthenticated, children }) {
@@ -81,15 +83,11 @@ function NotFoundPage() {
           Oops! The page you're looking for seems to have wandered off into the digital wilderness.
         </p>
         
-        <p className="text-gray-500 mb-8">
-          Don't worry, even the best explorers sometimes take wrong turns.
-        </p>
-
         {/* Action Buttons */}
         <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-8">
           <button
             onClick={() => navigate(-1)}
-            className="flex items-center gap-2 px-6 py-3 bg-white text-gray-700 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all duration-300 hover:border-blue-300 font-medium"
+            className="flex items-center mt-4 gap-2 px-6 py-3 bg-white text-gray-700 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all duration-300 hover:border-blue-300 font-medium"
           >
             <ArrowLeft className="w-5 h-5" />
             Go Back
@@ -100,68 +98,154 @@ function NotFoundPage() {
   );
 }
 
-function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(
-    localStorage.getItem("isAuthenticated") === "true"
-  );
+// Main App component wrapped with providers
+function AppContent() {
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    // Check for token or user in localStorage
+    const token = localStorage.getItem("token");
+    const userStr = localStorage.getItem("currentUser");
+    return !!(token || userStr);
+  });
+
   const [loading, setLoading] = useState(true);
+  
+  // Use refs to track auth state and prevent loops
+  const lastAuthCheckRef = useRef({ token: null, user: null });
+  const authCheckTimeoutRef = useRef(null);
 
   useEffect(() => {
-    const storedAuth = localStorage.getItem("isAuthenticated");
-    setIsAuthenticated(storedAuth === "true");
+    // Quick check on mount
+    const token = localStorage.getItem("token");
+    const userStr = localStorage.getItem("currentUser");
+    console.log('🔍 App mount - Checking auth:', { 
+      hasToken: !!token,
+      hasUser: !!userStr, 
+      user: userStr ? JSON.parse(userStr)?.User_ID : null 
+    });
+    
+    if (token || userStr) {
+      setIsAuthenticated(true);
+    }
     setLoading(false);
   }, []);
 
-  // UPDATED: login handler using simple-login endpoint with fixed password "abc123"
-  const handleLogin = async (userCode, password, database) => {
-    try {
-      console.log(`Login attempt: ${userCode} in ${database} with password: ${password}`);
-
-      // Use the simple-login endpoint that validates against the selected database
-      const response = await fetch("http://192.168.100.193:5000/api/simple-login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          userCode: userCode.trim(),
-          database: database
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        // Login success
-        setIsAuthenticated(true);
-        localStorage.setItem("isAuthenticated", "true");
-        localStorage.setItem("selectedDB", database);
-
-        // Store user data
-        const userData = {
-          username: data.username,
-          role: data.userID,
-          database: database
-        };
-        localStorage.setItem("user", JSON.stringify(userData));
-
-        console.log(`✅ Login successful for ${data.username} in ${database}`);
-        return true;
-      } else {
-        console.log(`❌ Login failed: ${data.message}`);
-        return false;
+  // FIXED: Listen for auth state changes with debouncing to prevent infinite loops
+  useEffect(() => {
+    const handleAuthStateChange = () => {
+      const token = localStorage.getItem("token");
+      const userStr = localStorage.getItem("currentUser");
+      
+      // Check if auth data actually changed
+      const authDataChanged = 
+        token !== lastAuthCheckRef.current.token ||
+        userStr !== lastAuthCheckRef.current.user;
+      
+      if (!authDataChanged) {
+        // No change, skip update
+        return;
       }
-    } catch (err) {
-      console.error("Login error:", err);
-      return false;
-    }
+      
+      // Update refs
+      lastAuthCheckRef.current = { token, user: userStr };
+      
+      const shouldBeAuthenticated = !!(token || userStr);
+      
+      console.log('🔄 Auth state change detected:', { 
+        hasToken: !!token,
+        hasUser: !!userStr,
+        currentAuthState: isAuthenticated,
+        shouldBe: shouldBeAuthenticated 
+      });
+      
+      if (isAuthenticated !== shouldBeAuthenticated) {
+        console.log('🔄 Updating auth state to:', shouldBeAuthenticated);
+        setIsAuthenticated(shouldBeAuthenticated);
+      }
+    };
+
+    // FIXED: Reduced polling frequency from 500ms to 2000ms (2 seconds)
+    // This prevents the excessive logging you were seeing
+    const interval = setInterval(handleAuthStateChange, 2000);
+    
+    // Also check when window gets focus (with debouncing)
+    const handleFocus = () => {
+      // Clear any pending timeout
+      if (authCheckTimeoutRef.current) {
+        clearTimeout(authCheckTimeoutRef.current);
+      }
+      
+      // Schedule auth check after a short delay
+      authCheckTimeoutRef.current = setTimeout(handleAuthStateChange, 100);
+    };
+    
+    window.addEventListener('focus', handleFocus);
+    
+    // Also listen for storage events (when localStorage changes in another tab)
+    const handleStorageChange = (e) => {
+      if (e.key === 'token' || e.key === 'currentUser') {
+        handleAuthStateChange();
+      }
+    };
+    
+    window.addEventListener('storage', handleStorageChange);
+    
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('storage', handleStorageChange);
+      
+      if (authCheckTimeoutRef.current) {
+        clearTimeout(authCheckTimeoutRef.current);
+      }
+    };
+  }, [isAuthenticated]);
+
+  // Function for AuthPage to notify successful login
+  const handleAuthSuccess = (userData) => {
+    console.log('🎯 Auth success called from AuthPage:', userData?.User_ID);
+    
+    // Store user data
+    localStorage.setItem("currentUser", JSON.stringify(userData));
+    
+    // Update refs immediately
+    lastAuthCheckRef.current = {
+      token: localStorage.getItem("token"),
+      user: localStorage.getItem("currentUser")
+    };
+    
+    // Force state update immediately
+    setIsAuthenticated(true);
+    
+    // Force a re-render to ensure routes update
+    setTimeout(() => {
+      console.log('✅ Auth state updated, should redirect to HomePage');
+    }, 0);
   };
 
   const handleLogout = () => {
-    setIsAuthenticated(false);
+    console.log('👋 Logging out...');
+    
+    // Clear all auth data
+    localStorage.removeItem("token");
+    localStorage.removeItem("currentUser");
+    localStorage.removeItem("rememberedUser");
     localStorage.removeItem("isAuthenticated");
-    localStorage.removeItem("user");
     localStorage.removeItem("selectedDB");
+    
+    // Update refs
+    lastAuthCheckRef.current = { token: null, user: null };
+    
+    // Update state
+    setIsAuthenticated(false);
+    
+    // Force redirect to login
+    console.log('✅ Logout complete');
+    window.location.href = "/login";
+  };
+
+  const handlePasswordChangeSuccess = (userData) => {
+    console.log('✅ Password change successful');
+    handleAuthSuccess(userData);
   };
 
   if (loading) {
@@ -169,7 +253,7 @@ function App() {
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading...</p>
+          <p className="mt-4 text-gray-600">Loading application...</p>
         </div>
       </div>
     );
@@ -178,188 +262,185 @@ function App() {
   return (
     <Router>
       <Routes>
+        {/* Root redirect */}
         <Route
           path="/"
           element={
             isAuthenticated ? 
-              <Navigate to={`/${localStorage.getItem("selectedDB")?.toLowerCase()}/dashboard`} replace /> : 
+              <Navigate to="/HomePage" replace /> :
               <Navigate to="/login" replace />
           }
         />
 
         {/* Public Routes */}
-        <Route path="/login" element={<AuthPage onLogin={handleLogin} />} />
+        <Route 
+          path="/login" 
+          element={
+            isAuthenticated ? 
+              <Navigate to="/HomePage" replace /> :
+              <AuthPage 
+                onAuthSuccess={handleAuthSuccess}
+                onPasswordChangeSuccess={handlePasswordChangeSuccess}
+              />
+          } 
+        />
 
-        {/* NEXCHEM Routes */}
+        {/* Home Page */}
         <Route
-          path="/nexchem/dashboard"
+          path="/HomePage"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Nexchem_Dashboard />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/nexchem/items"
-          element={
-            <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Nexchem_ItemRecords />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/nexchem/salesemployee"
-          element={
-            <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Nexchem_SalesEmployee />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/nexchem/customer"
-          element={
-            <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Nexchem_CustomerRecords />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/nexchem/rebatesetup"
-          element={
-            <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Nexchem_RebateSetup />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/nexchem/nexchemreports"
-          element={
-            <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Nexchem_Reports />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/nexchem/settings"
-          element={
-            <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Nexchem_Settings />
+              <HomePage onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
 
-        {/* VAN Routes */}
+        {/* ========== NEXCHEM ROUTES ========== */}
         <Route
-          path="/van/dashboard"
+          path="/Nexchem_Dashboard"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Van_Dashboard />
+              <Nexchem_Dashboard onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
         <Route
-          path="/van/items"
+          path="/Nexchem_ItemRecords"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Van_ItemRecords />
+              <Nexchem_ItemRecords onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
         <Route
-          path="/van/salesemployee"
+          path="/Nexchem_SalesEmployee"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Van_SalesEmployee />
+              <Nexchem_SalesEmployee onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
         <Route
-          path="/van/customer"
+          path="/Nexchem_CustomerRecords"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Van_CustomerRecords />
+              <Nexchem_CustomerRecords onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
         <Route
-          path="/van/rebatesetup"
+          path="/Nexchem_RebateSetup"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Van_RebateSetup />
+              <Nexchem_RebateSetup onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
         <Route
-          path="/van/vanreports"
+          path="/Nexchem_Reports"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Van_Reports />
+              <Nexchem_Reports onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
-        <Route
-          path="/van/settings"
-          element={
-            <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Van_Settings />
-            </PrivateRoute>
-          }
-        />        
 
-        {/* VCP Routes */}
+        {/* ========== VAN ROUTES ========== */}
         <Route
-          path="/vcp/dashboard"
+          path="/Van_Dashboard"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Vcp_Dashboard />
+              <Van_Dashboard onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
         <Route
-          path="/vcp/items"
+          path="/Van_ItemRecords"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Vcp_ItemRecords />
+              <Van_ItemRecords onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
         <Route
-          path="/vcp/salesemployee"
+          path="/Van_SalesEmployee"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Vcp_SalesEmployee />
+              <Van_SalesEmployee onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
         <Route
-          path="/vcp/customer"
+          path="/Van_CustomerRecords"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Vcp_CustomerRecords />
+              <Van_CustomerRecords onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
         <Route
-          path="/vcp/rebatesetup"
+          path="/Van_RebateSetup"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Vcp_RebateSetup />
+              <Van_RebateSetup onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
         <Route
-          path="/vcp/vcpreports"
+          path="/Van_Reports"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Vcp_Reports />
+              <Van_Reports onLogout={handleLogout} />
+            </PrivateRoute>
+          }
+        />
+
+        {/* ========== VCP ROUTES ========== */}
+        <Route
+          path="/Vcp_Dashboard"
+          element={
+            <PrivateRoute isAuthenticated={isAuthenticated}>
+              <Vcp_Dashboard onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
         <Route
-          path="/vcp/settings"
+          path="/Vcp_ItemRecords"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Vcp_Settings />
+              <Vcp_ItemRecords onLogout={handleLogout} />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/Vcp_SalesEmployee"
+          element={
+            <PrivateRoute isAuthenticated={isAuthenticated}>
+              <Vcp_SalesEmployee onLogout={handleLogout} />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/Vcp_CustomerRecords"
+          element={
+            <PrivateRoute isAuthenticated={isAuthenticated}>
+              <Vcp_CustomerRecords onLogout={handleLogout} />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/Vcp_RebateSetup"
+          element={
+            <PrivateRoute isAuthenticated={isAuthenticated}>
+              <Vcp_RebateSetup onLogout={handleLogout} />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/Vcp_Reports"
+          element={
+            <PrivateRoute isAuthenticated={isAuthenticated}>
+              <Vcp_Reports onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
@@ -369,7 +450,7 @@ function App() {
           path="/settings"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <Settings />
+              <Settings onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
@@ -377,15 +458,30 @@ function App() {
           path="/accountsetup"
           element={
             <PrivateRoute isAuthenticated={isAuthenticated}>
-              <AccountSetup />
+              <AccountSetup onLogout={handleLogout} />
             </PrivateRoute>
           }
         />
 
-        {/* Catch-all - Updated with professional 404 page */}
+        {/* Catch-all */}
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </Router>
+  );
+}
+
+// Main App component that wraps everything with providers
+function App() {
+  return (
+    <ThemeProvider>
+      <AuthProvider>
+        <AccessControlProvider>
+          <DatabaseAccessProvider>
+            <AppContent />
+          </DatabaseAccessProvider>
+        </AccessControlProvider>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }
 

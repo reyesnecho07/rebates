@@ -1,52 +1,117 @@
-import { authenticateUser, simpleAuthenticate, formatUserName } from '../services/authService.js';
+// controllers/authController.js
+import { authenticateUser, changePassword } from '../services/userService.js';
+import jwt from 'jsonwebtoken';
 
+// ✅ Fail fast at startup if JWT_SECRET is missing
+if (!process.env.JWT_SECRET) {
+  throw new Error('FATAL: JWT_SECRET environment variable is not set. Server cannot start.');
+}
+
+// ============================================================================
+// LOGIN
+// ============================================================================
 export const login = async (req, res) => {
   try {
-    console.log("Login endpoint called!");
-    console.log("Request body:", req.body);
-    
-    const { username, password, database } = req.body;
+    const { userCode, password } = req.body;
 
-    const user = await authenticateUser(username, password, database);
-    const fullName = formatUserName(user.U_NAME);
+    if (!userCode || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Username and password are required'
+      });
+    }
 
-    console.log(`✅ User logged in: ${user.USER_CODE} from ${database}`);
-    res.json({ 
-      success: true, 
-      message: "Login successful", 
-      userID: user.USER_CODE,
-      username: fullName,
-      database: database
+    const authResult = await authenticateUser(userCode, password);
+
+    const token = jwt.sign(
+      {
+        UserID: authResult.user.UserID || authResult.user.User_ID,
+        Username: authResult.user.Username,
+        IsSuperUser: authResult.user.IsSuperUser || false,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+
+    return res.status(200).json({
+      success: true,
+      token,
+      user: {
+        ...authResult.user,
+        OneLogPwd: authResult.user.OneLogPwd
+      },
+      isFirstLogin: authResult.isFirstLogin,
+      OneLogPwd: authResult.user.OneLogPwd,
+      requirePasswordChange: authResult.isFirstLogin || authResult.user.OneLogPwd === 1,
+      message: 'Authentication successful'
     });
-  } catch (err) {
-    console.error("Error during login:", err);
-    res.status(401).json({ 
-      success: false, 
-      message: err.message 
+
+  } catch (error) {
+    console.error('🔴 Login error:', error.message);
+    return res.status(401).json({
+      success: false,
+      error: error.message || 'Authentication failed'
     });
   }
 };
 
-export const simpleLogin = async (req, res) => {
+// ============================================================================
+// CHANGE PASSWORD
+// ✅ IMPORTANT: This route MUST be protected by the auth middleware in
+//    databaseRoutes.js (or authRoutes.js). req.user is set by authMiddleware.
+//
+//    Route should be:  router.put('/change-password', auth, changeUserPassword)
+// ============================================================================
+export const changeUserPassword = async (req, res) => {
   try {
-    const { userCode, database } = req.body;
+    const { userCode, currentPassword, newPassword } = req.body;
 
-    const user = await simpleAuthenticate(userCode, database);
-    const fullName = formatUserName(user.U_NAME);
+    if (!userCode || !currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        error: 'userCode, currentPassword, and newPassword are required'
+      });
+    }
 
-    console.log(`✅ Simple login successful: ${user.USER_CODE} from ${database}`);
-    res.json({ 
-      success: true, 
-      message: "Login successful", 
-      userID: user.USER_CODE,
-      username: fullName,
-      database: database
+    // ✅ Prevent users from changing someone else's password.
+    //    req.user is populated by authMiddleware — compare against the
+    //    token-verified username so the body cannot be spoofed.
+    const tokenUsername = req.user?.Username;
+    if (tokenUsername && tokenUsername.toLowerCase() !== userCode.toLowerCase()) {
+      console.warn(
+        `⚠️ Password change blocked: token owner "${tokenUsername}" tried to change password for "${userCode}"`
+      );
+      return res.status(403).json({
+        success: false,
+        error: 'You can only change your own password'
+      });
+    }
+
+    const result = await changePassword(userCode, currentPassword, newPassword);
+
+    // Issue a fresh token after a successful password change
+    const token = jwt.sign(
+      {
+        UserID: result.user.UserID || result.user.User_ID,
+        Username: result.user.Username,
+        IsSuperUser: result.user.IsSuperUser || false,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+
+    return res.status(200).json({
+      success: true,
+      token,
+      user: result.user,
+      message: 'Password changed successfully'
     });
-  } catch (err) {
-    console.error("Error during simple login:", err);
-    res.status(401).json({ 
-      success: false, 
-      message: err.message 
+
+  } catch (error) {
+    console.error('🔴 Password change error:', error.message);
+    return res.status(400).json({
+      success: false,
+      error: error.message || 'Password change failed'
     });
   }
 };
