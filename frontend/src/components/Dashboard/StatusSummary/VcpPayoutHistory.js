@@ -194,67 +194,7 @@ const sortPayoutsByPeriod = (payouts) => {
     }));
   };
   
-  // Helper function to get calculation details for tooltip
-  const getCalculationDetails = (payout) => {
-    const isPercentage = modalCustomer?.rebateType === 'Percentage';
-    const isQtrRebate = payout.isQtrRebate;
-    
-    if (!payout.BaseAmount || payout.BaseAmount === 0) {
-      if (payout.BaseAmount === 0 && isPercentage) {
-        return 'No actual sales → Percentage = 0';
-      }
-      return 'No transactions → Base = 0';
-    }
-    
-    // Use calculation note from backend if available
-    if (payout.calculationNote) {
-      return payout.calculationNote;
-    }
-    
-    if (isPercentage) {
-      if (isQtrRebate) {
-        return `Sales: ₱${payout.totalActualSales?.toFixed(2) || '0.00'} × ${payout.percentageValue || modalCustomer?.percentageValue || 0}% = ₱${payout.BaseAmount?.toFixed(2) || '0.00'}`;
-      } else {
-        return `Actual Sales: ₱${payout.totalActualSales?.toFixed(2) || '0.00'} × ${payout.percentageValue || modalCustomer?.percentageValue || 0}% = ₱${payout.BaseAmount?.toFixed(2) || '0.00'}`;
-      }
-    } else {
-      if (isQtrRebate) {
-        const totalBase = payout.totalBaseAmount || payout.BaseAmount;
-        const qtrRebate = modalCustomer?.qtrRebate || 1;
-        return `Total Base: ₱${totalBase.toFixed(2)} × ${qtrRebate} = ₱${payout.BaseAmount.toFixed(2)}`;
-      } else {
-        return `Qty: ${payout.totalQtyForReb?.toFixed(2) || '0.00'} × ₱${modalCustomer?.rebatePerBag || '0.00'} = ₱${payout.BaseAmount?.toFixed(2) || '0.00'}`;
-      }
-    }
-  };
 
-  const getTotalAmountDetails = (payout) => {
-    const isPercentage = modalCustomer?.rebateType === 'Percentage';
-    const isQtrRebate = payout.isQtrRebate;
-    const hasPreviousBalance = payout.PreviousBalance > 0;
-    
-    let details = '';
-    
-    if (isPercentage) {
-      details = `Base (${payout.percentageValue || modalCustomer?.percentageValue || 0}% of Sales): ₱${payout.BaseAmount?.toFixed(2) || '0.00'}`;
-    } else if (isQtrRebate) {
-      details = `Quarter Rebate: ₱${payout.BaseAmount?.toFixed(2) || '0.00'}`;
-    } else {
-      details = `Base (Qty × Rate): ₱${payout.BaseAmount?.toFixed(2) || '0.00'}`;
-    }
-    
-    if (hasPreviousBalance && !isQtrRebate) {
-      details += `\n+ Previous Balance: ₱${payout.PreviousBalance?.toFixed(2) || '0.00'}`;
-      details += `\n= Total: ₱${payout.TotalAmount?.toFixed(2) || '0.00'}`;
-    }
-    
-    // Add SAP info if available
-    if (payout.SapReleasedAmount > 0) {
-      details += `\n\nSAP Released: ₱${payout.SapReleasedAmount.toFixed(2)}`;
-    }
-    
-    return details;
-  };
 
   // Format SAP date
   const formatSapDate = (dateString) => {
@@ -516,12 +456,6 @@ const sortPayoutsByPeriod = (payouts) => {
             <span className={baseAmountClasses}>
               {formatCurrency(payout.BaseAmount || 0)}
             </span>
-            {hasTransactions && (
-              <div className={tooltipClasses}>
-                {getCalculationDetails(payout)}
-                <div className={tooltipArrowClasses}></div>
-              </div>
-            )}
           </div>
         </td>
         
@@ -531,12 +465,6 @@ const sortPayoutsByPeriod = (payouts) => {
             <span className={totalAmountClasses}>
               {formatCurrency(payout.TotalAmount)}
             </span>
-            {isEligibleForPayout && (
-              <div className={tooltipClasses} style={{ whiteSpace: 'pre-line' }}>
-                {getTotalAmountDetails(payout)}
-                <div className={tooltipArrowClasses}></div>
-              </div>
-            )}
             {isNoTransactionOrNotEligible && (
               <div className={`${tooltipClasses} ${isDark ? 'bg-gray-800' : 'bg-gray-700'}`}>
                 {!hasTransactions ? 'No transactions → Total = 0' : 'Quota not met → Total = 0'}
@@ -698,24 +626,8 @@ const sortPayoutsByPeriod = (payouts) => {
             }`}>
               {formatCurrency(payout.Balance)}
             </span>
-            {isEligibleForPayout && payout.Balance >= 0 && (
-              <div className={tooltipClasses} style={{ whiteSpace: 'pre-line' }}>
-                Total: ₱{payout.TotalAmount.toFixed(2)}<br/>
-                - Released: ₱{payout.AmountReleased.toFixed(2)}<br/>
-                {hasSapData && `(SAP: ₱${payout.SapReleasedAmount.toFixed(2)})`}<br/>
-                = Balance: ₱{payout.Balance.toFixed(2)}
-                <div className={tooltipArrowClasses}></div>
-              </div>
-            )}
-            {isNoTransactionOrNotEligible && (
-              <div className={`${tooltipClasses} ${isDark ? 'bg-gray-800' : 'bg-gray-700'}`}>
-                {!hasTransactions ? 'No transactions → Total = 0' : 'No eligible transactions → Total = 0'}
-                <div className={tooltipArrowClasses}></div>
-              </div>
-            )}
           </div>
         </td>
-        
       </tr>
     );
   };

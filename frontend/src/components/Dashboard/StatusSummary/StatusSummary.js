@@ -15,25 +15,24 @@ import {
   Users,
   PhilippinePeso,
   WifiOff,
+  ChevronRight,
+  ChevronDown,
+  Layers,
 } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Silent background polling hook — never triggers a loading state
+// Silent background polling hook
 // ─────────────────────────────────────────────────────────────────────────────
 const useBackgroundPoll = ({ onFetch, intervalMs = 30_000, enabled = true }) => {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [fetchError, setFetchError]   = useState(null);
   const [countdown, setCountdown]     = useState(intervalMs / 1000);
-
   const isFetchingRef  = useRef(false);
   const timerRef       = useRef(null);
   const countdownRef   = useRef(null);
   const mountedRef     = useRef(true);
   const onFetchRef     = useRef(onFetch);
-
-  // Keep ref fresh without re-subscribing effects
   useEffect(() => { onFetchRef.current = onFetch; }, [onFetch]);
-
   const runFetch = useCallback(async () => {
     if (!mountedRef.current || isFetchingRef.current) return;
     isFetchingRef.current = true;
@@ -50,15 +49,11 @@ const useBackgroundPoll = ({ onFetch, intervalMs = 30_000, enabled = true }) => 
       isFetchingRef.current = false;
     }
   }, [intervalMs]);
-
-  // Polling interval
   useEffect(() => {
     if (!enabled) return;
     timerRef.current = setInterval(runFetch, intervalMs);
     return () => clearInterval(timerRef.current);
   }, [enabled, intervalMs, runFetch]);
-
-  // 1-second countdown ticker
   useEffect(() => {
     if (!enabled) return;
     countdownRef.current = setInterval(() => {
@@ -67,15 +62,12 @@ const useBackgroundPoll = ({ onFetch, intervalMs = 30_000, enabled = true }) => 
     }, 1_000);
     return () => clearInterval(countdownRef.current);
   }, [enabled, intervalMs]);
-
-  // Pause/resume on tab visibility
   useEffect(() => {
     const onVisibility = () => {
       if (document.hidden) {
         clearInterval(timerRef.current);
         clearInterval(countdownRef.current);
       } else {
-        // Resume immediately when tab is focused again
         runFetch();
         timerRef.current     = setInterval(runFetch, intervalMs);
         countdownRef.current = setInterval(() => {
@@ -87,44 +79,17 @@ const useBackgroundPoll = ({ onFetch, intervalMs = 30_000, enabled = true }) => 
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [runFetch, intervalMs]);
-
   useEffect(() => () => { mountedRef.current = false; }, []);
-
   return { lastUpdated, fetchError, countdown, manualRefresh: runFetch };
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Countdown ring SVG
-// ─────────────────────────────────────────────────────────────────────────────
-const CountdownRing = ({ countdown, total, size = 18, isDark }) => {
-  const r           = (size - 3) / 2;
-  const cx          = size / 2;
-  const circumference = 2 * Math.PI * r;
-  const progress    = ((total - countdown) / total) * circumference;
-
-  return (
-    <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
-      <circle cx={cx} cy={cx} r={r} fill="none"
-        stroke={isDark ? "#374151" : "#e5e7eb"} strokeWidth={2.5} />
-      <circle cx={cx} cy={cx} r={r} fill="none"
-        stroke={isDark ? "#60a5fa" : "#3b82f6"} strokeWidth={2.5}
-        strokeDasharray={circumference}
-        strokeDashoffset={circumference - progress}
-        strokeLinecap="round"
-        style={{ transition: "stroke-dashoffset 0.9s linear" }}
-      />
-    </svg>
-  );
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// StatusSummary
+// StatusSummary — grouped by customer
 // ─────────────────────────────────────────────────────────────────────────────
 const StatusSummary = ({
   customers            = [],
   filteredCustomers    = [],
   agents               = [],
-
   searchTerm           = "",   setSearchTerm           = () => {},
   selectedAgent        = "All", setSelectedAgent       = () => {},
   selectedRebateType   = "All", setSelectedRebateType  = () => {},
@@ -133,50 +98,38 @@ const StatusSummary = ({
   maxRebateAmount      = "",   setMaxRebateAmount      = () => {},
   statusSummaryPeriodFrom = "", setStatusSummaryPeriodFrom = () => {},
   statusSummaryPeriodTo   = "", setStatusSummaryPeriodTo   = () => {},
-
   currentCustomerPage     = 1,  setCurrentCustomerPage  = () => {},
   itemsPerCustomerPage    = 10,
-
   theme = "light",
-
   onCustomerClick = () => {},
   onClearFilters  = () => {},
   onApplyFilters  = () => {},
-
-  // ── Auto-fetch (silent, no loading flash) ────────────────────────────────
-  onFetchData      = null,      // async () => void — parent reloads its state
-  fetchIntervalMs  = 30_000,    // poll every 30 s by default
-  autoFetchEnabled = true,      // flip to false to pause polling
-  // ─────────────────────────────────────────────────────────────────────────
-
-  // isLoading is only used for the very first page-load skeleton
+  onFetchData      = null,
+  fetchIntervalMs  = 30_000,
+  autoFetchEnabled = true,
   isLoading = false,
 }) => {
-  const [showFilters,  setShowFilters]  = useState(false);
-  const [pageLoading,  setPageLoading]  = useState(false); // only for pagination transitions
+  const [showFilters,    setShowFilters]    = useState(false);
+  const [pageLoading,    setPageLoading]    = useState(false);
+  // Set of customer codes whose rebate-rows are expanded
+  const [expandedCustomers, setExpandedCustomers] = useState(new Set());
   const filterRef       = useRef(null);
   const filterButtonRef = useRef(null);
-
   const isDark = theme === "dark";
 
-  // ── Silent background polling ─────────────────────────────────────────────
+  // ── Silent background polling ──────────────────────────────────────────────
   const hasOnFetchData = typeof onFetchData === "function";
+  const { lastUpdated, fetchError, countdown, manualRefresh } = useBackgroundPoll({
+    onFetch:    hasOnFetchData ? onFetchData : async () => {},
+    intervalMs: fetchIntervalMs,
+    enabled:    hasOnFetchData && autoFetchEnabled,
+  });
+  useEffect(() => {
+    if (hasOnFetchData && autoFetchEnabled) manualRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-const { lastUpdated, fetchError, countdown, manualRefresh } = useBackgroundPoll({
-  onFetch:     hasOnFetchData ? onFetchData : async () => {},
-  intervalMs:  fetchIntervalMs,
-  enabled:     hasOnFetchData && autoFetchEnabled,
-});
-
-// Fire one immediate fetch on mount so table is never stale on first open
-useEffect(() => {
-  if (hasOnFetchData && autoFetchEnabled) {
-    manualRefresh();
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
-
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // ── Helpers ────────────────────────────────────────────────────────────────
   const isQuarterlyCustomer = (row) =>
     ["Quarterly", "quarterly", "Q"].includes(row.frequency);
 
@@ -256,8 +209,8 @@ useEffect(() => {
     return () => document.removeEventListener("mousedown", handler);
   }, [showFilters]);
 
-  // ── Sorting & pagination ──────────────────────────────────────────────────
-  const sortedCustomers = useMemo(() => {
+  // ── Sort filtered rows newest-first ───────────────────────────────────────
+  const sortedRows = useMemo(() => {
     return [...filteredCustomers].sort((a, b) => {
       const ts = (c) => {
         if (c.createdAt)  return new Date(c.createdAt).getTime();
@@ -270,43 +223,92 @@ useEffect(() => {
     });
   }, [filteredCustomers]);
 
+  // ── Group rows by customer code ────────────────────────────────────────────
+  const customerGroups = useMemo(() => {
+    const map = new Map();
+    sortedRows.forEach((row) => {
+      const key = row.code || row.customer || "unknown";
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          customer: row.customer,
+          code: row.code,
+          agent: row.agent,
+          color: row.color,
+          // first quarterly row wins for group-level quarterly display
+          quarterlyRow: null,
+          rows: [],
+        });
+      }
+      const group = map.get(key);
+      group.rows.push(row);
+      if (isQuarterlyCustomer(row) && !group.quarterlyRow) {
+        group.quarterlyRow = row;
+      }
+    });
+    // Aggregate financials
+    return Array.from(map.values()).map((g) => {
+      const totalRebateAmount = g.rows.reduce((s, r) => s + (r.rebateAmount || 0), 0);
+      const totalPaidAmount   = g.rows.reduce((s, r) => s + (r.paidAmount   || 0), 0);
+      const totalBalance      = g.rows.reduce((s, r) => s + (r.rebateBalance || 0), 0);
+      const rebateTypes       = [...new Set(g.rows.map((r) => r.rebateType).filter(Boolean))];
+      const agents            = [...new Set(g.rows.map((r) => r.agent).filter(Boolean))];
+      return {
+        ...g,
+        totalRebateAmount,
+        totalPaidAmount,
+        totalBalance,
+        rebateTypes,
+        agentDisplay: agents.length === 1 ? agents[0] : agents.length > 1 ? "Multiple" : "—",
+        agentInitial: agents.length === 1 ? agents[0] : "M",
+        rebateCount: g.rows.length,
+      };
+    });
+  }, [sortedRows]);
+
+  // ── Pagination at the group level ─────────────────────────────────────────
   const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(sortedCustomers.length / itemsPerCustomerPage)),
-    [sortedCustomers.length, itemsPerCustomerPage]
+    () => Math.max(1, Math.ceil(customerGroups.length / itemsPerCustomerPage)),
+    [customerGroups.length, itemsPerCustomerPage]
   );
 
-  const paginatedCustomers = useMemo(() => {
+  const paginatedGroups = useMemo(() => {
     const start = (currentCustomerPage - 1) * itemsPerCustomerPage;
-    return sortedCustomers.slice(start, start + itemsPerCustomerPage);
-  }, [sortedCustomers, currentCustomerPage, itemsPerCustomerPage]);
+    return customerGroups.slice(start, start + itemsPerCustomerPage);
+  }, [customerGroups, currentCustomerPage, itemsPerCustomerPage]);
 
-  const hasQuarterlyCustomers = useMemo(
-    () => paginatedCustomers.some(isQuarterlyCustomer),
-    [paginatedCustomers]
+  const hasAnyQuarterly = useMemo(
+    () => paginatedGroups.some((g) => g.quarterlyRow !== null),
+    [paginatedGroups]
   );
 
   const handlePageChange = useCallback((page) => {
     if (page === currentCustomerPage) return;
     setPageLoading(true);
     setCurrentCustomerPage(page);
-    // Brief visual feedback without hiding the table
     setTimeout(() => setPageLoading(false), 80);
   }, [currentCustomerPage, setCurrentCustomerPage]);
+
+  const toggleExpand = useCallback((key) => {
+    setExpandedCustomers((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
 
   // ── Styles ────────────────────────────────────────────────────────────────
   const textPrimaryClasses   = isDark ? "text-gray-100" : "text-gray-900";
   const textSecondaryClasses = isDark ? "text-gray-400" : "text-gray-600";
   const textMutedClasses     = isDark ? "text-gray-500" : "text-gray-500";
-
   const containerClasses = `rounded-lg border shadow-sm ${isDark ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200"}`;
   const headerClasses    = `flex justify-between items-center p-4 border-b ${isDark ? "border-gray-700" : "border-gray-100"}`;
-
   const searchInputClasses = `pl-8 pr-3 py-2 border rounded-md text-xs w-56 outline-none transition-all duration-150 focus:border-blue-500 focus:ring-1 focus:ring-blue-100 font-medium ${
     isDark
       ? "bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-400 focus:ring-blue-900"
       : "bg-white border-gray-300 text-gray-800 placeholder-gray-500"
   }`;
-
   const filterButtonClasses = `px-3 py-2 rounded-md border transition-all duration-150 flex items-center gap-1.5 font-medium text-xs ${
     showFilters
       ? "bg-blue-50 border-blue-300 text-blue-700"
@@ -314,30 +316,37 @@ useEffect(() => {
         ? "bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600 hover:border-gray-500"
         : "bg-white border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400"
   }`;
-
   const filterPopupClasses = `absolute top-full right-0 mt-1 w-80 rounded-md border shadow-lg z-50 p-4 ${
     isDark ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200"
   }`;
-
   const filterSelectClasses = `w-full px-3 py-2 border rounded-md text-xs outline-none transition-all duration-150 focus:border-blue-500 focus:ring-1 focus:ring-blue-100 font-medium ${
     isDark ? "bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-900" : "bg-white border-gray-300"
   }`;
-
   const filterInputClasses = `w-full pl-6 pr-2 py-1.5 border rounded-md text-xs outline-none transition-all duration-150 focus:border-blue-500 focus:ring-1 focus:ring-blue-100 ${
     isDark ? "bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-900" : "bg-white border-gray-300"
   }`;
 
-  const getTableHeaderClasses = (quarterly) =>
-    `px-4 py-2.5 items-center text-xs font-semibold border-b grid ${quarterly ? "grid-cols-9" : "grid-cols-7"} ${
-      isDark ? "bg-gray-900 border-gray-700 text-gray-300" : "bg-gray-50 border-gray-200 text-gray-700"
-    }`;
+  // Table header — always 7 cols (quarterly cols omitted at group level; shown inside expanded rows)
+const tableHeaderClasses = `px-4 py-2.5 items-center text-xs font-semibold border-b grid grid-cols-7 min-w-[700px] ${
+  hasAnyQuarterly ? "min-w-[860px]" : "min-w-[700px]"
+} ${isDark ? "bg-gray-900 border-gray-700 text-gray-300" : "bg-gray-50 border-gray-200 text-gray-700"}`;
 
-  const getTableRowClasses = (quarterly) =>
-    `px-4 py-3 items-center text-xs transition-all duration-150 grid ${quarterly ? "grid-cols-9" : "grid-cols-7"} ${
-      isDark ? "hover:bg-gray-700/50 border-gray-700" : "hover:bg-gray-50 border-gray-100"
-    }`;
+  // ── Rebate-type badge ──────────────────────────────────────────────────────
+  const RebateTypeBadge = ({ type }) => (
+    <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold whitespace-nowrap border ${
+      type === "Fixed"
+        ? isDark ? "bg-blue-900/20 text-blue-300 border-blue-700/30"       : "bg-blue-100 text-blue-700 border-blue-200"
+        : type === "Incremental"
+        ? isDark ? "bg-purple-900/20 text-purple-300 border-purple-700/30" : "bg-purple-100 text-purple-700 border-purple-200"
+        : type === "Percentage"
+        ? isDark ? "bg-orange-900/20 text-orange-300 border-orange-700/30" : "bg-orange-100 text-orange-700 border-orange-200"
+        : isDark ? "bg-gray-700 text-gray-400 border-gray-600"             : "bg-gray-100 text-gray-700 border-gray-200"
+    }`}>
+      {type || "?"}
+    </span>
+  );
 
-  // ── Skeleton shown ONLY on very first load (isLoading from parent) ────────
+  // ── Skeleton ───────────────────────────────────────────────────────────────
   const LoadingSkeleton = () => (
     <div className="animate-pulse">
       {[...Array(5)].map((_, i) => (
@@ -357,10 +366,313 @@ useEffect(() => {
     </div>
   );
 
+  // ── Expanded child row for a single rebate ────────────────────────────────
+  const RebateChildRow = ({ row, isLast }) => {
+    const isQtr = isQuarterlyCustomer(row);
+    const pct   = isQtr ? calculateProgressPercentage(row) : 0;
+    const eligibility = isQtr ? getEligibilityStatus(row, pct) : "N/A";
+    const statusText  = isQtr ? getProgressStatusText(row, pct) : "N/A";
+    const barColor    = isQtr ? getProgressBarColor(row, pct) : "";
+    const textColor   = isQtr ? getProgressTextColor(row, pct) : textMutedClasses;
+
+    return (
+      <div className={`grid grid-cols-7 px-4 py-2 items-center text-xs ${hasAnyQuarterly ? "min-w-[860px]" : "min-w-[700px]"} transition-colors ${
+        isLast ? "" : `border-b ${isDark ? "border-gray-700/50" : "border-gray-100"}`
+      } ${isDark ? "bg-gray-700/20 hover:bg-gray-700/40" : "bg-gray-50/60 hover:bg-gray-50"}`}>
+
+        {/* Indent + rebate code */}
+        <div className="col-span-2 flex items-center gap-2 pl-8">
+          <div className={`w-1 h-8 rounded-full flex-shrink-0 ${
+            row.rebateType === "Fixed"       ? "bg-blue-400"
+            : row.rebateType === "Incremental" ? "bg-purple-400"
+            : row.rebateType === "Percentage"  ? "bg-orange-400"
+            : "bg-gray-400"
+          }`} />
+          <div className="min-w-0">
+            <div
+              className={`font-medium cursor-pointer hover:text-blue-500 truncate text-xs leading-tight transition-colors ${isDark ? "text-gray-300 hover:text-blue-400" : "text-gray-700"}`}
+              onClick={() => onCustomerClick(row)}
+              title={row.rebateCode || "—"}
+            >
+              {row.rebateCode || "—"}
+            </div>
+            {isQtr && (
+              <div className={`text-[9px] leading-tight mt-0.5 ${isDark ? "text-blue-400" : "text-blue-600"}`}>
+                Quarterly
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Agent — blank (already shown on parent) */}
+        <div />
+
+        {/* Rebate Type */}
+        <div className="flex justify-center">
+          <RebateTypeBadge type={row.rebateType} />
+        </div>
+
+        {/* Progress (quarterly only, else spacer × 2) */}
+        {hasAnyQuarterly ? (
+          <>
+            <div className="min-w-[95px]">
+              {isQtr ? (
+                <div className="space-y-1">
+                  <div className={`h-1.5 w-full rounded-full overflow-hidden ${isDark ? "bg-gray-700" : "bg-gray-200"}`}>
+                    <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className={`text-[10px] font-medium capitalize truncate ${textColor}`}>
+                      {statusText.length > 8 ? statusText.substring(0, 8) + "…" : statusText}
+                    </div>
+                    <span className={`text-[10px] font-bold px-1 py-0.5 rounded whitespace-nowrap min-w-[35px] text-center ${isDark ? "text-gray-300 bg-gray-700/50" : "text-gray-700 bg-gray-100"}`}>
+                      {pct}%
+                    </span>
+                  </div>
+                </div>
+              ) : <div />}
+            </div>
+            <div className="flex justify-center">
+              {isQtr ? (
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap border ${
+                  eligibility === "Eligible"
+                    ? isDark ? "bg-green-900/20 text-green-300 border-green-700/30"   : "bg-green-100 text-green-700 border-green-200"
+                    : eligibility === "Pending"
+                    ? isDark ? "bg-yellow-900/20 text-yellow-300 border-yellow-700/30" : "bg-yellow-100 text-yellow-700 border-yellow-200"
+                    : isDark ? "bg-gray-700 text-gray-400 border-gray-600" : "bg-gray-100 text-gray-600 border-gray-200"
+                }`}>
+                  {eligibility === "Eligible"
+                    ? <><CheckCircle size={9} /><span>Eligible</span></>
+                    : eligibility === "Pending"
+                    ? <><Activity size={9} /><span>Pending</span></>
+                    : <><XCircle size={9} /><span>Not</span></>}
+                </span>
+              ) : <div />}
+            </div>
+          </>
+        ) : null}
+
+        {/* Amount */}
+        <div className="text-center">
+          <span className={`font-semibold text-xs whitespace-nowrap truncate block px-1 ${textPrimaryClasses}`}>
+            ₱{(row.rebateAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+        </div>
+
+        {/* Released */}
+        <div className="text-center">
+          <span className={`font-semibold text-xs whitespace-nowrap truncate block px-1 ${isDark ? "text-white" : "text-black"}`}>
+            ₱{(row.paidAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+        </div>
+
+        {/* Balance */}
+        <div className="text-center">
+          <span className={`font-semibold text-xs whitespace-nowrap truncate block px-1 ${isDark ? "text-white" : "text-black"}`}>
+            ₱{(row.rebateBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  // ── Group row (1 row per customer) ────────────────────────────────────────
+  const CustomerGroupRow = ({ group }) => {
+    const isExpanded   = expandedCustomers.has(group.key);
+    const isExpandable = group.rebateCount > 1;
+
+    return (
+      <>
+        {/* ── Group header ── */}
+<div
+  className={`px-4 py-3 items-center text-xs grid grid-cols-7 ${hasAnyQuarterly ? "min-w-[860px]" : "min-w-[700px]"} transition-all duration-150 ${
+    isDark ? "hover:bg-gray-700/50 border-gray-700" : "hover:bg-gray-50 border-gray-100"
+  } border-b`}
+>
+          {/* Customer */}
+          <div className="col-span-2 min-w-[160px]">
+            <div className="flex items-center gap-2">
+              {/* Expand toggle */}
+              <button
+                onClick={() => isExpandable && toggleExpand(group.key)}
+                className={`flex-shrink-0 transition-colors rounded ${
+                  isExpandable
+                    ? isDark ? "text-gray-400 hover:text-gray-200 hover:bg-gray-700" : "text-gray-400 hover:text-gray-700 hover:bg-gray-200"
+                    : "text-transparent cursor-default"
+                } p-0.5`}
+                aria-label={isExpanded ? "Collapse" : "Expand"}
+              >
+                {isExpanded
+                  ? <ChevronDown size={13} />
+                  : <ChevronRight size={13} />}
+              </button>
+
+              {/* Avatar */}
+              <div
+                className={`w-7 h-7 rounded-md flex items-center justify-center font-bold text-[11px] shadow-sm flex-shrink-0 ${
+                  isDark ? "bg-blue-900 text-blue-300" : group.color ? "" : "bg-blue-500 text-white"
+                }`}
+                style={!isDark && group.color ? { backgroundColor: group.color, color: "white" } : {}}
+              >
+                {group.customer?.charAt(0).toUpperCase() || "?"}
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div
+                  className={`font-semibold cursor-pointer hover:text-blue-600 truncate transition-colors text-xs leading-tight ${isDark ? "text-gray-100 hover:text-blue-400" : "text-gray-900"}`}
+                  onClick={() => onCustomerClick(group.rows[0])}
+                  title={group.customer || "Unknown Customer"}
+                >
+                  {group.customer || "Unknown Customer"}
+                </div>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <div className={`text-[10px] truncate leading-tight ${textSecondaryClasses}`} title={group.code}>
+                    {group.code || "No Code"}
+                  </div>
+                  {/* Rebate count badge */}
+                  {group.rebateCount > 1 && (
+                    <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-semibold border ${
+                      isDark ? "bg-gray-700 text-gray-300 border-gray-600" : "bg-gray-100 text-gray-600 border-gray-200"
+                    }`}>
+                      <Layers size={8} />
+                      {group.rebateCount}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Agent */}
+          <div className="min-w-[85px]">
+            <div className="flex items-center gap-2">
+              <div className={`w-6 h-6 rounded-md flex items-center justify-center font-bold text-[11px] ${
+                isDark
+                  ? "bg-gradient-to-br from-blue-900/40 to-indigo-900/40 border border-blue-800/30 text-blue-300"
+                  : "bg-gradient-to-br from-orange-400 to-red-500 text-white"
+              }`}>
+                {group.agentInitial?.charAt(0).toUpperCase() || "?"}
+              </div>
+              <div className={`font-medium truncate text-xs leading-tight ${textPrimaryClasses}`} title={group.agentDisplay}>
+                {group.agentDisplay}
+              </div>
+            </div>
+          </div>
+
+          {/* Rebate type(s) */}
+          <div className="min-w-[70px] flex justify-center">
+            {group.rebateTypes.length === 1 ? (
+              <RebateTypeBadge type={group.rebateTypes[0]} />
+            ) : group.rebateTypes.length > 1 ? (
+              <div className="flex flex-wrap gap-0.5 justify-center">
+                {group.rebateTypes.slice(0, 2).map((t) => (
+                  <RebateTypeBadge key={t} type={t} />
+                ))}
+                {group.rebateTypes.length > 2 && (
+                  <span className={`px-1 py-0.5 rounded text-[9px] font-semibold border ${
+                    isDark ? "bg-gray-700 text-gray-400 border-gray-600" : "bg-gray-100 text-gray-500 border-gray-200"
+                  }`}>+{group.rebateTypes.length - 2}</span>
+                )}
+              </div>
+            ) : <span className={textMutedClasses}>—</span>}
+          </div>
+
+          {/* Quarterly summary columns (spacers when multi-rebate) */}
+          {hasAnyQuarterly && (
+            <>
+              <div className="min-w-[95px]">
+                {group.quarterlyRow && group.rebateCount === 1 ? (() => {
+                  const pct = calculateProgressPercentage(group.quarterlyRow);
+                  const barColor = getProgressBarColor(group.quarterlyRow, pct);
+                  const textColor = getProgressTextColor(group.quarterlyRow, pct);
+                  const statusText = getProgressStatusText(group.quarterlyRow, pct);
+                  return (
+                    <div className="space-y-1">
+                      <div className={`h-1.5 w-full rounded-full overflow-hidden ${isDark ? "bg-gray-700" : "bg-gray-200"}`}>
+                        <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className={`text-[10px] font-medium capitalize truncate ${textColor}`}>
+                          {statusText.length > 8 ? statusText.substring(0, 8) + "…" : statusText}
+                        </div>
+                        <span className={`text-[10px] font-bold px-1 py-0.5 rounded whitespace-nowrap min-w-[35px] text-center ${isDark ? "text-gray-300 bg-gray-700/50" : "text-gray-700 bg-gray-100"}`}>
+                          {pct}%
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })() : group.rebateCount > 1 && group.quarterlyRow ? (
+                  <span className={`text-[10px] italic ${textMutedClasses}`}>See rows ↓</span>
+                ) : <div />}
+              </div>
+              <div className="flex justify-center">
+                {group.quarterlyRow && group.rebateCount === 1 ? (() => {
+                  const pct = calculateProgressPercentage(group.quarterlyRow);
+                  const eligibility = getEligibilityStatus(group.quarterlyRow, pct);
+                  return (
+                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap border ${
+                      eligibility === "Eligible"
+                        ? isDark ? "bg-green-900/20 text-green-300 border-green-700/30"   : "bg-green-100 text-green-700 border-green-200"
+                        : eligibility === "Pending"
+                        ? isDark ? "bg-yellow-900/20 text-yellow-300 border-yellow-700/30" : "bg-yellow-100 text-yellow-700 border-yellow-200"
+                        : isDark ? "bg-gray-700 text-gray-400 border-gray-600" : "bg-gray-100 text-gray-600 border-gray-200"
+                    }`}>
+                      {eligibility === "Eligible"
+                        ? <><CheckCircle size={9} /><span>Eligible</span></>
+                        : eligibility === "Pending"
+                        ? <><Activity size={9} /><span>Pending</span></>
+                        : <><XCircle size={9} /><span>Not</span></>}
+                    </span>
+                  );
+                })() : <div />}
+              </div>
+            </>
+          )}
+
+          {/* Aggregated Amount */}
+          <div className="min-w-[80px] text-center">
+            <span className={`font-bold text-xs whitespace-nowrap truncate block px-1 transition-colors duration-300 ${textPrimaryClasses}`}>
+              ₱{group.totalRebateAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            {group.rebateCount > 1 && (
+              <div className={`text-[9px] ${textMutedClasses}`}>combined</div>
+            )}
+          </div>
+
+          {/* Aggregated Released */}
+          <div className="min-w-[75px] text-center">
+            <span className={`font-bold text-xs whitespace-nowrap truncate block px-1 transition-colors duration-300 ${isDark ? "text-white" : "text-black"}`}>
+              ₱{group.totalPaidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+
+          {/* Aggregated Balance */}
+          <div className="min-w-[75px] text-center">
+            <span className={`font-bold text-xs whitespace-nowrap truncate block px-1 transition-colors duration-300 ${isDark ? "text-white" : "text-black"}`}>
+              ₱{group.totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+        </div>
+
+        {/* ── Expanded child rows ── */}
+        {isExpanded && isExpandable && (
+          <div className={`${isDark ? "bg-gray-800/60" : "bg-gray-50/40"}`}>
+            {group.rows.map((row, i) => (
+              <RebateChildRow
+                key={`${row.code}-${row.rebateCode}-${i}`}
+                row={row}
+                isLast={i === group.rows.length - 1}
+              />
+            ))}
+          </div>
+        )}
+      </>
+    );
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className={containerClasses}>
-
+    <div className={containerClasses} style={{ overflowX: 'auto' }}>
       {/* ── Header ── */}
       <div className={headerClasses}>
         <div className="flex items-center gap-3">
@@ -374,7 +686,14 @@ useEffect(() => {
           <div>
             <h2 className={`text-lg font-semibold ${textPrimaryClasses}`}>Status Summary</h2>
             <div className="flex items-center gap-2 mt-0.5">
-              <p className={`text-xs ${textSecondaryClasses}`}>Rebate eligibility and status</p>
+              <p className={`text-xs ${textSecondaryClasses}`}>
+                Rebate eligibility and status
+                {customerGroups.length > 0 && (
+                  <span className={`ml-2 font-medium ${isDark ? "text-blue-400" : "text-blue-600"}`}>
+                    · {customerGroups.length} customer{customerGroups.length !== 1 ? "s" : ""}
+                  </span>
+                )}
+              </p>
             </div>
           </div>
         </div>
@@ -397,7 +716,6 @@ useEffect(() => {
             <button ref={filterButtonRef} onClick={() => setShowFilters(!showFilters)} className={filterButtonClasses}>
               <Filter size={12} /> Filters
             </button>
-
             {showFilters && (
               <div ref={filterRef} className={filterPopupClasses}>
                 <div className="flex items-center justify-between mb-3">
@@ -406,9 +724,7 @@ useEffect(() => {
                     <X size={14} className={textSecondaryClasses} />
                   </button>
                 </div>
-
                 <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  {/* Sales Agent */}
                   <div>
                     <label className={`text-xs font-medium ${textSecondaryClasses} mb-1 block uppercase tracking-wider`}>Sales Agent</label>
                     <select value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)} className={filterSelectClasses}>
@@ -416,8 +732,6 @@ useEffect(() => {
                       {agents.map((a) => <option key={a} value={a}>{a}</option>)}
                     </select>
                   </div>
-
-                  {/* Rebate Type */}
                   <div>
                     <label className={`text-xs font-medium ${textSecondaryClasses} mb-1 block uppercase tracking-wider`}>Rebate Type</label>
                     <select value={selectedRebateType} onChange={(e) => setSelectedRebateType(e.target.value)} className={filterSelectClasses}>
@@ -427,8 +741,6 @@ useEffect(() => {
                       <option value="Percentage">Percentage</option>
                     </select>
                   </div>
-
-                  {/* Progress Status */}
                   <div>
                     <label className={`text-xs font-medium ${textSecondaryClasses} mb-1 block uppercase tracking-wider`}>Progress Status</label>
                     <select value={selectedProgressStatus} onChange={(e) => setSelectedProgressStatus(e.target.value)} className={filterSelectClasses}>
@@ -438,8 +750,6 @@ useEffect(() => {
                       <option value="Met Quota">Met Quota</option>
                     </select>
                   </div>
-
-                  {/* Rebate Amount Range */}
                   <div>
                     <label className={`text-xs font-medium ${textSecondaryClasses} mb-1 block uppercase tracking-wider`}>Rebate Amount Range</label>
                     <div className="grid grid-cols-2 gap-2">
@@ -459,8 +769,6 @@ useEffect(() => {
                       </div>
                     </div>
                   </div>
-
-                  {/* Period Range */}
                   <div>
                     <label className={`text-xs font-medium ${textSecondaryClasses} mb-1 block uppercase tracking-wider`}>Period Range</label>
                     <div className="space-y-1.5">
@@ -474,7 +782,6 @@ useEffect(() => {
                       </div>
                     </div>
                   </div>
-
                   <div className={`flex gap-1.5 pt-2 border-t ${isDark ? "border-gray-700" : "border-gray-200"}`}>
                     <button onClick={onClearFilters} className={`flex-1 px-2.5 py-1.5 rounded transition-colors text-xs font-medium border ${isDark ? "bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600" : "bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200"}`}>
                       Clear All
@@ -501,8 +808,8 @@ useEffect(() => {
         </div>
       )}
 
-      {/* ── Status Legend ── */}
-      {hasQuarterlyCustomers && (
+      {/* ── Progress Legend ── */}
+      {hasAnyQuarterly && (
         <div className={`px-4 py-2.5 border-b ${isDark ? "border-gray-700 bg-gray-800" : "border-gray-100 bg-white"}`}>
           <div className="flex items-center gap-3">
             <span className={`text-xs font-medium ${textSecondaryClasses}`}>Progress:</span>
@@ -512,13 +819,17 @@ useEffect(() => {
                 <span className={`text-xs ${textSecondaryClasses}`}>{label}</span>
               </div>
             ))}
+            <div className={`ml-auto flex items-center gap-1 text-[10px] ${textMutedClasses}`}>
+              <ChevronRight size={10} />
+              <span>Click the arrow to expand multiple rebates per customer</span>
+            </div>
           </div>
         </div>
       )}
 
       {/* ── Table Header ── */}
-      <div className={getTableHeaderClasses(hasQuarterlyCustomers)}>
-        <div className="col-span-2 min-w-[160px] flex items-center gap-1">
+      <div className={tableHeaderClasses}>
+        <div className="col-span-2 min-w-[160px] flex items-center gap-1 pl-5">
           <User size={10} className={textMutedClasses} /><span>Customer</span>
         </div>
         <div className="min-w-[85px] flex items-center gap-1">
@@ -527,15 +838,15 @@ useEffect(() => {
         <div className="min-w-[70px] flex items-center gap-0.5 justify-center">
           <Tag size={10} className={textMutedClasses} /><span>Type</span>
         </div>
-        {hasQuarterlyCustomers && (
-          <div className="min-w-[95px] flex items-center gap-1">
-            <TrendingUp size={10} className={textMutedClasses} /><span>Progress</span>
-          </div>
-        )}
-        {hasQuarterlyCustomers && (
-          <div className="min-w-[65px] flex items-center gap-1 justify-center">
-            <Activity size={10} className={textMutedClasses} /><span>Status</span>
-          </div>
+        {hasAnyQuarterly && (
+          <>
+            <div className="min-w-[95px] flex items-center gap-1">
+              <TrendingUp size={10} className={textMutedClasses} /><span>Progress</span>
+            </div>
+            <div className="min-w-[65px] flex items-center gap-1 justify-center">
+              <Activity size={10} className={textMutedClasses} /><span>Status</span>
+            </div>
+          </>
         )}
         <div className="min-w-[80px] flex items-center gap-1 justify-center">
           <PhilippinePeso size={10} className={textMutedClasses} /><span>Amount</span>
@@ -548,149 +859,14 @@ useEffect(() => {
         </div>
       </div>
 
-      {/* ── Table Body ────────────────────────────────────────────────────────
-           • isLoading  → show skeleton ONLY on first load (table is empty)
-           • pageLoading → fade the rows during quick page-change transition
-           • Background polling NEVER hides the table
-      ─────────────────────────────────────────────────────────────────────── */}
-      <div
-        className={`divide-y ${isDark ? "divide-gray-700" : "divide-gray-100"} transition-opacity duration-150 ${
-          pageLoading ? "opacity-50" : "opacity-100"
-        }`}
-      >
-        {isLoading && paginatedCustomers.length === 0 ? (
-          /* First-load skeleton — only shown when the table is genuinely empty */
+      {/* ── Table Body ── */}
+      <div className={`divide-y ${isDark ? "divide-gray-700" : "divide-gray-100"} transition-opacity duration-150 ${pageLoading ? "opacity-50" : "opacity-100"}`}>
+        {isLoading && paginatedGroups.length === 0 ? (
           <LoadingSkeleton />
-        ) : paginatedCustomers.length > 0 ? (
-          paginatedCustomers.map((row, index) => {
-            const isQuarterly = isQuarterlyCustomer(row);
-            const pct         = isQuarterly ? calculateProgressPercentage(row) : 0;
-            const eligibility = isQuarterly ? getEligibilityStatus(row, pct) : "N/A";
-            const statusText  = isQuarterly ? getProgressStatusText(row, pct) : "N/A";
-            const barColor    = isQuarterly ? getProgressBarColor(row, pct) : "";
-            const textColor   = isQuarterly ? getProgressTextColor(row, pct) : textMutedClasses;
-
-            return (
-              <div key={`${row.code}-${row.rebateCode}-${index}`} className={getTableRowClasses(isQuarterly)}>
-
-                {/* Customer */}
-                <div className="col-span-2 min-w-[160px]">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={`w-6 h-6 rounded-md flex items-center justify-center font-bold text-[11px] shadow-sm flex-shrink-0 ${isDark ? "bg-blue-900 text-blue-300" : row.color ? "" : "bg-blue-500 text-white"}`}
-                      style={!isDark && row.color ? { backgroundColor: row.color, color: "white" } : {}}
-                    >
-                      {row.customer?.charAt(0).toUpperCase() || "?"}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div
-                        className={`font-semibold cursor-pointer hover:text-blue-600 truncate transition-colors text-xs leading-tight ${isDark ? "text-gray-100 hover:text-blue-400" : "text-gray-900"}`}
-                        onClick={() => onCustomerClick(row)}
-                        title={row.customer || "Unknown Customer"}
-                      >
-                        {row.customer || "Unknown Customer"}
-                      </div>
-                      <div className={`text-[10px] truncate leading-tight mt-0.5 ${textSecondaryClasses}`} title={row.code}>
-                        {row.code || "No Code"}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Agent */}
-                <div className="min-w-[85px]">
-                  <div className="flex items-center gap-2">
-                    <div className={`w-6 h-6 rounded-md flex items-center justify-center font-bold text-[11px] ${isDark ? "bg-gradient-to-br from-blue-900/40 to-indigo-900/40 border border-blue-800/30 text-blue-300" : "bg-gradient-to-br from-orange-400 to-red-500 text-white"}`}>
-                      {row.agent?.charAt(0).toUpperCase() || "?"}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className={`font-medium truncate text-xs leading-tight ${textPrimaryClasses}`} title={row.agent || "Unknown Agent"}>
-                        {row.agent || "Unknown Agent"}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Rebate Type */}
-                <div className="min-w-[70px] flex justify-center">
-                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold whitespace-nowrap border ${
-                    row.rebateType === "Fixed"
-                      ? isDark ? "bg-blue-900/20 text-blue-300 border-blue-700/30"     : "bg-blue-100 text-blue-700 border-blue-200"
-                      : row.rebateType === "Incremental"
-                      ? isDark ? "bg-purple-900/20 text-purple-300 border-purple-700/30" : "bg-purple-100 text-purple-700 border-purple-200"
-                      : row.rebateType === "Percentage"
-                      ? isDark ? "bg-orange-900/20 text-orange-300 border-orange-700/30" : "bg-orange-100 text-orange-700 border-orange-200"
-                      : isDark ? "bg-gray-700 text-gray-400 border-gray-600" : "bg-gray-100 text-gray-700 border-gray-200"
-                  }`}>
-                    {row.rebateType || "?"}
-                  </span>
-                </div>
-
-                {/* Progress */}
-                {isQuarterly && (
-                  <div className="min-w-[95px]">
-                    <div className="space-y-1">
-                      <div className={`h-1.5 w-full rounded-full overflow-hidden ${isDark ? "bg-gray-700" : "bg-gray-200"}`}>
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${barColor}`}
-                          style={{ width: `${Math.min(pct, 100)}%` }}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between gap-2">
-                        <div className={`text-[10px] font-medium capitalize truncate ${textColor}`}>
-                          {statusText.length > 8 ? statusText.substring(0, 8) + "…" : statusText}
-                        </div>
-                        <span className={`text-[10px] font-bold px-1 py-0.5 rounded whitespace-nowrap min-w-[35px] text-center ${isDark ? "text-gray-300 bg-gray-700/50" : "text-gray-700 bg-gray-100"}`}>
-                          {pct}%
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Eligibility */}
-                {isQuarterly && (
-                  <div className="min-w-[65px] flex justify-center">
-                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap border ${
-                      eligibility === "Eligible"
-                        ? isDark ? "bg-green-900/20 text-green-300 border-green-700/30"   : "bg-green-100 text-green-700 border-green-200"
-                        : eligibility === "Pending"
-                        ? isDark ? "bg-yellow-900/20 text-yellow-300 border-yellow-700/30" : "bg-yellow-100 text-yellow-700 border-yellow-200"
-                        : isDark ? "bg-gray-700 text-gray-400 border-gray-600" : "bg-gray-100 text-gray-600 border-gray-200"
-                    }`}>
-                      {eligibility === "Eligible"
-                        ? <><CheckCircle size={9} /><span>Eligible</span></>
-                        : eligibility === "Pending"
-                        ? <><Activity size={9} /><span>Pending</span></>
-                        : <><XCircle size={9} /><span>Not</span></>}
-                    </span>
-                  </div>
-                )}
-
-                {/* Amount — animates smoothly when value changes via polling */}
-                <div className="min-w-[80px] text-center">
-                  <span className={`font-bold text-xs whitespace-nowrap truncate block px-1 transition-colors duration-300 ${textPrimaryClasses}`}>
-                    ₱{(row.rebateAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-
-                {/* Released */}
-                <div className="min-w-[75px] text-center">
-                  <span className={`font-bold text-xs whitespace-nowrap truncate block px-1 transition-colors duration-300 ${isDark ? "text-white" : "text-black"}`}>
-                    ₱{(row.paidAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-
-                {/* Balance */}
-                <div className="min-w-[75px] text-center">
-                  <span className={`font-bold text-xs whitespace-nowrap truncate block px-1 transition-colors duration-300 ${isDark ? "text-white" : "text-black"}`}>
-                    ₱{(row.rebateBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-
-              </div>
-            );
-          })
+        ) : paginatedGroups.length > 0 ? (
+          paginatedGroups.map((group) => (
+            <CustomerGroupRow key={group.key} group={group} />
+          ))
         ) : (
           <div className={`py-12 px-4 text-center ${isDark ? "bg-gray-800" : "bg-white"}`}>
             <div className={`w-16 h-16 mx-auto rounded-lg flex items-center justify-center mb-4 ${isDark ? "bg-gray-700" : "bg-gray-100"}`}>
@@ -703,12 +879,15 @@ useEffect(() => {
       </div>
 
       {/* ── Pagination ── */}
-      {sortedCustomers.length > 0 && (
+      {customerGroups.length > 0 && (
         <div className={`px-4 py-3 border-t rounded-b-lg flex justify-between items-center ${isDark ? "border-gray-700 bg-gray-800" : "border-gray-200 bg-white"}`}>
           <div className={`text-xs ${textSecondaryClasses}`}>
             Showing {(currentCustomerPage - 1) * itemsPerCustomerPage + 1} to{" "}
-            {Math.min(currentCustomerPage * itemsPerCustomerPage, sortedCustomers.length)} of{" "}
-            {sortedCustomers.length} customers
+            {Math.min(currentCustomerPage * itemsPerCustomerPage, customerGroups.length)} of{" "}
+            {customerGroups.length} customers
+            <span className={`ml-1.5 ${textMutedClasses}`}>
+              ({sortedRows.length} rebate{sortedRows.length !== 1 ? "s" : ""} total)
+            </span>
           </div>
           <div className="flex items-center gap-1">
             <button
@@ -720,7 +899,6 @@ useEffect(() => {
                   : isDark ? "text-gray-300 border-gray-600 hover:bg-gray-700 hover:border-gray-500" : "text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400"
               }`}
             >Prev</button>
-
             <div className="flex items-center gap-0.5">
               {Array.from({ length: totalPages }, (_, i) => i + 1)
                 .filter(p => p === 1 || p === totalPages || (p >= currentCustomerPage - 1 && p <= currentCustomerPage + 1))
@@ -742,7 +920,6 @@ useEffect(() => {
                   );
                 })}
             </div>
-
             <button
               onClick={() => handlePageChange(currentCustomerPage + 1)}
               disabled={currentCustomerPage === totalPages || pageLoading}
