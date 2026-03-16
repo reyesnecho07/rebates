@@ -1631,7 +1631,7 @@ function Nexchem_RebateSetup() {
               <div className="space-y-3">
                 <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-blue-500" />
-                  Date From
+                  Date From...
                 </label>
                 <input 
                   type="date" 
