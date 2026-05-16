@@ -9,63 +9,73 @@ import {
   Users,
   Blocks,
   Clock,
-  ShieldAlert,
   Lock,
 } from 'lucide-react';
-import useAccessControl from '../../../hooks/useAccessControl'; // ← the working hook
+import useAccessControl from '../../../hooks/useAccessControl';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AccessBadge — small visual pill shown in the modal header
-// ─────────────────────────────────────────────────────────────────────────────
-const AccessBadge = ({ label, granted, isDark }) => (
-  <span
-    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border
-      ${granted
-        ? isDark
-          ? 'bg-green-900/30 border-green-700/50 text-green-300'
-          : 'bg-green-50 border-green-200 text-green-700'
-        : isDark
-          ? 'bg-gray-800/50 border-gray-700 text-gray-500'
-          : 'bg-gray-100 border-gray-200 text-gray-400'
-      }`}
-  >
-    {granted ? '✓' : '✗'} {label}
-  </span>
-);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// NoAccessOverlay — shown inside the modal when canView is false
+// NoAccessOverlay
 // ─────────────────────────────────────────────────────────────────────────────
 const NoAccessOverlay = ({ isDark, onClose }) => (
-  <div className="flex flex-col items-center justify-center h-full gap-4 p-8 text-center">
-    <div
-      className={`w-16 h-16 rounded-2xl flex items-center justify-center
-        ${isDark
-          ? 'bg-red-900/30 border border-red-700/40'
-          : 'bg-red-50 border border-red-200'}`}
-    >
-      <Lock size={28} className={isDark ? 'text-red-400' : 'text-red-500'} />
+  <div className="flex flex-col items-center justify-center flex-1 gap-4 p-8 text-center">
+    <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${
+      isDark ? 'bg-slate-700 border border-slate-600' : 'bg-red-50 border border-red-200'
+    }`}>
+      <Lock size={24} className={isDark ? 'text-red-400' : 'text-red-500'} />
     </div>
     <div>
-      <h3 className={`text-base font-bold mb-1 ${isDark ? 'text-gray-100' : 'text-gray-800'}`}>
+      <h3 className={`text-sm font-bold mb-1 ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
         Access Restricted
       </h3>
-      <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+      <p className={`text-xs leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
         You don't have permission to view this rebate program.
         <br />Contact your administrator for access.
       </p>
     </div>
     <button
       onClick={onClose}
-      className={`px-4 py-2 rounded-lg text-xs font-medium transition-colors
-        ${isDark
-          ? 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-          : 'bg-gray-100 hover:bg-gray-200 text-gray-700'}`}
+      className={`px-4 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+        isDark
+          ? 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'
+          : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
+      }`}
     >
       Close
     </button>
   </div>
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// InfoCard — compact stat pill in the header strip
+// ─────────────────────────────────────────────────────────────────────────────
+const INFO_ACCENT = {
+  red:    { icon: 'from-rose-500 to-red-600',     light: 'bg-rose-50 border-rose-200 text-rose-700',       dark: 'bg-rose-900/20 border-rose-700/30 text-rose-300'    },
+  blue:   { icon: 'from-blue-500 to-indigo-600',  light: 'bg-blue-50 border-blue-200 text-blue-700',       dark: 'bg-blue-900/20 border-blue-700/30 text-blue-300'    },
+  amber:  { icon: 'from-amber-500 to-orange-500', light: 'bg-amber-50 border-amber-200 text-amber-700',    dark: 'bg-amber-900/20 border-amber-700/30 text-amber-300'  },
+  violet: { icon: 'from-violet-500 to-purple-600',light: 'bg-violet-50 border-violet-200 text-violet-700', dark: 'bg-violet-900/20 border-violet-700/30 text-violet-300'},
+  emerald:{ icon: 'from-emerald-500 to-teal-600', light: 'bg-emerald-50 border-emerald-200 text-emerald-700',dark: 'bg-emerald-900/20 border-emerald-700/30 text-emerald-300'},
+};
+
+const InfoCard = ({ icon: Icon, label, value, color, isDark }) => {
+  const a = INFO_ACCENT[color] || INFO_ACCENT.blue;
+  return (
+    <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
+      isDark ? a.dark : a.light
+    }`}>
+      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br ${a.icon} shadow-sm`}>
+        <Icon size={14} className="text-white" />
+      </div>
+      <div className="min-w-0">
+        <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 opacity-70 ${
+          isDark ? 'text-slate-400' : 'text-slate-500'
+        }`}>{label}</p>
+        <p className={`text-xs font-bold truncate ${isDark ? 'text-slate-100' : 'text-slate-800'}`}>
+          {value || '—'}
+        </p>
+      </div>
+    </div>
+  );
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RebateDetailsModal
@@ -82,9 +92,6 @@ const RebateDetailsModal = ({
   editingItems,
   setEditingItems,
   theme = 'light',
-  // Route path of the current rebate page — used for access control lookup.
-  // Example: "/Nexchem_RebateSetup" or "/Van_RebateSetup"
-  // Must match the RoutePath stored in the NavItems table.
   routePath,
   renderFixedCustomerTable,
   renderIncrementalCustomerTable,
@@ -95,13 +102,8 @@ const RebateDetailsModal = ({
 }) => {
   const [activeTab, setActiveTab] = useState('customers');
   const isDark = theme === 'dark';
+  const { access, accessLoading } = useAccessControl(routePath);
 
-
-  // ── Access control — uses the same working hook as Nexchem_SalesEmployee ──
-  // Syncs on first visit, then fetches with user → group → role fallback.
-  const { access, accessLoading, accessError } = useAccessControl(routePath);
-
-  // ── Close helper ──────────────────────────────────────────────────────────
   const closeModal = () => {
     setSelectedRebate(null);
     setRebateDetails(null);
@@ -110,278 +112,162 @@ const RebateDetailsModal = ({
     setEditingItems({});
   };
 
-  // ── Guard: don't render if no rebate selected ─────────────────────────────
   if (!selectedRebate) return null;
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Styling helpers
-  // ─────────────────────────────────────────────────────────────────────────
-  const cardClasses = (color) => {
-    const base = 'rounded-xl border shadow-sm p-4 transition-all duration-200';
-    if (isDark) {
-      const darkColors = {
-        red:    'bg-gradient-to-br from-red-900/20    to-red-800/20    border-red-700/30',
-        blue:   'bg-gradient-to-br from-blue-900/20   to-blue-800/20   border-blue-700/30',
-        yellow: 'bg-gradient-to-br from-yellow-900/20 to-yellow-800/20 border-yellow-700/30',
-        green:  'bg-gradient-to-br from-green-900/20  to-green-800/20  border-green-700/30',
-        purple: 'bg-gradient-to-br from-purple-900/20 to-purple-800/20 border-purple-700/30',
-      };
-      return `${base} ${darkColors[color] || darkColors.blue}`;
-    }
-    const lightColors = {
-      red:    'bg-gradient-to-br from-red-50    to-red-100    border-red-200',
-      blue:   'bg-gradient-to-br from-blue-50   to-blue-100   border-blue-200',
-      yellow: 'bg-gradient-to-br from-yellow-50 to-yellow-100 border-yellow-200',
-      green:  'bg-gradient-to-br from-green-50  to-green-100  border-green-200',
-      purple: 'bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200',
-    };
-    return `${base} ${lightColors[color] || lightColors.blue}`;
+  // ── Period string ─────────────────────────────────────────────────────────
+  const periodStr = (() => {
+    if (rebateDetails?.dateFrom && rebateDetails?.dateTo)
+      return `${rebateDetails.dateFrom} – ${rebateDetails.dateTo}`;
+    if (selectedRebate?.from && selectedRebate?.to)
+      return `${selectedRebate.from} – ${selectedRebate.to}`;
+    if (rebateDetails?.rebateDetails?.dateFrom && rebateDetails?.rebateDetails?.dateTo)
+      return `${rebateDetails.rebateDetails.dateFrom} – ${rebateDetails.rebateDetails.dateTo}`;
+    return 'Not specified';
+  })();
+
+  // ── Tab label helpers ─────────────────────────────────────────────────────
+  const customerTabLabel =
+    rebateDetails?.rebateType === 'Incremental' ? 'Customer Ranges' : 'Customer Quotas';
+  const customerTabSub =
+    rebateDetails?.rebateType === 'Fixed'       ? 'Manage customer quotas and QTR rebate'
+    : rebateDetails?.rebateType === 'Incremental' ? 'Manage customer ranges and rebate per bag'
+    : 'Manage customer quotas for percentage rebate';
+
+  const itemTabLabel =
+    rebateDetails?.rebateType === 'Fixed'       ? 'Rebate Items'
+    : rebateDetails?.rebateType === 'Incremental' ? 'Item Ranges'
+    : 'Percentage Items';
+  const itemTabSub =
+    rebateDetails?.rebateType === 'Fixed'       ? 'Manage items and their rebate values'
+    : rebateDetails?.rebateType === 'Incremental' ? 'Manage item ranges and rebate per bag'
+    : 'Manage items and their percentage values';
+
+  // ── Theme tokens ──────────────────────────────────────────────────────────
+  const T = {
+    overlay:   isDark ? 'bg-black/75'         : 'bg-black/60',
+    modal:     isDark ? 'bg-slate-900 border-slate-700/60' : 'bg-slate-50 border-slate-200',
+    header:    isDark ? 'bg-slate-800 border-slate-700'    : 'bg-white border-slate-200',
+    tabBar:    isDark ? 'bg-slate-800 border-slate-700'    : 'bg-white border-slate-200',
+    tabTrack:  isDark ? 'bg-slate-700/60'                  : 'bg-slate-100',
+    tabActive: 'bg-blue-600 text-white shadow',
+    tabIdle:   isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-800',
+    content:   isDark ? 'bg-slate-900/60'                  : 'bg-slate-50',
+    card:      isDark ? 'bg-slate-800 border-slate-700'    : 'bg-white border-slate-200',
+    cardHead:  isDark ? 'bg-slate-800/80 border-slate-700' : 'bg-slate-50 border-slate-200',
+    body:      isDark ? 'bg-slate-800'                     : 'bg-white',
+    tp:        isDark ? 'text-slate-100'  : 'text-slate-800',
+    ts:        isDark ? 'text-slate-400'  : 'text-slate-500',
+    tm:        isDark ? 'text-slate-500'  : 'text-slate-400',
+    closeBtn:  isDark
+      ? 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600 hover:text-slate-200'
+      : 'bg-white border-slate-300 text-slate-500 hover:bg-slate-100 hover:text-slate-800',
+    badge:     isDark ? 'bg-blue-900/40 text-blue-300'  : 'bg-blue-100 text-blue-600',
   };
-
-  const cardIconBg = (color) => {
-    const gradients = {
-      red:    'from-red-500    to-red-600',
-      blue:   'from-blue-500   to-blue-600',
-      yellow: 'from-yellow-500 to-yellow-600',
-      green:  'from-green-500  to-green-600',
-      purple: 'from-purple-500 to-purple-600',
-    };
-    return `w-10 h-10 rounded-lg flex items-center justify-center shadow bg-gradient-to-br ${gradients[color] || gradients.blue}`;
-  };
-
-  const cardLabelColor = (color) => {
-    if (isDark) return 'text-gray-400';
-    const colors = {
-      red:    'text-red-600',
-      blue:   'text-blue-600',
-      yellow: 'text-yellow-600',
-      green:  'text-green-600',
-      purple: 'text-purple-600',
-    };
-    return colors[color] || colors.blue;
-  };
-
-  const tabBtnClasses = (isActive) => {
-    const base = 'flex items-center gap-2 px-5 py-2 rounded-md text-xs font-medium transition-all min-w-[140px] justify-center';
-    if (isDark) {
-      return isActive
-        ? `${base} bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow`
-        : `${base} text-gray-400 hover:text-gray-200`;
-    }
-    return isActive
-      ? `${base} bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow`
-      : `${base} text-gray-600 hover:text-gray-800`;
-  };
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Layout classes
-  // ─────────────────────────────────────────────────────────────────────────
-  const asideClass = `
-    fixed inset-0 flex items-center justify-center z-50
-    backdrop-blur-md transition-all duration-300
-    ${isDark ? 'bg-black/70' : 'bg-black/60'}
-  `;
-
-  const containerClass = `
-    rounded-3xl w-[80%] max-w-[1400px] max-h-[95vh] overflow-hidden
-    relative shadow-2xl transition-all duration-300
-    ${isDark
-      ? 'bg-gray-800 border border-gray-700/50 backdrop-blur-sm'
-      : 'bg-white border border-white/50 backdrop-blur-sm'}
-  `;
 
   return (
-    <div className={asideClass} onClick={closeModal}>
-      <div className={containerClass} onClick={e => e.stopPropagation()}>
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm ${T.overlay}`}
+      onClick={closeModal}
+    >
+      <div
+        className={`flex flex-col rounded-2xl border shadow-2xl w-[88%] max-w-[1380px] h-[92vh] overflow-hidden relative font-sans ${T.modal}`}
+        onClick={e => e.stopPropagation()}
+      >
 
-        {/* ── Close button ───────────────────────────────────────────────── */}
+        {/* ── Close button ─────────────────────────────────────────────────── */}
         <button
           onClick={closeModal}
-          className={`absolute right-4 top-4 z-10 w-8 h-8 flex items-center justify-center
-            rounded-lg transition-all duration-200 shadow-sm hover:shadow border
-            ${isDark
-              ? 'bg-gray-700 hover:bg-gray-600 border-gray-600 text-gray-400 hover:text-gray-200'
-              : 'bg-white hover:bg-gray-100 border-gray-300 text-gray-600 hover:text-gray-800'}`}
+          className={`absolute right-4 top-4 z-20 w-8 h-8 flex items-center justify-center rounded-lg border transition-all shadow-sm ${T.closeBtn}`}
         >
-          <X size={18} />
+          <X size={16} />
         </button>
 
-        {/* ── Header ─────────────────────────────────────────────────────── */}
-        <div className={`border-b px-6 py-4 ${isDark ? 'border-gray-700' : 'border-blue-100'}`}>
+        {/* ── Header ───────────────────────────────────────────────────────── */}
+        <div className={`flex-shrink-0 border-b px-6 py-4 ${T.header}`}>
 
-          {/* Title row */}
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-lg flex items-center justify-center
-              bg-gradient-to-br from-blue-500 to-blue-600 shadow">
-              <HandCoins size={20} className="text-white" />
+          {/* Title */}
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-gradient-to-br from-blue-600 to-indigo-700 shadow">
+              <HandCoins size={17} className="text-white" />
             </div>
             <div>
-              <h3 className={`text-lg font-bold ${isDark ? 'text-gray-100' : 'text-gray-800'}`}>
-                Rebate Program Details
-              </h3>
-              <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+              <h2 className={`text-sm font-bold leading-none ${T.tp}`}>Rebate Program Details</h2>
+              <p className={`text-[11px] mt-0.5 ${T.ts}`}>
                 View and manage rebate program information, customers, and items
               </p>
             </div>
           </div>
 
-          {/* ── Info cards ────────────────────────────────────────────────── */}
-          <div className="grid grid-cols-5 gap-3">
-            {/* Rebate Code */}
-            <div className={cardClasses('red')}>
-              <div className="flex items-start gap-3">
-                <div className={cardIconBg('red')}><FileText size={14} className="text-white" /></div>
-                <div className="flex-1 min-w-0">
-                  <div className={`text-xs font-medium mb-1 ${cardLabelColor('red')}`}>Rebate Code</div>
-                  <div className={`text-sm font-bold truncate ${isDark ? 'text-white' : 'text-black'}`}>
-                    {selectedRebate.code}
-                  </div>
-                </div>
-              </div>
-            </div>
-            {/* Rebate Type */}
-            <div className={cardClasses('blue')}>
-              <div className="flex items-start gap-3">
-                <div className={cardIconBg('blue')}><BarChart2 size={14} className="text-white" /></div>
-                <div className="flex-1 min-w-0">
-                  <div className={`text-xs font-medium mb-1 ${cardLabelColor('blue')}`}>Rebate Type</div>
-                  <div className={`text-sm font-bold truncate ${isDark ? 'text-white' : 'text-black'}`}>
-                    {rebateDetails?.rebateType}
-                  </div>
-                </div>
-              </div>
-            </div>
-            {/* Sales Employee */}
-            <div className={cardClasses('yellow')}>
-              <div className="flex items-start gap-3">
-                <div className={cardIconBg('yellow')}><User size={14} className="text-white" /></div>
-                <div className="flex-1 min-w-0">
-                  <div className={`text-xs font-medium mb-1 ${cardLabelColor('yellow')}`}>Sales Employee</div>
-                  <div className={`text-sm font-bold truncate ${isDark ? 'text-white' : 'text-black'}`}>
-                    {rebateDetails?.salesEmployee}
-                  </div>
-                </div>
-              </div>
-            </div>
-            {/* Frequency */}
-            <div className={cardClasses('purple')}>
-              <div className="flex items-start gap-3">
-                <div className={cardIconBg('purple')}><Clock size={14} className="text-white" /></div>
-                <div className="flex-1 min-w-0">
-                  <div className={`text-xs font-medium mb-1 ${cardLabelColor('purple')}`}>Frequency</div>
-                  <div className={`text-sm font-bold truncate ${isDark ? 'text-white' : 'text-black'}`}>
-                    {rebateDetails?.frequency || 'Quarterly'}
-                  </div>
-                </div>
-              </div>
-            </div>
-            {/* Period */}
-            <div className={cardClasses('green')}>
-              <div className="flex items-start gap-3">
-                <div className={cardIconBg('green')}><Calendar size={14} className="text-white" /></div>
-                <div className="flex-1 min-w-0">
-                  <div className={`text-xs font-medium mb-1 ${cardLabelColor('green')}`}>Period</div>
-                  <div className={`text-sm font-bold truncate ${isDark ? 'text-white' : 'text-black'}`}>
-                    {(() => {
-                      if (rebateDetails?.dateFrom && rebateDetails?.dateTo)
-                        return `${rebateDetails.dateFrom} to ${rebateDetails.dateTo}`;
-                      if (selectedRebate?.from && selectedRebate?.to)
-                        return `${selectedRebate.from} to ${selectedRebate.to}`;
-                      if (rebateDetails?.rebateDetails?.dateFrom && rebateDetails?.rebateDetails?.dateTo)
-                        return `${rebateDetails.rebateDetails.dateFrom} to ${rebateDetails.rebateDetails.dateTo}`;
-                      return 'Period not specified';
-                    })()}
-                  </div>
-                </div>
-              </div>
-            </div>
+          {/* Info strip */}
+          <div className="grid grid-cols-5 gap-2.5">
+            <InfoCard icon={FileText}  label="Rebate Code"    value={selectedRebate.code}              color="red"    isDark={isDark} />
+            <InfoCard icon={BarChart2} label="Rebate Type"    value={rebateDetails?.rebateType}        color="blue"   isDark={isDark} />
+            <InfoCard icon={User}      label="Sales Employee" value={rebateDetails?.salesEmployee}     color="amber"  isDark={isDark} />
+            <InfoCard icon={Clock}     label="Frequency"      value={rebateDetails?.frequency || 'Quarterly'} color="violet" isDark={isDark} />
+            <InfoCard icon={Calendar}  label="Period"         value={periodStr}                        color="emerald" isDark={isDark} />
           </div>
         </div>
 
-        {/* ── Content area ───────────────────────────────────────────────── */}
-        <div className="flex flex-col h-[calc(95vh-220px)]">
+        {/* ── Body ─────────────────────────────────────────────────────────── */}
+        <div className="flex flex-col flex-1 min-h-0">
 
-          {/* ── Loading state ─────────────────────────────────────────────── */}
+          {/* Loading */}
           {accessLoading ? (
             <div className="flex flex-col items-center justify-center flex-1 gap-3">
-              <div className={`w-10 h-10 rounded-full border-4 border-t-transparent animate-spin
-                ${isDark ? 'border-blue-400' : 'border-blue-500'}`} />
-              <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                Checking permissions…
-              </p>
+              <div className={`w-9 h-9 rounded-full border-4 border-t-transparent animate-spin ${
+                isDark ? 'border-blue-400' : 'border-blue-500'
+              }`} />
+              <p className={`text-xs ${T.ts}`}>Checking permissions…</p>
             </div>
 
           ) : !access.canView ? (
-            /* ── No access overlay ──────────────────────────────────────── */
             <NoAccessOverlay isDark={isDark} onClose={closeModal} />
 
           ) : (
-            /* ── Main content (user has canView) ────────────────────────── */
             <>
-              {/* Tabs + action buttons */}
-              <div className={`border-b px-6 py-3 ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
-                <div className="flex items-center justify-between">
-                  <div className={`flex items-center gap-1 rounded-lg p-1
-                    ${isDark ? 'bg-gray-700' : 'bg-gray-100'}`}>
-                    {[
-                      { icon: Users,  label: 'Customers', value: 'customers' },
-                      { icon: Blocks, label: 'Items',     value: 'items'     },
-                    ].map(tab => (
-                      <button
-                        key={tab.value}
-                        className={tabBtnClasses(activeTab === tab.value)}
-                        onClick={() => setActiveTab(tab.value)}
-                      >
-                        <tab.icon size={16} />
-                        {tab.label}
-                        {tab.value === 'customers' && rebateDetails?.customers && (
-                          <span className={`text-xs px-2 py-1 rounded-full font-semibold
-                            ${isDark ? 'bg-blue-900 text-blue-300' : 'bg-blue-100 text-blue-600'}`}>
-                            {rebateDetails.customers.length}
-                          </span>
-                        )}
-                        {tab.value === 'items' && rebateDetails?.items && (
-                          <span className={`text-xs px-2 py-1 rounded-full font-semibold
-                            ${isDark ? 'bg-blue-900 text-blue-300' : 'bg-blue-100 text-blue-600'}`}>
-                            {rebateDetails.items.length}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
+              {/* ── Tab bar ─────────────────────────────────────────────── */}
+              <div className={`flex-shrink-0 border-b px-6 py-2.5 flex items-center gap-3 ${T.tabBar}`}>
+                <div className={`flex items-center gap-1 rounded-lg p-1 ${T.tabTrack}`}>
+                  {[
+                    { icon: Users,  label: 'Customers', value: 'customers', count: rebateDetails?.customers?.length },
+                    { icon: Blocks, label: 'Items',     value: 'items',     count: rebateDetails?.items?.length     },
+                  ].map(tab => (
+                    <button
+                      key={tab.value}
+                      onClick={() => setActiveTab(tab.value)}
+                      className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                        activeTab === tab.value ? T.tabActive : T.tabIdle
+                      }`}
+                    >
+                      <tab.icon size={14} />
+                      {tab.label}
+                      {tab.count != null && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                          activeTab === tab.value
+                            ? 'bg-white/20 text-white'
+                            : T.badge
+                        }`}>
+                          {tab.count}
+                        </span>
+                      )}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Tab content */}
-              <div className={`flex-1 overflow-auto p-6 ${isDark ? 'bg-gray-900/30' : 'bg-white'}`}>
+              {/* ── Tab content ─────────────────────────────────────────── */}
+              <div className={`flex flex-col flex-1 min-h-0 p-5 ${T.content}`}>
 
-                {/* CUSTOMERS TAB */}
+                {/* CUSTOMERS */}
                 {activeTab === 'customers' && (
-                  <div className={`rounded-xl border shadow-sm overflow-hidden
-                    ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
-                    <div className={`p-4 border-b
-                      ${isDark
-                        ? 'border-gray-700 bg-gradient-to-r from-gray-800 to-gray-900'
-                        : 'border-gray-200 bg-gradient-to-r from-gray-50 to-gray-100'}`}>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className={`text-base font-bold uppercase tracking-wider
-                            ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                            {rebateDetails?.rebateType === 'Fixed'       ? 'Customer Quotas' :
-                             rebateDetails?.rebateType === 'Incremental' ? 'Customer Ranges' :
-                             'Customer Quotas'}
-                          </h4>
-                          <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                            {rebateDetails?.rebateType === 'Fixed'
-                              ? 'Manage customer quotas and QTR rebate'
-                              : rebateDetails?.rebateType === 'Incremental'
-                              ? 'Manage customer ranges and rebate per bag'
-                              : 'Manage customer quotas for percentage rebate'}
-                          </p>
-                        </div>
-                      </div>
+                  <div className={`flex flex-col flex-1 min-h-0 rounded-xl border shadow-sm overflow-hidden ${T.card}`}>
+                    <div className={`flex-shrink-0 px-5 py-3 border-b ${T.cardHead}`}>
+                      <h4 className={`text-xs font-bold uppercase tracking-widest ${T.tp}`}>
+                        {customerTabLabel}
+                      </h4>
+                      <p className={`text-[11px] mt-0.5 ${T.ts}`}>{customerTabSub}</p>
                     </div>
-                    <div className={`overflow-auto max-h-[470px] ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+                    <div className={`flex-1 min-h-0 overflow-auto ${T.body}`}>
                       {rebateDetails?.rebateType === 'Fixed'
                         ? renderFixedCustomerTable({ access })
                         : rebateDetails?.rebateType === 'Incremental'
@@ -391,33 +277,36 @@ const RebateDetailsModal = ({
                   </div>
                 )}
 
-                {/* ITEMS TAB */}
+                {/* ITEMS */}
                 {activeTab === 'items' && (
-                  <div className={`rounded-xl border shadow-sm overflow-hidden
-                    ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
-                    <div className={`p-4 border-b
-                      ${isDark
-                        ? 'border-gray-700 bg-gradient-to-r from-gray-800 to-gray-900'
-                        : 'border-gray-200 bg-gradient-to-r from-gray-50 to-gray-100'}`}>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h4 className={`text-base font-bold uppercase tracking-wider
-                            ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                            {rebateDetails?.rebateType === 'Fixed'       ? 'Rebate Items'    :
-                             rebateDetails?.rebateType === 'Incremental' ? 'Item Ranges'     :
-                             'Percentage Items'}
-                          </h4>
-                          <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                            {rebateDetails?.rebateType === 'Fixed'
-                              ? 'Manage items and their rebate values'
-                              : rebateDetails?.rebateType === 'Incremental'
-                              ? 'Manage item ranges and rebate per bag'
-                              : 'Manage items and their percentage values'}
-                          </p>
-                        </div>
+                  <div className={`flex flex-col flex-1 min-h-0 rounded-xl border shadow-sm overflow-hidden ${T.card}`}>
+                  <div className={`flex-shrink-0 px-5 py-3 border-b ${T.cardHead}`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h4 className={`text-xs font-bold uppercase tracking-widest ${T.tp}`}>
+                          {itemTabLabel}
+                        </h4>
+                        <p className={`text-[11px] mt-0.5 ${T.ts}`}>{itemTabSub}</p>
                       </div>
+                        {rebateDetails?.name && (
+                          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${
+                            isDark
+                              ? 'bg-amber-900/20 border-amber-700/30'
+                              : 'bg-amber-50 border-amber-200'
+                          }`}>
+                            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                              isDark ? 'bg-amber-400' : 'bg-amber-500'
+                            }`} />
+                            <span className={`text-[10px] font-semibold ${
+                              isDark ? 'text-amber-300' : 'text-amber-700'
+                            }`}>
+                              {rebateDetails.name}
+                            </span>
+                          </div>
+                        )}
                     </div>
-                    <div className={`overflow-auto max-h-[470px] ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+                  </div>
+                    <div className={`flex-1 min-h-0 overflow-auto ${T.body}`}>
                       {rebateDetails?.rebateType === 'Fixed'
                         ? renderFixedItemsTable({ access })
                         : rebateDetails?.rebateType === 'Incremental'
@@ -426,7 +315,6 @@ const RebateDetailsModal = ({
                     </div>
                   </div>
                 )}
-
               </div>
             </>
           )}

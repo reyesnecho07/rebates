@@ -484,6 +484,7 @@ const fixedItemsQuery = `
     T3.ItemCode as code,
     T3.ItemName as description,
     T3.UnitPerQty,
+    T3.UnitOfMeasure as uom, 
     T3.RebatePerBag as rebate
   FROM RebateProgram T0
     INNER JOIN FixProdRebate T3 ON T0.RebateCode = T3.RebateCode
@@ -499,6 +500,7 @@ items = fixedItemsResult.recordset.map(item => ({
   code: item.code,
   description: item.description,
   unitPerQty: item.UnitPerQty || 1,
+  uom: item.uom || '',
   rebate: item.rebate || 0,
   type: 'fixed'
 }));
@@ -558,6 +560,7 @@ items = fixedItemsResult.recordset.map(item => ({
       T3.ItemCode as code,
       T3.ItemName as description,
       T3.UnitPerQty,
+      T3.UnitOfMeasure as uom, 
       T4.RangeNo as itemRangeNo,
       T4.MinQty as itemMinQty,
       T4.MaxQty as itemMaxQty,
@@ -583,6 +586,7 @@ items = fixedItemsResult.recordset.map(item => ({
         code: row.code,
         description: row.description || 'Unknown Item',
         unitPerQty: row.UnitPerQty || 1,
+        uom: row.uom || '',
         ranges: [],
         type: 'incremental'
       });
@@ -676,6 +680,7 @@ customers = Array.from(customerMap.values()).map(customer => {
       T3.ItemCode as code,
       T3.ItemName as description,
       T3.UnitPerQty,
+      T3.UnitOfMeasure as uom, 
       T3.PercentagePerBag as percentage
     FROM RebateProgram T0
       INNER JOIN PerProdRebate T3 ON T0.RebateCode = T3.RebateCode
@@ -691,6 +696,7 @@ customers = Array.from(customerMap.values()).map(customer => {
     code: item.code,
     description: item.description,
     unitPerQty: item.UnitPerQty || 1,
+    uom: item.uom || '',
     percentage: item.percentage || 0,
     type: 'percentage'
   }));
@@ -1124,6 +1130,7 @@ async function loadRebateDetails(rebateCode, database) {
           T3.ItemCode as code,
           T3.ItemName as description,
           T3.UnitPerQty,
+          T3.UnitOfMeasure as uom,
           T3.RebatePerBag as rebate
         FROM RebateProgram T0
           INNER JOIN FixProdRebate T3 ON T0.RebateCode = T3.RebateCode
@@ -1139,6 +1146,7 @@ async function loadRebateDetails(rebateCode, database) {
         code: item.code,
         description: item.description,
         unitPerQty: item.UnitPerQty || 1,
+        uom: item.uom || '',
         rebate: item.rebate || 0,
         type: 'fixed'
       }));
@@ -1191,6 +1199,7 @@ async function loadRebateDetails(rebateCode, database) {
           T3.ItemCode as code,
           T3.ItemName as description,
           T3.UnitPerQty,
+          T3.UnitOfMeasure as uom,
           T3.PercentagePerBag as percentage
         FROM RebateProgram T0
           INNER JOIN PerProdRebate T3 ON T0.RebateCode = T3.RebateCode
@@ -1206,6 +1215,7 @@ async function loadRebateDetails(rebateCode, database) {
         code: item.code,
         description: item.description,
         unitPerQty: item.UnitPerQty || 1,
+        uom: item.uom || '',
         percentage: item.percentage || 0,
         type: 'percentage'
       }));
@@ -1235,7 +1245,7 @@ router.put('/rebate/item', async (req, res) => {
   let pool;
   try {
     const { db } = req.query;
-    const { rebateCode, itemCode, description, unitPerQty, rebate, ranges } = req.body;
+    const { rebateCode, itemCode, description, unitPerQty, rebate, ranges, uom } = req.body;
     
     console.log('🔄 PUT /rebate/item received:', {
       rebateCode,
@@ -1293,7 +1303,8 @@ router.put('/rebate/item', async (req, res) => {
         UPDATE FixProdRebate 
         SET ItemName = @description,
             UnitPerQty = @unitPerQty,
-            RebatePerBag = @rebate
+            RebatePerBag = @rebate,
+            UnitOfMeasure = @uom
         WHERE ItemCode = @itemCode AND RebateCode = @rebateCode
       `;
 
@@ -1303,6 +1314,7 @@ router.put('/rebate/item', async (req, res) => {
         .input('description', sql.NVarChar(255), description || '')
         .input('unitPerQty', sql.Int, parseInt(unitPerQty) || 1)
         .input('rebate', sql.Decimal(10, 2), parseFloat(rebate) || 0)
+        .input('uom', sql.NVarChar(50), uom || '')
         .input('itemCode', sql.NVarChar(50), itemCode)
         .input('rebateCode', sql.NVarChar(50), rebateCode)
         .query(updateQuery);
@@ -1334,11 +1346,12 @@ router.put('/rebate/item', async (req, res) => {
       await pool.request()
         .input('description', sql.NVarChar(255), description)
         .input('unitPerQty', sql.Decimal(10, 2), unitPerQty || 1)
+        .input('uom', sql.NVarChar(50), req.body.uom || '')
         .input('itemCode', sql.NVarChar(50), itemCode)
         .input('rebateCode', sql.NVarChar(50), rebateCode)
         .query(`
           UPDATE IncItemRebate 
-          SET ItemName = @description, UnitPerQty = @unitPerQty
+          SET ItemName = @description, UnitPerQty = @unitPerQty,UnitOfMeasure = @uom
           WHERE ItemCode = @itemCode AND RebateCode = @rebateCode
         `);
 
@@ -1374,7 +1387,8 @@ router.put('/rebate/item', async (req, res) => {
         UPDATE PerProdRebate 
         SET ItemName = @description, 
             UnitPerQty = @unitPerQty, 
-            PercentagePerBag = @rebate
+            PercentagePerBag = @rebate,
+            UnitOfMeasure = @uom
         WHERE ItemCode = @itemCode AND RebateCode = @rebateCode
       `;
 
@@ -1384,6 +1398,7 @@ router.put('/rebate/item', async (req, res) => {
         .input('description', sql.NVarChar(255), description || '')
         .input('unitPerQty', sql.Int, parseInt(unitPerQty) || 1)
         .input('rebate', sql.Int, parseInt(rebate) || 0)
+        .input('uom', sql.NVarChar(50), req.body.uom || '')
         .input('itemCode', sql.NVarChar(50), itemCode)
         .input('rebateCode', sql.NVarChar(50), rebateCode)
         .query(updateQuery);
@@ -3404,7 +3419,6 @@ router.get('/rebates-summary', async (req, res) => {
         LEFT JOIN FixProdRebate T3 ON T0.RebateCode = T3.RebateCode
       WHERE
         T0.RebateType = 'Fixed'
-        AND T0.IsActive = 1
         AND T1.CardCode IS NOT NULL
         AND LTRIM(RTRIM(T1.CardCode)) != ''
         AND T3.ItemCode IS NOT NULL
@@ -3438,7 +3452,6 @@ router.get('/rebates-summary', async (req, res) => {
         LEFT JOIN PerProdRebate T3 ON T0.RebateCode = T3.RebateCode
       WHERE
         T0.RebateType = 'Percentage'
-        AND T0.IsActive = 1
         AND T1.CardCode IS NOT NULL
         AND LTRIM(RTRIM(T1.CardCode)) != ''
         AND T3.ItemCode IS NOT NULL
@@ -3478,7 +3491,6 @@ router.get('/rebates-summary', async (req, res) => {
         LEFT JOIN IncItemRange T4 ON T3.Id = T4.ItemRebateId
       WHERE
         T0.RebateType = 'Incremental'
-        AND T0.IsActive = 1
         AND T1.CardCode IS NOT NULL
         AND LTRIM(RTRIM(T1.CardCode)) != ''
         AND T3.ItemCode IS NOT NULL
@@ -3544,7 +3556,7 @@ router.get('/rebates-summary', async (req, res) => {
           rebateCode: row.RebateCode,
           dateFrom: row.DateFrom,
           dateTo: row.DateTo,
-          isActive: row.IsActive === 1,
+          isActive: row.IsActive === '1' || row.IsActive === 1 || row.IsActive === true,
           frequency: row.Frequency || 'Quarterly',
           qtrRebate: row.QtrRebate || 0,
           // ADDED: Store the created date for sorting
@@ -3736,7 +3748,7 @@ if (hasPayoutHistory) {
         // Fetch transactions to calculate progress
         console.log(`Fetching transactions for ${customer.code} (${customer.rebateCode})...`);
         const transResponse = await fetch(
-          `http://192.168.100.193:3006/api/dashboard/customer/${customer.code}/transactions?` +
+          `http://192.168.100.193:3009/api/dashboard/customer/${customer.code}/transactions?` +
           `db=${databaseToUse}&rebateCode=${customer.rebateCode}&rebateType=${customer.rebateType}&` +
           `useRebatePeriod=true`
         );

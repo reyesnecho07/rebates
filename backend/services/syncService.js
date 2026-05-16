@@ -271,36 +271,36 @@ processItemData(item) {
         case 'salesEmployees':
           query = "SELECT SlpCode, SlpName FROM OSLP WHERE SlpName <> '' ORDER BY SlpName";
           break;
-case 'customers':
-  query = `
-    SELECT
-      T0.CardCode,
-      T0.CardName,
-      T1.GroupName,
-      T2.SlpName
-    FROM
-      OCRD T0  
-      INNER JOIN OCRG T1 ON T0.GroupCode = T1.GroupCode 
-      INNER JOIN OSLP T2 ON T0.SlpCode = T2.SlpCode
-    WHERE CardType = 'C'
-    AND T0.CardType = 'C'
-    AND U_BP_STATUS = 'ACTIVE'
-    ORDER BY T0.CardName
-  `;
-  break;
-case 'items':
-  query = `
-    SELECT 
-      T0.ItemCode,
-      T0.ItemName,
-      T1.ItmsGrpNam
-    FROM
-      OITM T0  
-      INNER JOIN OITB T1 ON T0.ItmsGrpCod = T1.ItmsGrpCod
-    WHERE 
-    T0.ItemName <> '' 
-    ORDER BY T0.ItemName
-  `;
+        case 'customers':
+          query = `
+            SELECT
+              T0.CardCode,
+              T0.CardName,
+              T1.GroupName,
+              T2.SlpName
+            FROM
+              OCRD T0  
+              INNER JOIN OCRG T1 ON T0.GroupCode = T1.GroupCode 
+              INNER JOIN OSLP T2 ON T0.SlpCode = T2.SlpCode
+            WHERE CardType = 'C'
+            AND T0.CardType = 'C'
+            AND U_BP_STATUS = 'ACTIVE'
+            ORDER BY T0.CardName
+          `;
+          break;
+        case 'items':
+          query = `
+            SELECT 
+              T0.ItemCode,
+              T0.ItemName,
+              T1.ItmsGrpNam
+            FROM
+              OITM T0  
+              INNER JOIN OITB T1 ON T0.ItmsGrpCod = T1.ItmsGrpCod
+            WHERE 
+            T0.ItemName <> '' 
+            ORDER BY T0.ItemName
+          `;
   break;
         default:
           throw new Error(`Unknown table: ${table}`);
@@ -783,26 +783,49 @@ async fastSyncItems(database, sapData) {
         case 'salesEmployees':
           query = "SELECT SlpCode, SlpName FROM SalesEmployee ORDER BY SlpName";
           break;
-case 'customers':
-  query = `
-    SELECT 
-      CardCode, 
-      CardName, 
-      GroupName, 
-      SlpName 
-    FROM Customer 
-    ORDER BY CardName
-  `;
-  break;
-case 'items':
-  query = `
-    SELECT 
-      ItemCode, 
-      ItemName, 
-      ItmsGrpNam 
-    FROM Items 
-    ORDER BY ItemName
-  `;
+      case 'customers':
+        query = `
+          SELECT 
+            CardCode, 
+            CardName, 
+            GroupName, 
+            SlpName 
+          FROM Customer 
+          ORDER BY CardName
+        `;
+        break;
+      case 'items':
+        query = `
+          SELECT 
+            ItemCode, 
+            ItemName, 
+            ItmsGrpNam 
+          FROM Items 
+          WHERE
+            ItmsGrpNam IN ('CHEMICALS', 
+                          'FOLIAR', 
+                          'RAW MATERIALS', 
+                          'FERTILIZER', 
+                          'PACKAGING MATS', 
+                          'PROMO MATS', 
+                          --'PROP/EQUIPTMENT', 
+                          --'SPARE PARTS', 
+                          'SPECIAL PRODUCT', 
+                          --'CONSTRUCTION IN PROG', 
+                          'FEEDTAG', 
+                          'FG', 
+                          --'OCAMPO FARM',
+                          'FG-BJLAC', 
+                          --'GSD', 
+                          --'INDUSTRIAL EQPT', 
+                          --'MAGARAO FARM', 
+                          --'MARKETING', 
+                          --'PROPERTY', 
+                          'RAW MATERIALS', 
+                          'SACK',
+                          'VETERINARY')
+          ORDER BY ItemName
+        `;
   break;
         default:
           throw new Error(`Unknown table: ${table}`);

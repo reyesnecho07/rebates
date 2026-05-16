@@ -1,172 +1,127 @@
 import React from 'react';
 
-const MetricCard = ({ 
-  title, 
-  value, 
+const MetricCard = ({
+  title,
+  value,
   subtitle = "Cumulative total",
   icon: Icon,
   variant = "emerald",
   isCurrency = false,
   className = "",
   theme = "light",
-  noDecimals = false // Add this new prop
+  noDecimals = false,
 }) => {
-  // Theme-based styling - matching your exact pattern
   const isDark = theme === 'dark';
-  
-  // Card container styling
-  const cardClasses = `relative overflow-hidden rounded-xl border shadow-sm transition-all duration-300 group hover:shadow-md ${
-    isDark 
-      ? 'bg-gray-800 border-gray-700 hover:shadow-lg hover:shadow-gray-900/30' 
-      : 'bg-white border-gray-200 hover:shadow-lg'
-  } ${className}`;
-  
-  // Text colors matching your pattern
-  const titleClasses = `text-sm font-semibold truncate ${
-    isDark ? 'text-gray-100' : 'text-gray-900'
-  }`;
-  
-  const subtitleClasses = `text-xs mt-1 ${
-    isDark ? 'text-gray-400' : 'text-gray-600'
-  }`;
-  
-  const valueClasses = `text-3xl lg:text-4xl font-extrabold tracking-tight ${
-    isDark ? 'text-white' : 'text-gray-900'
-  }`;
-  
-  const suffixClasses = `ml-1 text-lg font-semibold ${
-    isDark ? 'text-gray-300' : 'text-gray-700'
-  }`;
-  
-  const dividerClasses = `h-1 w-12 rounded-full transition-colors duration-300 ${
-    isDark 
-      ? 'bg-gray-700 group-hover:bg-gray-600' 
-      : 'bg-gray-900/10 group-hover:bg-gray-900/20'
-  }`;
-  
-  // Variant-specific rail and icon colors
+
   const variantColors = {
     emerald: {
-      rail: isDark ? 'bg-emerald-600' : 'bg-emerald-500',
-      iconBg: isDark ? 'bg-emerald-700' : 'bg-emerald-600',
-      iconColor: 'text-white',
-      border: isDark ? 'border-emerald-800/50' : 'border-emerald-200',
-      surface: isDark ? 'bg-emerald-900/20' : 'bg-emerald-50/40',
+      rail:    isDark ? 'bg-emerald-500'                    : 'bg-emerald-500',
+      iconBg:  isDark ? 'bg-emerald-500/15 border-emerald-500/30' : 'bg-emerald-50 border-emerald-200',
+      iconClr: isDark ? 'text-emerald-400'                  : 'text-emerald-600',
+      value:   isDark ? 'text-emerald-300'                  : 'text-emerald-700',
+      surface: isDark ? 'bg-emerald-500/5'                  : 'bg-emerald-50/50',
+      divider: isDark ? 'bg-emerald-500/30'                 : 'bg-emerald-200',
     },
     blue: {
-      rail: isDark ? 'bg-blue-600' : 'bg-blue-500',
-      iconBg: isDark ? 'bg-blue-700' : 'bg-blue-600',
-      iconColor: 'text-white',
-      border: isDark ? 'border-blue-800/50' : 'border-blue-200',
-      surface: isDark ? 'bg-blue-900/20' : 'bg-blue-50/40',
+      rail:    isDark ? 'bg-blue-500'                       : 'bg-blue-500',
+      iconBg:  isDark ? 'bg-blue-500/15 border-blue-500/30' : 'bg-blue-50 border-blue-200',
+      iconClr: isDark ? 'text-blue-400'                     : 'text-blue-600',
+      value:   isDark ? 'text-blue-300'                     : 'text-blue-700',
+      surface: isDark ? 'bg-blue-500/5'                     : 'bg-blue-50/50',
+      divider: isDark ? 'bg-blue-500/30'                    : 'bg-blue-200',
     },
     amber: {
-      rail: isDark ? 'bg-amber-600' : 'bg-amber-500',
-      iconBg: isDark ? 'bg-amber-700' : 'bg-amber-600',
-      iconColor: 'text-white',
-      border: isDark ? 'border-amber-800/50' : 'border-amber-200',
-      surface: isDark ? 'bg-amber-900/20' : 'bg-amber-50/40',
+      rail:    isDark ? 'bg-amber-500'                      : 'bg-amber-500',
+      iconBg:  isDark ? 'bg-amber-500/15 border-amber-500/30' : 'bg-amber-50 border-amber-200',
+      iconClr: isDark ? 'text-amber-400'                    : 'text-amber-600',
+      value:   isDark ? 'text-amber-300'                    : 'text-amber-700',
+      surface: isDark ? 'bg-amber-500/5'                    : 'bg-amber-50/50',
+      divider: isDark ? 'bg-amber-500/30'                   : 'bg-amber-200',
     },
     purple: {
-      rail: isDark ? 'bg-purple-600' : 'bg-purple-500',
-      iconBg: isDark ? 'bg-purple-700' : 'bg-purple-600',
-      iconColor: 'text-white',
-      border: isDark ? 'border-purple-800/50' : 'border-purple-200',
-      surface: isDark ? 'bg-purple-900/20' : 'bg-purple-50/40',
+      rail:    isDark ? 'bg-violet-500'                     : 'bg-violet-500',
+      iconBg:  isDark ? 'bg-violet-500/15 border-violet-500/30' : 'bg-violet-50 border-violet-200',
+      iconClr: isDark ? 'text-violet-400'                   : 'text-violet-600',
+      value:   isDark ? 'text-violet-300'                   : 'text-violet-700',
+      surface: isDark ? 'bg-violet-500/5'                   : 'bg-violet-50/50',
+      divider: isDark ? 'bg-violet-500/30'                  : 'bg-violet-200',
     },
   };
 
-  const colors = variantColors[variant] || variantColors.emerald;
+  const c = variantColors[variant] || variantColors.emerald;
 
   const formatNumber = (num) => {
     if (typeof num !== 'number') {
-      if (typeof num === 'string' && num.includes('₱')) {
+      if (typeof num === 'string' && num.includes('₱'))
         return { value: num, suffix: '', hasCurrencySymbol: true };
-      }
       return { value: num || '0', suffix: '', hasCurrencySymbol: false };
     }
-
-    if (isCurrency) {
-      return {
-        value: `₱${num.toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,')}`,
-        suffix: '',
-        hasCurrencySymbol: true
-      };
-    }
-
-    // FIX: For noDecimals, show the full number with commas for thousands
-    if (noDecimals) {
-      // Format with commas for thousands but no decimal places
-      const formattedNumber = Math.round(num).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-      return { value: formattedNumber, suffix: '', hasCurrencySymbol: false };
-    }
-    
-    // For decimals (default), format with 2 decimal places and abbreviate
+    if (isCurrency)
+      return { value: `₱${num.toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,')}`, suffix: '', hasCurrencySymbol: true };
+    if (noDecimals)
+      return { value: Math.round(num).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','), suffix: '', hasCurrencySymbol: false };
     const abs = Math.abs(num);
-    
     if (abs >= 1e9) return { value: (num / 1e9).toFixed(2), suffix: 'B' };
     if (abs >= 1e6) return { value: (num / 1e6).toFixed(2), suffix: 'M' };
     if (abs >= 1e3) return { value: (num / 1e3).toFixed(2), suffix: 'K' };
     return { value: num.toFixed(2), suffix: '' };
   };
 
-  const formattedValue = formatNumber(value);
+  const fv = formatNumber(value);
 
   return (
-    <div className={cardClasses}>
-      {/* Vertical rail */}
-      <div className={`absolute left-0 top-0 bottom-0 w-1 ${colors.rail}`} />
+    <div className={`relative overflow-hidden rounded-xl border shadow-sm transition-all duration-300 group hover:shadow-md ${
+      isDark
+        ? 'bg-slate-800 border-slate-700 hover:border-slate-600'
+        : 'bg-white border-slate-200 hover:border-slate-300'
+    } ${className}`}>
 
-      {/* Layered surface */}
-      <div className={`absolute inset-0 ${colors.surface} opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
+      {/* Left accent rail */}
+      <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${c.rail}`} />
+
+      {/* Hover surface tint */}
+      <div className={`absolute inset-0 ${c.surface} opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
 
       <div className="relative p-6 pl-7">
+
         {/* Header */}
-        <div className="flex items-start justify-between mb-6">
+        <div className="flex items-start justify-between mb-5">
           <div className="min-w-0">
-            <h3 className={titleClasses}>
+            <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${
+              isDark ? 'text-slate-400' : 'text-slate-500'
+            }`}>
               {title}
-            </h3>
-            <p className={subtitleClasses}>
+            </p>
+            <p className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
               {subtitle}
             </p>
           </div>
 
           {/* Icon badge */}
-          <div className={`
-            w-10 h-10 rounded-lg
-            flex items-center justify-center
-            ${colors.iconBg}
-            shadow-md
-            group-hover:scale-105
-            transition-transform duration-300
-          `}>
-            <Icon size={20} className={colors.iconColor} />
+          <div className={`w-10 h-10 rounded-xl border flex items-center justify-center flex-shrink-0 transition-transform duration-300 group-hover:scale-105 ${c.iconBg}`}>
+            <Icon size={18} className={c.iconClr} />
           </div>
         </div>
 
         {/* Value */}
         <div className="space-y-3">
-          <div className="flex items-baseline flex-wrap">
-            <span className={valueClasses}>
-              {formattedValue.hasCurrencySymbol ? (
-                formattedValue.value
-              ) : (
-                <>
-                  {formattedValue.value}
-                  {formattedValue.suffix && (
-                    <span className={suffixClasses}>
-                      {formattedValue.suffix}
-                    </span>
-                  )}
-                </>
-              )}
+          <div className="flex items-baseline gap-1.5 flex-wrap">
+            <span className={`text-3xl lg:text-4xl font-extrabold tracking-tight tabular-nums ${
+              isDark ? 'text-slate-100' : 'text-slate-900'
+            }`}>
+              {fv.hasCurrencySymbol ? fv.value : fv.value}
             </span>
+            {!fv.hasCurrencySymbol && fv.suffix && (
+              <span className={`text-lg font-semibold ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                {fv.suffix}
+              </span>
+            )}
           </div>
 
-          {/* Bottom divider */}
-          <div className={dividerClasses} />
+          {/* Divider */}
+          <div className={`h-0.5 w-10 rounded-full transition-all duration-300 group-hover:w-16 ${c.divider}`} />
         </div>
+
       </div>
     </div>
   );

@@ -20,7 +20,7 @@ function HomePage() {
   const [showVcpDropdown, setShowVcpDropdown] = useState(false);
 
   // API Base URL - Update this to your backend server
-  const API_BASE = 'http://192.168.100.193:3006/api';
+  const API_BASE = 'http://192.168.100.193:3009/api';
   const DB_NAME = 'USER';
 
   // Floating particles effect state

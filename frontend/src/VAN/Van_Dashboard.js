@@ -13,7 +13,7 @@ import {
   CreditCard,
   Edit,
   Check,
-  Filter,
+  Clock,
   RefreshCw,
   BanknoteArrowUp,
 } from "lucide-react";
@@ -37,6 +37,7 @@ function Van_Dashboard() {
   const { theme, updateTheme } = useTheme();
     
   // State declarations
+  const dbType = "VAN";
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [userName, setUserName] = useState("");
@@ -59,6 +60,7 @@ function Van_Dashboard() {
   const [periodTo, setPeriodTo] = useState("");
   const [statusSummaryPeriodFrom, setStatusSummaryPeriodFrom] = useState("");
   const [statusSummaryPeriodTo, setStatusSummaryPeriodTo] = useState("");
+  const [selectedProgramStatus, setSelectedProgramStatus] = useState("Active");
 
   const [editingCustomers, setEditingCustomers] = useState({});
   const [editingItems, setEditingItems] = useState({});
@@ -131,7 +133,7 @@ function Van_Dashboard() {
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const API_BASE = 'http://192.168.100.193:3006/api';
+  const API_BASE = 'http://192.168.100.193:3009/api';
   const DB_NAME = 'USER';
 
   // Helper function to format decimal numbers with 2 decimal places
@@ -237,7 +239,7 @@ const calculateCustomerProgress = async (customer) => {
   try {
     // First try to get total achieved from the dashboard endpoint
     const totalAchievedResponse = await fetch(
-      `http://192.168.100.193:3006/api/van/dashboard/customer/${customer.code}/total-achieved?` +
+      `http://192.168.100.193:3009/api/van/dashboard/customer/${customer.code}/total-achieved?` +
       `db=VAN_OWN&rebateCode=${customer.rebateCode}&rebateType=${customer.rebateType}`
     );
     
@@ -580,6 +582,7 @@ const calculateQuotaStatus = (rebateType, totalAchieved, totalQuota, customer) =
 
 
   useEffect(() => {
+    if (selectedRebate || modalCustomer) return;
     loadCustomerStatus();
   }, [statusSummaryPeriodFrom, statusSummaryPeriodTo, selectedAgent]);
 
@@ -617,16 +620,19 @@ useEffect(() => {
       );
       
       if (quotaData && quotaData.monthlyQuotas?.length > 0) {
-        setModalCustomer(prev => ({
-          ...prev,
-          details: {
-            ...prev.details,
-            monthlyQuotas: quotaData.monthlyQuotas,
-            summary: quotaData.summary,
-            rebateDetails: quotaData.rebateDetails || prev.details.rebateDetails,
-            dateRange: quotaData.dateRange || prev.details.dateRange
-          }
-        }));
+        setModalCustomer(prev => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            details: {
+              ...prev.details,
+              monthlyQuotas: quotaData.monthlyQuotas,
+              summary: quotaData.summary,
+              rebateDetails: quotaData.rebateDetails || prev.details?.rebateDetails,
+              dateRange: quotaData.dateRange || prev.details?.dateRange
+            }
+          };
+        });
       }
     };
     
@@ -807,7 +813,7 @@ useEffect(() => {
   const fetchCustomerQuotas = async (customerCode, rebateCode, rebateType) => {
   try {
     const response = await fetch(
-      `http://192.168.100.193:3006/api/van/dashboard/customer/${customerCode}/quotas?` +
+      `http://192.168.100.193:3009/api/van/dashboard/customer/${customerCode}/quotas?` +
       `db=VAN_OWN&rebateCode=${rebateCode}&rebateType=${rebateType}`
     );
     
@@ -1241,11 +1247,12 @@ useEffect(() => {
 
   // Main API Functions
   const loadDashboardData = async () => {
+    if (selectedRebate || modalCustomer) return;
     setLoading(true);
     try {
       console.log('🔄 Loading dashboard data...');
 
-      const metricsResponse = await fetch(`http://192.168.100.193:3006/api/van/dashboard/metrics?db=VAN_OWN`);
+      const metricsResponse = await fetch(`http://192.168.100.193:3009/api/van/dashboard/metrics?db=VAN_OWN`);
       if (metricsResponse.ok) {
         const metricsData = await metricsResponse.json();
         if (metricsData.success) {
@@ -1253,7 +1260,7 @@ useEffect(() => {
           
           let previousData = null;
           try {
-            const yesterdayResponse = await fetch(`http://192.168.100.193:3006/api/van/dashboard/metrics?db=VAN_OWN&period=yesterday`);
+            const yesterdayResponse = await fetch(`http://192.168.100.193:3009/api/van/dashboard/metrics?db=VAN_OWN&period=yesterday`);
             if (yesterdayResponse.ok) {
               const yesterdayData = await yesterdayResponse.json();
               if (yesterdayData.success) {
@@ -1266,7 +1273,7 @@ useEffect(() => {
 
           if (!previousData) {
             try {
-              const lastMonthResponse = await fetch(`http://192.168.100.193:3006/api/van/dashboard/metrics?db=VAN_OWN&period=lastMonth`);
+              const lastMonthResponse = await fetch(`http://192.168.100.193:3009/api/van/dashboard/metrics?db=VAN_OWN&period=lastMonth`);
               if (lastMonthResponse.ok) {
                 const lastMonthData = await lastMonthResponse.json();
                 if (lastMonthData.success) {
@@ -1313,7 +1320,7 @@ useEffect(() => {
       }
 
       try {
-        const rebatesResponse = await fetch(`http://192.168.100.193:3006/api/van/dashboard/rebates?db=VAN_OWN`);
+        const rebatesResponse = await fetch(`http://192.168.100.193:3009/api/van/dashboard/rebates?db=VAN_OWN`);
         if (rebatesResponse.ok) {
           const rebatesData = await rebatesResponse.json();
           if (rebatesData.success) {
@@ -1341,13 +1348,15 @@ useEffect(() => {
   };
 
 const loadCustomerStatus = async () => {
+  if (selectedRebate || modalCustomer) return;
   try {
-    let url = `http://192.168.100.193:3006/api/van/dashboard/rebates-summary?db=VAN_OWN`;
+    let url = `http://192.168.100.193:3009/api/van/dashboard/rebates-summary?db=VAN_OWN`;
     
     const params = new URLSearchParams();
     if (statusSummaryPeriodFrom) params.append('periodFrom', statusSummaryPeriodFrom);
     if (statusSummaryPeriodTo) params.append('periodTo', statusSummaryPeriodTo);
     if (selectedAgent !== 'All') params.append('agent', selectedAgent);
+    
 
     if (params.toString()) {
       url += `&${params.toString()}`;
@@ -1430,7 +1439,7 @@ const loadCustomerDetails = async (customerCode, rebateCode, rebateType, forceAu
   try {
     console.log('📥 Loading details for:', customerCode, rebateCode, rebateType);
     
-    let url = `http://192.168.100.193:3006/api/van/dashboard/customer/${customerCode}/details?db=VAN_OWN`;
+    let url = `http://192.168.100.193:3009/api/van/dashboard/customer/${customerCode}/details?db=VAN_OWN`;
     
     const params = new URLSearchParams();
     params.append('rebateCode', rebateCode);
@@ -1470,7 +1479,7 @@ const loadCustomerDetails = async (customerCode, rebateCode, rebateType, forceAu
   try {
     console.log('🔍 Loading rebate details for:', rebateCode, customerCode ? `customer: ${customerCode}` : '');
     
-    let url = `http://192.168.100.193:3006/api/van/dashboard/rebate/${rebateCode}/details?db=VAN_OWN`;
+    let url = `http://192.168.100.193:3009/api/van/dashboard/rebate/${rebateCode}/details?db=VAN_OWN`;
     
     if (customerCode) {
       url += `&customerCode=${customerCode}`;
@@ -1504,11 +1513,15 @@ const loadCustomerDetails = async (customerCode, rebateCode, rebateType, forceAu
         ranges: data.data.ranges,
         customers: data.data.customers?.length || 0,
         dateFrom: data.data.dateFrom,
-        dateTo: data.data.dateTo
+        dateTo: data.data.dateTo,
+        name: data.data.Name || data.data.name || ''
       });
-      
-      return data.data;
-    } else {
+
+      return {
+        ...data.data,
+        name: data.data.Name || data.data.name || '',
+      };
+    }else {
       console.error('❌ API returned error:', data.message);
       return null;
     }
@@ -1523,7 +1536,7 @@ const loadCustomerDetails = async (customerCode, rebateCode, rebateType, forceAu
     try {
       console.log('📊 Fetching monthly quota data for:', { customerCode, rebateCode, rebateType });
       
-      let url = `http://192.168.100.193:3006/api/van/dashboard/customer/${customerCode}/quota-summary?db=VAN_OWN&rebateCode=${rebateCode}&rebateType=${rebateType}`;
+      let url = `http://192.168.100.193:3009/api/van/dashboard/customer/${customerCode}/quota-summary?db=VAN_OWN&rebateCode=${rebateCode}&rebateType=${rebateType}`;
       
       if (useAutoDates) {
         url += '&useRebatePeriod=true';
@@ -1575,7 +1588,7 @@ const loadCustomerDetails = async (customerCode, rebateCode, rebateType, forceAu
       
       console.log('📥 Loading transactions for:', modalCustomer.code);
       
-      let url = `http://192.168.100.193:3006/api/van/dashboard/customer/${modalCustomer.code}/transactions`;
+      let url = `http://192.168.100.193:3009/api/van/dashboard/customer/${modalCustomer.code}/transactions`;
       
       const params = new URLSearchParams({
         db: 'VAN_OWN',
@@ -1651,8 +1664,9 @@ const loadCustomerDetails = async (customerCode, rebateCode, rebateType, forceAu
             setPeriodTo(data.data.dateRange.periodTo);
           }
           
-          if (modalCustomer) {
-            setModalCustomer(prev => ({
+          setModalCustomer(prev => {
+            if (!prev) return null;
+            return {
               ...prev,
               details: {
                 ...prev.details,
@@ -1661,8 +1675,8 @@ const loadCustomerDetails = async (customerCode, rebateCode, rebateType, forceAu
                 summary: data.data.summary,
                 dateRange: data.data.dateRange
               }
-            }));
-          }
+            };
+          });
         }
       }
     } catch (error) {
@@ -2372,7 +2386,7 @@ const loadDetailedPayoutsData = async (autoLoad = true) => {
     });
     
     // Use the correct URL - check your backend router structure
-    const url = `http://192.168.100.193:3006/api/van/payouts/customer/${modalCustomer.code}/payouts`;
+    const url = `http://192.168.100.193:3009/api/van/payouts/customer/${modalCustomer.code}/payouts`;
     
     const params = new URLSearchParams({
       db: 'VAN_OWN',
@@ -2444,16 +2458,19 @@ const handleTabChange = async (tab) => {
           true
         );
         if (quotaData) {
-          setModalCustomer(prev => ({
-            ...prev,
-            details: {
-              ...prev.details,
-              monthlyQuotas: quotaData.monthlyQuotas || [],
-              summary: quotaData.summary,
-              rebateDetails: quotaData.rebateDetails || prev.details.rebateDetails,
-              dateRange: quotaData.dateRange || prev.details.dateRange
-            }
-          }));
+          setModalCustomer(prev => {
+            if (!prev) return null;
+            return {
+              ...prev,
+              details: {
+                ...prev.details,
+                monthlyQuotas: quotaData.monthlyQuotas || [],
+                summary: quotaData.summary,
+                rebateDetails: quotaData.rebateDetails || prev.details?.rebateDetails,
+                dateRange: quotaData.dateRange || prev.details?.dateRange
+              }
+            };
+          });
         }
       }
     } catch (error) {
@@ -2474,8 +2491,12 @@ const handleRebateClick = async (rebate) => {
     
     if (details) {
       console.log(' Successfully loaded rebate details');
-      setRebateDetails(details);
-      setOriginalRebateDetails(JSON.parse(JSON.stringify(details)));
+      const enrichedDetails = {
+        ...details,
+        name: details.Name || details.name || '',
+      };
+      setRebateDetails(enrichedDetails);
+      setOriginalRebateDetails(JSON.parse(JSON.stringify(enrichedDetails)));
     } else {
       console.log('⚠️ Could not load rebate details, using fallback data');
       
@@ -2484,10 +2505,10 @@ const handleRebateClick = async (rebate) => {
         salesEmployee: rebate.salesEmployee || rebate.agent || "Not specified",
         frequency: rebate.frequency || "Not specified",
         rebateType: rebate.type || "Fixed",
+        name: rebate.name || rebate.Name || '',
         customers: [],
         items: [],
-        // Add quotas array for the new structure
-        quotas: [0, 0, 0] // Default empty quotas
+        quotas: [0, 0, 0]
       };
       
       setRebateDetails(fallbackData);
@@ -2508,6 +2529,7 @@ const handleRebateClick = async (rebate) => {
       salesEmployee: rebate.salesEmployee || rebate.agent || "Not specified",
       frequency: rebate.frequency || "Not specified",
       rebateType: rebate.type || "Fixed",
+      name: rebate.name || rebate.Name || '',
       customers: [],
       items: [],
       quotas: [0, 0, 0]
@@ -2534,7 +2556,7 @@ const loadIncrementalRangeData = async (rebateCode, customerCode) => {
     }
     
     // Method 2: Try to load from customer-specific endpoint
-    const customerRangeUrl = `http://192.168.100.193:3006/api/van/dashboard/customer/${customerCode}/ranges?db=VAN_OWN&rebateCode=${rebateCode}`;
+    const customerRangeUrl = `http://192.168.100.193:3009/api/van/dashboard/customer/${customerCode}/ranges?db=VAN_OWN&rebateCode=${rebateCode}`;
     console.log('🌐 Trying customer-specific range endpoint:', customerRangeUrl);
     
     try {
@@ -2668,17 +2690,20 @@ useEffect(() => {
           console.log('✅ Loaded incremental ranges:', ranges.length);
           
           // Update the modalCustomer with the fetched ranges
-          setModalCustomer(prev => ({
-            ...prev,
-            ranges: ranges,
-            details: {
-              ...prev.details,
-              rebateDetails: {
-                ...prev.details?.rebateDetails,
-                ranges: ranges
+          setModalCustomer(prev => {
+            if (!prev) return null;
+            return {
+              ...prev,
+              ranges: ranges,
+              details: {
+                ...prev.details,
+                rebateDetails: {
+                  ...prev.details?.rebateDetails,
+                  ranges: ranges
+                }
               }
-            }
-          }));
+            };
+          });
         }
       }
       
@@ -2712,7 +2737,7 @@ useEffect(() => {
         amountReleased: amountReleased
       };
       
-      const response = await fetch(`http://192.168.100.193:3006/api/van/payouts/payouts/${payoutId}/status`, {
+      const response = await fetch(`http://192.168.100.193:3009/api/van/payouts/payouts/${payoutId}/status`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -2809,7 +2834,7 @@ useEffect(() => {
         calculation: `${totalAmount} - ${validatedAmount} = ${newBalance}`
       });
       
-      const response = await fetch(`http://192.168.100.193:3006/api/van/payouts/payouts/${encodeURIComponent(payoutId)}/status`, {
+      const response = await fetch(`http://192.168.100.193:3009/api/van/payouts/payouts/${encodeURIComponent(payoutId)}/status`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -2886,7 +2911,7 @@ useEffect(() => {
         calculation: `${totalAmount} - ${amountReleased} = ${balance}`
       });
       
-    const response = await fetch(`http://192.168.100.193:3006/api/van/payouts/payouts/${encodeURIComponent(payoutId)}/status`,{        
+    const response = await fetch(`http://192.168.100.193:3009/api/van/payouts/payouts/${encodeURIComponent(payoutId)}/status`,{        
       method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -3201,12 +3226,12 @@ useEffect(() => {
       }
 
       console.log('📤 Sending request to backend:', {
-        url: `http://192.168.100.193:3006/api/van/dashboard/rebate/customer?db=${currentDatabase}`,
+        url: `http://192.168.100.193:3009/api/van/dashboard/rebate/customer?db=${currentDatabase}`,
         method: 'PUT',
         body: requestBody
       });
 
-      const response = await fetch(`http://192.168.100.193:3006/api/van/dashboard/rebate/customer?db=${currentDatabase}`, {
+      const response = await fetch(`http://192.168.100.193:3009/api/van/dashboard/rebate/customer?db=${currentDatabase}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -3252,38 +3277,46 @@ useEffect(() => {
     }));
   };
 
-  const handleItemChange = (itemCode, field, newValue) => {
-    setRebateDetails(prev => ({
-      ...prev,
-      items: prev.items.map(item => {
-        if (item.code === itemCode) {
-          // For Fixed rebates, when editing 'rebatePerBag' field
-          if (prev.rebateType === 'Fixed' && field === 'rebatePerBag') {
-            return {
-              ...item,
-              rebatePerBag: parseFloat(newValue) || 0,
-              rebate: parseFloat(newValue) || 0 // Also update rebate field for consistency
-            };
-          }
-          // For Percentage rebates, when editing 'percentage' field
-          else if (prev.rebateType === 'Percentage' && field === 'percentage') {
-            return {
-              ...item,
-              percentage: parseFloat(newValue) || 0,
-              rebate: parseFloat(newValue) || 0 // Also update rebate field for consistency
-            };
-          }
-          // For description or unitPerQty
-          else if (field === 'description') {
-            return { ...item, [field]: newValue };
-          } else {
-            return { ...item, [field]: parseFloat(newValue) || 0 };
-          }
+const handleItemChange = (itemCode, field, newValue) => {
+  setRebateDetails(prev => ({
+    ...prev,
+    items: prev.items.map(item => {
+      if (item.code === itemCode) {
+        // For uom field (string)
+        if (field === 'uom') {
+          return { ...item, [field]: newValue || '' };
         }
-        return item;
-      })
-    }));
-  };
+        // For description (string)
+        if (field === 'description') {
+          return { ...item, [field]: newValue };
+        }
+        // For unitPerQty (numeric)
+        if (field === 'unitPerQty') {
+          return { ...item, [field]: parseFloat(newValue) || 1 };
+        }
+        // For Fixed rebates, when editing 'rebatePerBag' field
+        if (prev.rebateType === 'Fixed' && field === 'rebatePerBag') {
+          return {
+            ...item,
+            rebatePerBag: parseFloat(newValue) || 0,
+            rebate: parseFloat(newValue) || 0
+          };
+        }
+        // For Percentage rebates, when editing 'percentage' field
+        if (prev.rebateType === 'Percentage' && field === 'percentage') {
+          return {
+            ...item,
+            percentage: parseFloat(newValue) || 0,
+            rebate: parseFloat(newValue) || 0
+          };
+        }
+        // Default numeric handling
+        return { ...item, [field]: parseFloat(newValue) || 0 };
+      }
+      return item;
+    })
+  }));
+};
 
   const handleItemRangeChange = (itemCode, rangeIndex, field, newValue) => {
     setRebateDetails(prev => ({
@@ -3308,76 +3341,69 @@ useEffect(() => {
     }));
   };
 
-  const handleSaveItem = async (itemCode) => {
-    try {
-      const currentDatabase = 'VAN_OWN';
-
-      const itemToUpdate = rebateDetails.items.find(i => i.code === itemCode);
-      
-      if (!itemToUpdate) {
-        setSaveMessage("Item not found!");
-        setTimeout(() => setSaveMessage(null), 3000);
-        return;
-      }
-
-      // Prepare request body based on rebate type
-      const requestBody = {
-        rebateCode: selectedRebate.code,
-        itemCode: itemCode,
-        description: itemToUpdate.description || '',
-        unitPerQty: parseFloat(itemToUpdate.unitPerQty) || 1
-      };
-
-      // Add data based on rebate type
-      if (rebateDetails.rebateType === 'Fixed') {
-        requestBody.rebate = parseFloat(itemToUpdate.rebate) || 0;
-      } 
-      else if (rebateDetails.rebateType === 'Incremental') {
-        requestBody.ranges = itemToUpdate.ranges?.map(range => ({
-          rangeNo: range.rangeNo,
-          minQty: parseFloat(range.minQty) || 0,
-          maxQty: parseFloat(range.maxQty) || 0,
-          rebatePerBag: parseFloat(range.rebatePerBag) || 0
-        })) || [];
-      }
-      else if (rebateDetails.rebateType === 'Percentage') {
-        requestBody.rebate = parseFloat(itemToUpdate.percentage) || 0;
-      }
-
-      console.log('🔄 Saving item data:', requestBody);
-
-      const response = await fetch(`http://192.168.100.193:3006/api/van/dashboard/rebate/item?db=${currentDatabase}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody)
-      });
-
-      const result = await response.json();
-      
-      if (response.ok && result.success) {
-        setEditingItems(prev => ({
-          ...prev,
-          [itemCode]: false
-        }));
-        setSaveMessage("Item data updated successfully!");
-        
-        const updatedDetails = await loadRebateDetails(selectedRebate.code);
-        if (updatedDetails) {
-          setRebateDetails(updatedDetails);
-          setOriginalRebateDetails(JSON.parse(JSON.stringify(updatedDetails)));
-        }
-      } else {
-        setSaveMessage(result.message || "Failed to update item data");
-      }
-    } catch (error) {
-      console.error('❌ Error updating item data:', error);
-      setSaveMessage("Error updating item data: " + error.message);
-    } finally {
+const handleSaveItem = async (itemCode) => {
+  try {
+    const currentDatabase = 'VAN_OWN';
+    const itemToUpdate = rebateDetails.items.find(i => i.code === itemCode);
+    
+    if (!itemToUpdate) {
+      setSaveMessage("Item not found!");
       setTimeout(() => setSaveMessage(null), 3000);
+      return;
     }
-  };
+
+    const requestBody = {
+      rebateCode: selectedRebate.code,
+      itemCode: itemCode,
+      description: itemToUpdate.description || '',
+      unitPerQty: parseFloat(itemToUpdate.unitPerQty) || 1,
+      uom: itemToUpdate.uom || '',  // ← Make sure this is included
+    };
+
+    // Add data based on rebate type
+    if (rebateDetails.rebateType === 'Fixed') {
+      requestBody.rebate = parseFloat(itemToUpdate.rebate) || 0;
+    } 
+    else if (rebateDetails.rebateType === 'Incremental') {
+      requestBody.ranges = itemToUpdate.ranges?.map(range => ({
+        rangeNo: range.rangeNo,
+        minQty: parseFloat(range.minQty) || 0,
+        maxQty: parseFloat(range.maxQty) || 0,
+        rebatePerBag: parseFloat(range.rebatePerBag) || 0
+      })) || [];
+    }
+    else if (rebateDetails.rebateType === 'Percentage') {
+      requestBody.rebate = parseFloat(itemToUpdate.percentage) || 0;
+    }
+
+    console.log('📤 Saving item with uom:', requestBody.uom);
+
+    const response = await fetch(`http://192.168.100.193:3009/api/van/dashboard/rebate/item?db=${currentDatabase}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    });
+
+    const result = await response.json();
+    if (response.ok && result.success) {
+      setEditingItems(prev => ({ ...prev, [itemCode]: false }));
+      setSaveMessage("Item data updated successfully!");
+      
+      const updatedDetails = await loadRebateDetails(selectedRebate.code);
+      if (updatedDetails) {
+        setRebateDetails(updatedDetails);
+        setOriginalRebateDetails(JSON.parse(JSON.stringify(updatedDetails)));
+      }
+    } else {
+      setSaveMessage(result.message || "Failed to update item data");
+    }
+  } catch (error) {
+    console.error('❌ Error updating item data:', error);
+    setSaveMessage("Error updating item data: " + error.message);
+  } finally {
+    setTimeout(() => setSaveMessage(null), 3000);
+  }
+};
 
   const handleCancelEditItem = (itemCode) => {
     setRebateDetails(originalRebateDetails);
@@ -3405,7 +3431,7 @@ useEffect(() => {
         type: typeof statusValue
       });
 
-      const response = await fetch(`http://192.168.100.193:3006/api/van/dashboard/rebates?db=${currentDatabase}`, {
+      const response = await fetch(`http://192.168.100.193:3009/api/van/dashboard/rebates?db=${currentDatabase}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -3994,275 +4020,243 @@ useEffect(() => {
   };
 
   const renderIncrementalCustomerTable = ({ access } = {}) => {
-      const isDark = theme === 'dark';
+    const isDark = theme === 'dark';
 
-      if (!rebateDetails?.customers || rebateDetails.customers.length === 0) {
-        return (
-          <div className="flex-1 flex items-center justify-center p-8">
-            <div className="text-center">
-              <Users size={48} className={`mx-auto mb-4 ${
-                isDark ? 'text-gray-600' : 'text-slate-300'
-              }`} />
-              <h5 className={`text-lg font-semibold mb-2 ${
-                isDark ? 'text-gray-300' : 'text-slate-700'
-              }`}>No Customers Found</h5>
-              <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>
-                No customers are associated with this rebate program.
-              </p>
-            </div>
-          </div>
-        );
-      }
-
-      // Color mapping for ranges
-  // Color mapping for ranges - simplified without backgrounds
-  const rangeColors = {
-    1: isDark ? {
-      border: 'border-blue-600',
-      text: 'text-blue-300',
-      label: 'text-blue-400',
-      badge: 'bg-blue-700 text-white'
-    } : {
-      border: 'border-blue-400',
-      text: 'text-blue-700',
-      label: 'text-blue-500',
-      badge: 'bg-blue-500 text-white'
-    },
-    2: isDark ? {
-      border: 'border-amber-600',
-      text: 'text-amber-300',
-      label: 'text-amber-400',
-      badge: 'bg-amber-700 text-white'
-    } : {
-      border: 'border-amber-400',
-      text: 'text-amber-700',
-      label: 'text-amber-500',
-      badge: 'bg-amber-500 text-white'
-    },
-    3: isDark ? {
-      border: 'border-emerald-600',
-      text: 'text-emerald-300',
-      label: 'text-emerald-400',
-      badge: 'bg-emerald-700 text-white'
-    } : {
-      border: 'border-emerald-400',
-      text: 'text-emerald-700',
-      label: 'text-emerald-500',
-      badge: 'bg-emerald-500 text-white'
-    }
-  };
-
+    if (!rebateDetails?.customers || rebateDetails.customers.length === 0) {
       return (
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className={`sticky top-0 border-b ${
-              isDark 
-                ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
-                : 'bg-gray-50 border-gray-200'
-            }`}>
-              <tr>
-                <th className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] max-w-[180px] ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}>Customer</th>
-                <th className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}>Code</th>
-                <th className={`px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}>Qtr Rebate</th>
-                <th className={`px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider min-w-[350px] max-w-[350px] ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}>Quantity Ranges</th>
-                <th className={`px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider min-w-[200px] max-w-[200px] ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}>Rebate Per Bag</th>
-                <th className={`px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}>Actions</th>
-              </tr>
-            </thead>
-            <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-              {rebateDetails.customers.map((customer) => (
-                <tr key={customer.code} className={`transition-colors duration-150 ${
-                  isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
-                }`}>
-                  <td className="px-4 py-3 align-top max-w-[180px]">
-                    <div className="flex items-center gap-3 w-full">
-                      <div 
-                        className="w-7 h-7 rounded-md text-white flex items-center justify-center font-medium text-sm flex-shrink-0 shadow-sm"
-                        style={{ backgroundColor: customer.color || '#3b82f6' }}
-                      >
-                        {(customer.name && customer.name.charAt(0)) || '?'}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className={`font-medium text-sm truncate overflow-hidden text-ellipsis whitespace-nowrap ${
-                          isDark ? 'text-gray-200' : 'text-gray-800'
-                        }`}>
-                          {customer.name || 'Unknown Customer'}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 align-top max-w-[100px]">
-                    <code className={`text-xs px-2 py-1 rounded font-semibold truncate inline-block max-w-full border ${
-                      isDark 
-                        ? 'bg-gray-800 text-gray-300 border-gray-600' 
-                        : 'bg-gray-100 text-gray-700 border-gray-200'
-                    }`}>
-                      {customer.code || 'N/A'}
-                    </code>
-                  </td>
-                  <td className="px-4 py-3 text-center align-top max-w-[100px]">
-                    {editingCustomers[customer.code] ? (
-                      <input
-                        type="number"
-                        value={customer.qtrRebate || 0}
-                        onChange={(e) => handleCustomerQtrRebateChange(customer.code, e.target.value)}
-                        className={`w-16 px-2 py-1 border rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                          isDark 
-                            ? 'bg-gray-800 border-gray-600 text-gray-100' 
-                            : 'border-gray-300 text-gray-800'
-                        }`}
-                      />
-                    ) : (
-                      <span className={`text-sm px-3 py-1.5 rounded-lg font-bold inline-block text-center min-w-12 shadow-sm ${
-                        isDark 
-                          ? 'bg-gradient-to-r from-blue-600/80 to-blue-700/80 text-white' 
-                          : 'bg-gradient-to-r from-blue-500 to-blue-600 text-white'
-                      }`}>
-                        {customer.qtrRebate || 0}
-                      </span>
-                    )}
-                  </td>
-  <td className="px-2 py-1.5 align-top">
-    <div className="flex items-center justify-center gap-1.5">
-      {customer.ranges && customer.ranges.map((range, rangeIndex) => {
-        const colors = rangeColors[range.rangeNo] || rangeColors[1];
-        return (
-          <div 
-            key={`${customer.code}-${rangeIndex}`} 
-            className="flex flex-col items-center p-1"
-          >
-            <div className={`text-[10px] px-1.5 py-0.5 rounded font-medium mb-1 ${colors.badge}`}>
-              R{range.rangeNo}
-            </div>
-            <div className="flex items-center gap-0.5">
-              {editingCustomers[customer.code] ? (
-                <>
-                  <input
-                    type="number"
-                    value={range.minQty || 0}
-                    onChange={(e) => handleCustomerRangeChange(customer.code, rangeIndex, 'minQty', e.target.value)}
-                    className={`w-10 px-1 py-0.5 rounded text-xs text-center focus:outline-none ${
-                      isDark 
-                        ? 'bg-gray-800 text-gray-100' 
-                        : 'bg-white text-gray-900'
-                    }`}
-                    title="Min Qty"
-                  />
-                  <span className={`text-xs ${colors.label} px-0.5`}>–</span>
-                  <input
-                    type="number"
-                    value={range.maxQty || 0}
-                    onChange={(e) => handleCustomerRangeChange(customer.code, rangeIndex, 'maxQty', e.target.value)}
-                    className={`w-10 px-1 py-0.5 rounded text-xs text-center focus:outline-none ${
-                      isDark 
-                        ? 'bg-gray-800 text-gray-100' 
-                        : 'bg-white text-gray-900'
-                    }`}
-                    title="Max Qty"
-                  />
-                </>
-              ) : (
-                <>
-                  <span className={`text-xs px-2 py-0.5 rounded-l font-medium ${colors.text} bg-opacity-10 ${colors.badge.replace('text-', 'bg-')}`}>
-                    {range.minQty || 0}
-                  </span>
-                  <span className={`text-xs ${colors.label} px-0.5`}>→</span>
-                  <span className={`text-xs px-2 py-0.5 rounded-r font-medium ${colors.text} bg-opacity-10 ${colors.badge.replace('text-', 'bg-')}`}>
-                    {range.maxQty || 0}
-                  </span>
-                </>
-              )}
-            </div>
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="text-center">
+            <Users size={48} className={`mx-auto mb-4 ${isDark ? 'text-gray-600' : 'text-slate-300'}`} />
+            <h5 className={`text-lg font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
+              No Customers Found
+            </h5>
+            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>
+              No customers are associated with this rebate program.
+            </p>
           </div>
-        );
-      })}
-    </div>
-  </td>
-
-  <td className="px-2 py-1.5 align-top">
-    <div className="flex items-center justify-center gap-1.5">
-      {customer.ranges && customer.ranges.map((range, rangeIndex) => {
-        const colors = rangeColors[range.rangeNo] || rangeColors[1];
-        return (
-          <div 
-            key={`${customer.code}-rebate-${rangeIndex}`} 
-            className="flex flex-col items-center p-1"
-          >
-            <div className={`text-[10px] px-1.5 py-0.5 rounded font-medium mb-1 ${colors.badge}`}>
-              R{range.rangeNo}
-            </div>
-            {editingCustomers[customer.code] ? (
-              <input
-                type="number"
-                value={range.rebatePerBag || 0}
-                onChange={(e) => handleCustomerRangeChange(customer.code, rangeIndex, 'rebatePerBag', e.target.value)}
-                className={`w-12 px-1 py-0.5 rounded text-xs text-center focus:outline-none ${
-                  isDark 
-                    ? 'bg-gray-800 text-gray-100' 
-                    : 'bg-white text-gray-900'
-                }`}
-              />
-            ) : (
-              <span className={`text-xs px-2.5 py-0.5 rounded font-medium ${colors.text} bg-opacity-10 ${colors.badge.replace('text-', 'bg-')}`}>
-                {range.rebatePerBag || 0}
-              </span>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  </td>
-                  <td className="px-4 py-3 text-center align-top max-w-[80px]">
-                    {editingCustomers[customer.code] ? (
-                      <div className="flex gap-2 justify-center">
-                        <button
-                          onClick={() => handleSaveCustomer(customer.code)}
-                          className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors shadow-sm"
-                          title="Save"
-                        >
-                          <Check size={14} />
-                        </button>
-                        <button
-                          onClick={() => handleCancelEditCustomer(customer.code)}
-                          className="p-1.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors shadow-sm"
-                          title="Cancel"
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => access?.canEdit && handleEditCustomer(customer.code)}
-                        disabled={!access?.canEdit}
-                        title={access?.canEdit ? 'Edit' : 'No edit permission'}
-                        className={`p-1 rounded transition-colors ${
-                          access?.canEdit
-                            ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
-                            : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
-                        }`}
-                      >
-                        <Edit size={10} />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       );
+    }
+
+    const rangeColors = {
+      1: isDark
+        ? { text: 'text-blue-300',    badge: 'bg-blue-700 text-white'    }
+        : { text: 'text-blue-700',    badge: 'bg-blue-500 text-white'    },
+      2: isDark
+        ? { text: 'text-amber-300',   badge: 'bg-amber-700 text-white'   }
+        : { text: 'text-amber-700',   badge: 'bg-amber-500 text-white'   },
+      3: isDark
+        ? { text: 'text-emerald-300', badge: 'bg-emerald-700 text-white' }
+        : { text: 'text-emerald-700', badge: 'bg-emerald-500 text-white' },
+    };
+
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead className={`sticky top-0 border-b ${
+            isDark
+              ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700'
+              : 'bg-gray-50 border-gray-200'
+          }`}>
+            <tr>
+              <th className={`px-4 py-2.5 text-left   text-[10px] font-bold uppercase tracking-widest min-w-[180px] max-w-[180px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                Customer
+              </th>
+              <th className={`px-4 py-2.5 text-left   text-[10px] font-bold uppercase tracking-widest min-w-[100px] max-w-[100px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                Code
+              </th>
+              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest min-w-[100px] max-w-[100px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                Qtr Rebate
+              </th>
+              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                Quantity Ranges
+              </th>
+              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                Rebate Per Unit
+              </th>
+              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest min-w-[80px] max-w-[80px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                Actions
+              </th>
+            </tr>
+          </thead>
+
+          <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
+            {rebateDetails.customers.map((customer) => (
+              <tr
+                key={customer.code}
+                className={`transition-colors duration-150 ${isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'}`}
+              >
+
+                {/* ── Customer ─────────────────────────────────────────── */}
+                <td className="px-4 py-3 align-middle max-w-[180px]">
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className="w-7 h-7 rounded-md text-white flex items-center justify-center font-semibold text-xs flex-shrink-0 shadow-sm"
+                      style={{ backgroundColor: customer.color || '#3b82f6' }}
+                    >
+                      {customer.name?.charAt(0) || '?'}
+                    </div>
+                    <span className={`font-medium text-xs truncate ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>
+                      {customer.name || 'Unknown Customer'}
+                    </span>
+                  </div>
+                </td>
+
+                {/* ── Code ─────────────────────────────────────────────── */}
+                <td className="px-4 py-3 align-middle max-w-[100px]">
+                  <code className={`text-xs px-2 py-0.5 rounded font-semibold border inline-block ${
+                    isDark ? 'bg-slate-800 text-slate-300 border-slate-600' : 'bg-slate-100 text-slate-700 border-slate-200'
+                  }`}>
+                    {customer.code || 'N/A'}
+                  </code>
+                </td>
+
+                {/* ── Qtr Rebate ───────────────────────────────────────── */}
+                <td className="px-4 py-3 text-center align-middle max-w-[100px]">
+                  {editingCustomers[customer.code] ? (
+                    <input
+                      type="number"
+                      value={customer.qtrRebate || 0}
+                      onChange={(e) => handleCustomerQtrRebateChange(customer.code, e.target.value)}
+                      className={`w-16 px-2 py-1 border rounded text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        isDark ? 'bg-gray-800 border-gray-600 text-gray-100' : 'border-gray-300 text-gray-800'
+                      }`}
+                    />
+                  ) : (
+                    <span className={`text-xs px-3 py-1 rounded-lg font-bold inline-block shadow-sm ${
+                      isDark
+                        ? 'bg-gradient-to-r from-blue-600/80 to-blue-700/80 text-white'
+                        : 'bg-gradient-to-r from-blue-500 to-blue-600 text-white'
+                    }`}>
+                      {customer.qtrRebate || 0}
+                    </span>
+                  )}
+                </td>
+
+                  {/* ── Quantity Ranges ───────────────────────────────────── */}
+                  <td className="px-4 py-3 align-middle">
+                    <div className="flex items-center justify-center gap-1 flex-nowrap">
+                      {customer.ranges?.map((range, rangeIndex) => {
+                        const colors = rangeColors[range.rangeNo] || rangeColors[1];
+                        return (
+                          <div key={`${customer.code}-range-${rangeIndex}`} className="flex items-center gap-0.5 flex-shrink-0">
+                            <span className={`text-[9px] px-1 py-0.5 rounded font-bold flex-shrink-0 leading-none ${colors.badge}`}>
+                              R{range.rangeNo}
+                            </span>
+                            {editingCustomers[customer.code] ? (
+                              <div className="flex items-center gap-0.5">
+                                <input
+                                  type="number"
+                                  value={range.minQty || 0}
+                                  onChange={(e) => handleCustomerRangeChange(customer.code, rangeIndex, 'minQty', e.target.value)}
+                                  className={`w-10 px-1 py-0.5 border rounded text-[10px] text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+                                    isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'
+                                  }`}
+                                  title="Min Qty"
+                                />
+                                <span className={`text-[9px] font-medium ${isDark ? 'text-slate-400' : 'text-slate-400'}`}>–</span>
+                                <input
+                                  type="number"
+                                  value={range.maxQty || 0}
+                                  onChange={(e) => handleCustomerRangeChange(customer.code, rangeIndex, 'maxQty', e.target.value)}
+                                  className={`w-10 px-1 py-0.5 border rounded text-[10px] text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+                                    isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'
+                                  }`}
+                                  title="Max Qty"
+                                />
+                              </div>
+                            ) : (
+                              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border leading-none ${colors.text} ${
+                                isDark ? 'bg-slate-800/60 border-slate-700' : 'bg-slate-50 border-slate-200'
+                              }`}>
+                                {range.minQty ?? 0}–{range.maxQty ?? 0}
+                              </span>
+                            )}
+                            {rangeIndex < customer.ranges.length - 1 && (
+                              <span className={`text-[9px] mx-0.5 flex-shrink-0 ${isDark ? 'text-slate-600' : 'text-slate-300'}`}>·</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </td>
+
+                  {/* ── Rebate Per Bag ────────────────────────────────────── */}
+                  <td className="px-4 py-3 align-middle">
+                    <div className="flex items-center justify-center gap-1 flex-nowrap">
+                      {customer.ranges?.map((range, rangeIndex) => {
+                        const colors = rangeColors[range.rangeNo] || rangeColors[1];
+                        return (
+                          <div key={`${customer.code}-rebate-${rangeIndex}`} className="flex items-center gap-0.5 flex-shrink-0">
+                            <span className={`text-[9px] px-1 py-0.5 rounded font-bold flex-shrink-0 leading-none ${colors.badge}`}>
+                              R{range.rangeNo}
+                            </span>
+                            {editingCustomers[customer.code] ? (
+                              <input
+                                type="number"
+                                value={range.rebatePerBag || 0}
+                                onChange={(e) => handleCustomerRangeChange(customer.code, rangeIndex, 'rebatePerBag', e.target.value)}
+                                className={`w-10 px-1 py-0.5 border rounded text-[10px] text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${
+                                  isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'
+                                }`}
+                              />
+                            ) : (
+                              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border leading-none ${colors.text} ${
+                                isDark ? 'bg-slate-800/60 border-slate-700' : 'bg-slate-50 border-slate-200'
+                              }`}>
+                                {range.rebatePerBag ?? 0}
+                              </span>
+                            )}
+                            {rangeIndex < customer.ranges.length - 1 && (
+                              <span className={`text-[9px] mx-0.5 flex-shrink-0 ${isDark ? 'text-slate-600' : 'text-slate-300'}`}>·</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </td>
+
+                {/* ── Actions ───────────────────────────────────────────── */}
+                <td className="px-4 py-3 text-center align-middle max-w-[80px]">
+                  {editingCustomers[customer.code] ? (
+                    <div className="flex gap-2 justify-center">
+                      <button
+                        onClick={() => handleSaveCustomer(customer.code)}
+                        className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors shadow-sm"
+                        title="Save"
+                      >
+                        <Check size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleCancelEditCustomer(customer.code)}
+                        className="p-1.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors shadow-sm"
+                        title="Cancel"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => access?.canEdit && handleEditCustomer(customer.code)}
+                      disabled={!access?.canEdit}
+                      title={access?.canEdit ? 'Edit' : 'No edit permission'}
+                      className={`p-1.5 rounded transition-colors ${
+                        access?.canEdit
+                          ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
+                          : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
+                      }`}
+                    >
+                      <Edit size={12} />
+                    </button>
+                  )}
+                </td>
+
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
   };
 
   const renderPercentageCustomerTable = ({ access } = {}) => {
@@ -4709,314 +4703,96 @@ if (isMonthly) {
     );
   };
 
-  const renderFixedItemsTable = ({ access } = {}) => {
+const renderFixedItemsTable = ({ access } = {}) => {
+  const isDark = theme === 'dark';
 
-
-    console.log('🔍 Percentage rebate details:', {
-    customersCount: rebateDetails?.customers?.length,
-    firstCustomer: rebateDetails?.customers?.[0],
-    firstCustomerQuotas: rebateDetails?.customers?.[0]?.quotas,
-    quotasType: typeof rebateDetails?.customers?.[0]?.quotas,
-    isArray: Array.isArray(rebateDetails?.customers?.[0]?.quotas)
-  });
-    const isDark = theme === 'dark';
-
-    if (!rebateDetails?.items || rebateDetails.items.length === 0) {
-      return (
-        <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center">
-            <Blocks size={48} className={`mx-auto mb-4 ${
-              isDark ? 'text-gray-600' : 'text-slate-300'
-            }`} />
-            <h5 className={`text-lg font-semibold mb-2 ${
-              isDark ? 'text-gray-300' : 'text-slate-700'
-            }`}>No Items Found</h5>
-            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>
-              No items are associated with this Fixed rebate program.
-            </p>
-          </div>
-        </div>
-      );
-    }
-
+  if (!rebateDetails?.items || rebateDetails.items.length === 0) {
     return (
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className={`sticky top-0 border-b ${
-            isDark 
-              ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
-              : 'bg-gray-50 border-gray-200'
-          }`}>
-            <tr>
-              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] max-w-[180px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Item</th>
-              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Code</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Qty Per Unit</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Rebate Per Bag</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Actions</th>
-            </tr>
-          </thead>
-          <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-            {rebateDetails.items.map((item, idx) => {
-              // Get rebate per bag value from the correct field
-              const rebatePerBagValue = item.rebatePerBag || item.rebate || 0;
-              
-              return (
-                <tr key={idx} className={`transition-colors duration-150 ${
-                  isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
-                }`}>
-                  <td className="px-3 py-2 align-top">
-                    <div className="flex items-center gap-2 w-full">
-                      <div className={`w-5 h-5 rounded-md flex items-center justify-center shadow-sm flex-shrink-0 ${
-                        isDark 
-                          ? 'bg-gradient-to-br from-blue-900/30 to-blue-900/30' 
-                          : 'bg-gradient-to-br from-blue-100 to-blue-200'
-                      }`}>
-                        <Blocks size={10} className={
-                          isDark ? 'text-blue-400' : 'text-blue-600'
-                        } />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        {editingItems[item.code] ? (
-                          <input
-                            type="text"
-                            value={item.description}
-                            onChange={(e) => handleItemChange(item.code, 'description', e.target.value)}
-                            className={`w-full px-2 py-1 border rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                              isDark 
-                                ? 'bg-gray-800 border-gray-600 text-gray-100' 
-                                : 'border-gray-300 text-gray-800'
-                            }`}
-                          />
-                        ) : (
-                          <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
-                            isDark ? 'text-gray-200' : 'text-gray-800'
-                          }`}>
-                            {item.description}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 align-top">
-                    <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
-                      isDark 
-                        ? 'bg-gray-800 text-gray-300' 
-                        : 'bg-gray-100 text-gray-700'
-                    }`}>
-                      {item.code}
-                    </code>
-                  </td>
-                  <td className="px-3 py-2 text-center align-top">
-                    {editingItems[item.code] ? (
-                      <input
-                        type="number"
-                        value={item.unitPerQty}
-                        onChange={(e) => handleItemChange(item.code, 'unitPerQty', e.target.value)}
-                        className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                          isDark 
-                            ? 'bg-gray-800 text-gray-100' 
-                            : 'bg-white text-gray-800'
-                        }`}
-                      />
-                    ) : (
-                      <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                        isDark 
-                          ? 'bg-gray-800 text-gray-300' 
-                          : 'bg-gray-100 text-gray-900'
-                      }`}>
-                        {item.unitPerQty}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-center align-top">
-                    {editingItems[item.code] ? (
-                      <div className="flex items-center gap-0.5 justify-center">
-                        <span className={`text-xs ${
-                          isDark ? 'text-gray-300' : 'text-gray-700'
-                        }`}>₱</span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={rebatePerBagValue}
-                          onChange={(e) => handleItemChange(item.code, 'rebatePerBag', e.target.value)}
-                          className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                            isDark 
-                              ? 'bg-gray-800 text-gray-100' 
-                              : 'bg-white text-gray-800'
-                          }`}
-                        />
-                      </div>
-                    ) : (
-                      <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                        isDark 
-                          ? 'bg-emerald-500/80 text-white' 
-                          : 'bg-emerald-500 text-white'
-                      }`}>
-                        ₱{rebatePerBagValue.toFixed(2)}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-center align-top">
-                    {editingItems[item.code] ? (
-                      <div className="flex gap-1 justify-center">
-                        <button
-                          onClick={() => handleSaveItem(item.code)}
-                          className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
-                          title="Save"
-                        >
-                          <Check size={10} />
-                        </button>
-                        <button
-                          onClick={() => handleCancelEditItem(item.code)}
-                          className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
-                          title="Cancel"
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => access?.canEdit && handleEditItem(item.code)}
-                        disabled={!access?.canEdit}
-                        title={access?.canEdit ? 'Edit' : 'No edit permission'}
-                        className={`p-1 rounded transition-colors ${
-                          access?.canEdit
-                            ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
-                            : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
-                        }`}
-                      >
-                        <Edit size={10} />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="text-center">
+          <Blocks size={48} className={`mx-auto mb-4 ${
+            isDark ? 'text-gray-600' : 'text-slate-300'
+          }`} />
+          <h5 className={`text-lg font-semibold mb-2 ${
+            isDark ? 'text-gray-300' : 'text-slate-700'
+          }`}>No Items Found</h5>
+          <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>
+            No items are associated with this Fixed rebate program.
+          </p>
+        </div>
       </div>
     );
-  };
+  }
 
-  const renderIncrementalItemsTable = ({ access } = {}) => {
-    const isDark = theme === 'dark';
-
-    if (!rebateDetails?.items || rebateDetails.items.length === 0) {
-      return (
-        <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center">
-            <Blocks size={48} className={`mx-auto mb-4 ${
-              isDark ? 'text-gray-600' : 'text-slate-300'
-            }`} />
-            <h5 className={`text-lg font-semibold mb-2 ${
-              isDark ? 'text-gray-300' : 'text-slate-700'
-            }`}>No Items Found</h5>
-            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>
-              No items are associated with this rebate program.
-            </p>
-          </div>
-        </div>
-      );
-    }
-
-      // Color mapping for ranges - simplified without backgrounds
-    const rangeColors = {
-      1: isDark ? {
-        border: 'border-blue-600',
-        text: 'text-blue-300',
-        label: 'text-blue-400',
-        badge: 'bg-blue-700 text-white'
-      } : {
-        border: 'border-blue-400',
-        text: 'text-blue-700',
-        label: 'text-blue-500',
-        badge: 'bg-blue-500 text-white'
-      },
-      2: isDark ? {
-        border: 'border-amber-600',
-        text: 'text-amber-300',
-        label: 'text-amber-400',
-        badge: 'bg-amber-700 text-white'
-      } : {
-        border: 'border-amber-400',
-        text: 'text-amber-700',
-        label: 'text-amber-500',
-        badge: 'bg-amber-500 text-white'
-      },
-      3: isDark ? {
-        border: 'border-emerald-600',
-        text: 'text-emerald-300',
-        label: 'text-emerald-400',
-        badge: 'bg-emerald-700 text-white'
-      } : {
-        border: 'border-emerald-400',
-        text: 'text-emerald-700',
-        label: 'text-emerald-500',
-        badge: 'bg-emerald-500 text-white'
-      }
-    };
-
-    return (
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className={`sticky top-0 border-b ${
-            isDark 
-              ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
-              : 'bg-gray-50 border-gray-200'
-          }`}>
-            <tr>
-              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] max-w-[180px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Item</th>
-              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Code</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Qty Per Unit</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Quantity Ranges</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Rebates per Range</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Actions</th>
-            </tr>
-          </thead>
-          <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-            {rebateDetails.items.map((item, idx) => (
-              <tr key={item.code} className={`transition-colors duration-150 ${
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead className={`sticky top-0 border-b ${
+          isDark 
+            ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
+            : 'bg-gray-50 border-gray-200'
+        }`}>
+          <tr>
+            <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] max-w-[180px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Item</th>
+            <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Code</th>
+            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Qty Per Unit</th>
+            {/* NEW: Unit of Measure column */}
+            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Unit of Measure</th>
+            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Rebate Per Unit</th>
+            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Actions</th>
+          </tr>
+        </thead>
+        <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
+          {rebateDetails.items.map((item, idx) => {
+            // Get rebate per bag value from the correct field
+            const rebatePerBagValue = item.rebatePerBag || item.rebate || 0;
+            
+            return (
+              <tr key={idx} className={`transition-colors duration-150 ${
                 isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
               }`}>
                 <td className="px-3 py-2 align-top">
                   <div className="flex items-center gap-2 w-full">
                     <div className={`w-5 h-5 rounded-md flex items-center justify-center shadow-sm flex-shrink-0 ${
                       isDark 
-                        ? 'bg-gradient-to-br from-purple-900/30 to-purple-900/30' 
-                        : 'bg-gradient-to-br from-purple-100 to-purple-200'
+                        ? 'bg-gradient-to-br from-blue-900/30 to-blue-900/30' 
+                        : 'bg-gradient-to-br from-blue-100 to-blue-200'
                     }`}>
                       <Blocks size={10} className={
-                        isDark ? 'text-purple-400' : 'text-purple-600'
+                        isDark ? 'text-blue-400' : 'text-blue-600'
                       } />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
-                        isDark ? 'text-gray-200' : 'text-gray-800'
-                      }`}>
-                        {item.description}
-                      </div>
+                      {editingItems[item.code] ? (
+                        <input
+                          type="text"
+                          value={item.description}
+                          onChange={(e) => handleItemChange(item.code, 'description', e.target.value)}
+                          className={`w-full px-2 py-1 border rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
+                            isDark 
+                              ? 'bg-gray-800 border-gray-600 text-gray-100' 
+                              : 'border-gray-300 text-gray-800'
+                          }`}
+                        />
+                      ) : (
+                        <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
+                          isDark ? 'text-gray-200' : 'text-gray-800'
+                        }`}>
+                          {item.description}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </td>
@@ -5035,7 +4811,7 @@ if (isMonthly) {
                       type="number"
                       value={item.unitPerQty}
                       onChange={(e) => handleItemChange(item.code, 'unitPerQty', e.target.value)}
-                      className={`w-14 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
+                      className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
                         isDark 
                           ? 'bg-gray-800 text-gray-100' 
                           : 'bg-white text-gray-800'
@@ -5051,229 +4827,14 @@ if (isMonthly) {
                     </span>
                   )}
                 </td>
-                <td className="px-2 py-1.5 align-top">
-                  <div className="flex items-center justify-center gap-1.5">
-                    {item.ranges && item.ranges.map((range, rangeIndex) => {
-                      const colors = rangeColors[range.rangeNo] || rangeColors[1];
-                      return (
-                        <div 
-                          key={`${item.code}-${rangeIndex}`} 
-                          className="flex flex-col items-center p-1"
-                        >
-                          <div className={`text-[10px] px-1.5 py-0.5 rounded font-medium mb-1 ${colors.badge}`}>
-                            R{range.rangeNo}
-                          </div>
-                          <div className="flex items-center gap-0.5">
-                            {editingItems[item.code] ? (
-                              <>
-                                <input
-                                  type="number"
-                                  value={range.minQty || 0}
-                                  onChange={(e) => handleItemRangeChange(item.code, rangeIndex, 'minQty', e.target.value)}
-                                  className={`w-10 px-1 py-0.5 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                                    isDark 
-                                      ? 'bg-gray-800 text-gray-100' 
-                                      : 'bg-white text-gray-800'
-                                  }`}
-                                  title="Min Qty"
-                                />
-                                <span className={`text-xs ${colors.label} px-0.5`}>–</span>
-                                <input
-                                  type="number"
-                                  value={range.maxQty || 0}
-                                  onChange={(e) => handleItemRangeChange(item.code, rangeIndex, 'maxQty', e.target.value)}
-                                  className={`w-10 px-1 py-0.5 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                                    isDark 
-                                      ? 'bg-gray-800 text-gray-100' 
-                                      : 'bg-white text-gray-800'
-                                  }`}
-                                  title="Max Qty"
-                                />
-                              </>
-                            ) : (
-                              <>
-                                <span className={`text-xs px-2 py-0.5 rounded-l font-medium ${colors.text} bg-opacity-10 ${colors.badge.replace('text-', 'bg-')}`}>
-                                  {range.minQty || 0}
-                                </span>
-                                <span className={`text-xs ${colors.label} px-0.5`}>→</span>
-                                <span className={`text-xs px-2 py-0.5 rounded-r font-medium ${colors.text} bg-opacity-10 ${colors.badge.replace('text-', 'bg-')}`}>
-                                  {range.maxQty || 0}
-                                </span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </td>
-                <td className="px-2 py-1.5 align-top">
-                  <div className="flex items-center justify-center gap-1.5">
-                    {item.ranges && item.ranges.map((range, rangeIndex) => {
-                      const colors = rangeColors[range.rangeNo] || rangeColors[1];
-                      return (
-                        <div 
-                          key={`${item.code}-rebate-${rangeIndex}`} 
-                          className="flex flex-col items-center p-1"
-                        >
-                          <div className={`text-[10px] px-1.5 py-0.5 rounded font-medium mb-1 ${colors.badge}`}>
-                            R{range.rangeNo}
-                          </div>
-                          {editingItems[item.code] ? (
-                            <div className="flex items-center gap-0.5">
-                              <span className={`text-xs ${
-                                isDark ? 'text-gray-300' : 'text-gray-700'
-                              }`}>₱</span>
-                              <input
-                                type="number"
-                                value={range.rebatePerBag || 0}
-                                onChange={(e) => handleItemRangeChange(item.code, rangeIndex, 'rebatePerBag', e.target.value)}
-                                className={`w-12 px-1 py-0.5 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                                  isDark 
-                                    ? 'bg-gray-800 text-gray-100' 
-                                    : 'bg-white text-gray-800'
-                                }`}
-                              />
-                            </div>
-                          ) : (
-                            <span className={`text-xs px-2.5 py-0.5 rounded font-medium ${colors.text} bg-opacity-10 ${colors.badge.replace('text-', 'bg-')}`}>
-                              ₱{range.rebatePerBag || 0}
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </td>
-                <td className="px-3 py-2 text-center align-top">
-                  {editingItems[item.code] ? (
-                    <div className="flex gap-1 justify-center">
-                      <button
-                        onClick={() => handleSaveItem(item.code)}
-                        className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
-                        title="Save"
-                      >
-                        <Check size={10} />
-                      </button>
-                      <button
-                        onClick={() => handleCancelEditItem(item.code)}
-                        className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
-                        title="Cancel"
-                      >
-                        <X size={10} />
-                      </button>
-                    </div>
-                  ) : (
-                      <button
-                        onClick={() => access?.canEdit && handleEditItem(item.code)}
-                        disabled={!access?.canEdit}
-                        title={access?.canEdit ? 'Edit' : 'No edit permission'}
-                        className={`p-1 rounded transition-colors ${
-                          access?.canEdit
-                            ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
-                            : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
-                        }`}
-                      >
-                        <Edit size={10} />
-                      </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
-
-  const renderPercentageItemsTable = ({ access } = {}) => {
-    const isDark = theme === 'dark';
-
-    if (!rebateDetails?.items || rebateDetails.items.length === 0) {
-      return (
-        <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center">
-            <Blocks size={48} className={`mx-auto mb-4 ${
-              isDark ? 'text-gray-600' : 'text-slate-300'
-            }`} />
-            <h5 className={`text-lg font-semibold mb-2 ${
-              isDark ? 'text-gray-300' : 'text-slate-700'
-            }`}>No Items Found</h5>
-            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>
-              No items are associated with this Percentage rebate program.
-            </p>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className={`sticky top-0 border-b ${
-            isDark 
-              ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
-              : 'bg-gray-50 border-gray-200'
-          }`}>
-            <tr>
-              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] max-w-[180px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Item</th>
-              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Code</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Qty Per Unit</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Percentage</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Actions</th>
-            </tr>
-          </thead>
-          <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-            {rebateDetails.items.map((item, idx) => (
-              <tr key={idx} className={`transition-colors duration-150 ${
-                isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
-              }`}>
-                <td className="px-3 py-2 align-top">
-                  <div className="flex items-center gap-2 w-full">
-                    <div className={`w-5 h-5 rounded-md flex items-center justify-center shadow-sm flex-shrink-0 ${
-                      isDark 
-                        ? 'bg-gradient-to-br from-green-900/30 to-emerald-900/30' 
-                        : 'bg-gradient-to-br from-green-100 to-emerald-200'
-                    }`}>
-                      <Blocks size={10} className={
-                        isDark ? 'text-emerald-400' : 'text-emerald-600'
-                      } />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
-                        isDark ? 'text-gray-200' : 'text-gray-800'
-                      }`}>
-                        {item.description}
-                      </div>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-3 py-2 align-top">
-                  <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
-                    isDark 
-                      ? 'bg-gray-800 text-gray-300' 
-                      : 'bg-gray-100 text-gray-700'
-                  }`}>
-                    {item.code}
-                  </code>
-                </td>
+                {/* NEW: Unit of Measure column */}
                 <td className="px-3 py-2 text-center align-top">
                   {editingItems[item.code] ? (
                     <input
-                      type="number"
-                      value={item.unitPerQty || 1}
-                      onChange={(e) => handleItemChange(item.code, 'unitPerQty', e.target.value)}
-                      className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
+                      type="text"
+                      value={item.uom || ''}
+                      onChange={(e) => handleItemChange(item.code, 'uom', e.target.value)}
+                      className={`w-20 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
                         isDark 
                           ? 'bg-gray-800 text-gray-100' 
                           : 'bg-white text-gray-800'
@@ -5284,27 +4845,28 @@ if (isMonthly) {
                       isDark 
                         ? 'bg-gray-800 text-gray-300' 
                         : 'bg-gray-100 text-gray-900'
-                      }`}>
-                      {item.unitPerQty || 1}
+                    }`}>
+                      {item.uom || '—'}
                     </span>
                   )}
                 </td>
                 <td className="px-3 py-2 text-center align-top">
                   {editingItems[item.code] ? (
                     <div className="flex items-center gap-0.5 justify-center">
+                      <span className={`text-xs ${
+                        isDark ? 'text-gray-300' : 'text-gray-700'
+                      }`}>₱</span>
                       <input
                         type="number"
-                        value={item.percentage || 0}  // USE percentage FIELD
-                        onChange={(e) => handleItemChange(item.code, 'percentage', e.target.value)}
+                        step="0.01"
+                        value={rebatePerBagValue}
+                        onChange={(e) => handleItemChange(item.code, 'rebatePerBag', e.target.value)}
                         className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
                           isDark 
                             ? 'bg-gray-800 text-gray-100' 
                             : 'bg-white text-gray-800'
                         }`}
                       />
-                      <span className={`text-xs ${
-                        isDark ? 'text-gray-300' : 'text-gray-700'
-                      }`}>%</span>
                     </div>
                   ) : (
                     <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
@@ -5312,7 +4874,7 @@ if (isMonthly) {
                         ? 'bg-emerald-500/80 text-white' 
                         : 'bg-emerald-500 text-white'
                     }`}>
-                      {item.percentage || 0}%  {/* DISPLAY percentage FIELD */}
+                      ₱{rebatePerBagValue.toFixed(2)}
                     </span>
                   )}
                 </td>
@@ -5335,20 +4897,312 @@ if (isMonthly) {
                       </button>
                     </div>
                   ) : (
-                      <button
-                        onClick={() => access?.canEdit && handleEditItem(item.code)}
-                        disabled={!access?.canEdit}
-                        title={access?.canEdit ? 'Edit' : 'No edit permission'}
-                        className={`p-1 rounded transition-colors ${
-                          access?.canEdit
-                            ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
-                            : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
-                        }`}
-                      >
-                        <Edit size={10} />
-                      </button>
+                    <button
+                      onClick={() => access?.canEdit && handleEditItem(item.code)}
+                      disabled={!access?.canEdit}
+                      title={access?.canEdit ? 'Edit' : 'No edit permission'}
+                      className={`p-1 rounded transition-colors ${
+                        access?.canEdit
+                          ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
+                          : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
+                      }`}
+                    >
+                      <Edit size={10} />
+                    </button>
                   )}
                 </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+  const renderIncrementalItemsTable = ({ access } = {}) => {
+    const isDark = theme === 'dark';
+
+    if (!rebateDetails?.items || rebateDetails.items.length === 0) {
+      return (
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="text-center">
+            <Blocks size={48} className={`mx-auto mb-4 ${isDark ? 'text-gray-600' : 'text-slate-300'}`} />
+            <h5 className={`text-lg font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
+              No Items Found
+            </h5>
+            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>
+              No items are associated with this rebate program.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    const rangeColors = {
+      1: isDark
+        ? { text: 'text-blue-300',    badge: 'bg-blue-700 text-white'    }
+        : { text: 'text-blue-700',    badge: 'bg-blue-500 text-white'    },
+      2: isDark
+        ? { text: 'text-amber-300',   badge: 'bg-amber-700 text-white'   }
+        : { text: 'text-amber-700',   badge: 'bg-amber-500 text-white'   },
+      3: isDark
+        ? { text: 'text-emerald-300', badge: 'bg-emerald-700 text-white' }
+        : { text: 'text-emerald-700', badge: 'bg-emerald-500 text-white' },
+    };
+
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead className={`sticky top-0 border-b ${
+            isDark
+              ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700'
+              : 'bg-gray-50 border-gray-200'
+          }`}>
+            <tr>
+              <th className={`px-4 py-2.5 text-left   text-[10px] font-bold uppercase tracking-widest min-w-[180px] max-w-[180px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                Item
+              </th>
+              <th className={`px-4 py-2.5 text-left   text-[10px] font-bold uppercase tracking-widest min-w-[100px] max-w-[100px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                Code
+              </th>
+              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest min-w-[100px] max-w-[100px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                Qty Per Unit
+              </th>
+              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest min-w-[100px] max-w-[100px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                Unit of Measure
+              </th>
+              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                Quantity Ranges
+              </th>
+              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                Rebates per Range
+              </th>
+              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest min-w-[80px] max-w-[80px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                Actions
+              </th>
+            </tr>
+          </thead>
+
+          <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
+            {rebateDetails.items.map((item) => (
+              <tr
+                key={item.code}
+                className={`transition-colors duration-150 ${isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'}`}
+              >
+
+                {/* ── Item ─────────────────────────────────────────────── */}
+                <td className="px-4 py-3 align-middle max-w-[180px]">
+                  <div className="flex items-center gap-2.5">
+                    <div className={`w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 shadow-sm ${
+                      isDark ? 'bg-violet-900/40' : 'bg-violet-50'
+                    }`}>
+                      <Blocks size={12} className={isDark ? 'text-violet-400' : 'text-violet-600'} />
+                    </div>
+                    <span className={`font-medium text-xs truncate ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>
+                      {item.description}
+                    </span>
+                  </div>
+                </td>
+
+                {/* ── Code ─────────────────────────────────────────────── */}
+                <td className="px-4 py-3 align-middle max-w-[100px]">
+                  <code className={`text-xs px-2 py-0.5 rounded font-semibold border inline-block ${
+                    isDark ? 'bg-slate-800 text-slate-300 border-slate-600' : 'bg-slate-100 text-slate-700 border-slate-200'
+                  }`}>
+                    {item.code}
+                  </code>
+                </td>
+
+                {/* ── Qty Per Unit ──────────────────────────────────────── */}
+                <td className="px-4 py-3 text-center align-middle max-w-[100px]">
+                  {editingItems[item.code] ? (
+                    <input
+                      type="number"
+                      value={item.unitPerQty}
+                      onChange={(e) => handleItemChange(item.code, 'unitPerQty', e.target.value)}
+                      className={`w-16 px-2 py-1 border rounded text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        isDark ? 'bg-gray-800 border-gray-600 text-gray-100' : 'border-gray-300 text-gray-800'
+                      }`}
+                    />
+                  ) : (
+                    <span className={`text-xs px-3 py-1 rounded-lg font-bold inline-block shadow-sm ${
+                      isDark
+                        ? 'bg-gradient-to-r from-violet-600/80 to-violet-700/80 text-white'
+                        : 'bg-gradient-to-r from-violet-500 to-violet-600 text-white'
+                    }`}>
+                      {item.unitPerQty}
+                    </span>
+                  )}
+                </td>
+
+                {/* Unit of Measure */}
+                <td className="px-4 py-3 text-center align-middle max-w-[100px]">
+                  {editingItems[item.code] ? (
+                    <input
+                      type="text"
+                      value={item.uom || ''}
+                      onChange={(e) => handleItemChange(item.code, 'uom', e.target.value)}
+                      className={`w-20 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
+                        isDark 
+                          ? 'bg-gray-800 text-gray-100' 
+                          : 'bg-white text-gray-800'
+                      }`}
+                    />
+                  ) : (
+                    <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
+                      isDark 
+                        ? 'bg-gray-800 text-gray-300' 
+                        : 'bg-gray-100 text-gray-900'
+                    }`}>
+                      {item.uom || '—'}
+                    </span>
+                  )}
+                </td>
+
+                {/* ── Quantity Ranges ───────────────────────────────────── */}
+                <td className="px-4 py-3 align-middle">
+                  {(() => {
+                    const count = item.ranges?.length || 1;
+                    const scale = count <= 2 ? 'normal' : count === 3 ? 'compact' : 'tiny';
+                    const sz = {
+                      normal: { badge: 'text-[10px] px-1.5 py-0.5', input: 'w-14 px-1.5 py-0.5 text-xs', value: 'text-xs px-2 py-0.5', sep: 'text-[10px]' },
+                      compact: { badge: 'text-[9px] px-1 py-px',    input: 'w-11 px-1 py-px text-[10px]', value: 'text-[10px] px-1.5 py-px', sep: 'text-[9px]' },
+                      tiny:    { badge: 'text-[8px] px-1 py-px',    input: 'w-9  px-1 py-px text-[9px]',  value: 'text-[9px] px-1 py-px',    sep: 'text-[8px]' },
+                    }[scale];
+                    return (
+                      <div className="flex items-center justify-center gap-1.5 flex-nowrap overflow-x-auto">
+                        {item.ranges?.map((range, rangeIndex) => {
+                          const colors = rangeColors[range.rangeNo] || rangeColors[1];
+                          return (
+                            <div key={`${item.code}-range-${rangeIndex}`} className="flex items-center gap-1 flex-shrink-0">
+                              <span className={`rounded font-bold flex-shrink-0 ${sz.badge} ${colors.badge}`}>
+                                R{range.rangeNo}
+                              </span>
+                              {editingItems[item.code] ? (
+                                <div className="flex items-center gap-0.5">
+                                  <input
+                                    type="number"
+                                    value={range.minQty || 0}
+                                    onChange={(e) => handleItemRangeChange(item.code, rangeIndex, 'minQty', e.target.value)}
+                                    className={`border rounded text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${sz.input} ${
+                                      isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'
+                                    }`}
+                                    title="Min Qty"
+                                  />
+                                  <span className={`font-medium ${sz.sep} ${isDark ? 'text-slate-400' : 'text-slate-400'}`}>–</span>
+                                  <input
+                                    type="number"
+                                    value={range.maxQty || 0}
+                                    onChange={(e) => handleItemRangeChange(item.code, rangeIndex, 'maxQty', e.target.value)}
+                                    className={`border rounded text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${sz.input} ${
+                                      isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'
+                                    }`}
+                                    title="Max Qty"
+                                  />
+                                </div>
+                              ) : (
+                                <span className={`font-semibold rounded border whitespace-nowrap ${sz.value} ${colors.text} ${
+                                  isDark ? 'bg-slate-800/60 border-slate-700' : 'bg-slate-50 border-slate-200'
+                                }`}>
+                                  {range.minQty ?? 0}–{range.maxQty ?? 0}
+                                </span>
+                              )}
+                              {rangeIndex < item.ranges.length - 1 && (
+                                <span className={`mx-0.5 ${sz.sep} ${isDark ? 'text-slate-600' : 'text-slate-300'}`}>·</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </td>
+
+                {/* ── Rebates per Range ─────────────────────────────────── */}
+                <td className="px-4 py-3 align-middle">
+                  {(() => {
+                    const count = item.ranges?.length || 1;
+                    const scale = count <= 2 ? 'normal' : count === 3 ? 'compact' : 'tiny';
+                    const sz = {
+                      normal: { badge: 'text-[10px] px-1.5 py-0.5', input: 'w-16 px-1.5 py-0.5 text-xs', value: 'text-xs px-2 py-0.5', sep: 'text-[10px]', peso: 'text-xs' },
+                      compact: { badge: 'text-[9px] px-1 py-px',    input: 'w-13 px-1 py-px text-[10px]', value: 'text-[10px] px-1.5 py-px', sep: 'text-[9px]', peso: 'text-[10px]' },
+                      tiny:    { badge: 'text-[8px] px-1 py-px',    input: 'w-10 px-1 py-px text-[9px]',  value: 'text-[9px] px-1 py-px',    sep: 'text-[8px]', peso: 'text-[9px]' },
+                    }[scale];
+                    return (
+                      <div className="flex items-center justify-center gap-1.5 flex-nowrap overflow-x-auto">
+                        {item.ranges?.map((range, rangeIndex) => {
+                          const colors = rangeColors[range.rangeNo] || rangeColors[1];
+                          return (
+                            <div key={`${item.code}-rebate-${rangeIndex}`} className="flex items-center gap-1 flex-shrink-0">
+                              <span className={`rounded font-bold flex-shrink-0 ${sz.badge} ${colors.badge}`}>
+                                R{range.rangeNo}
+                              </span>
+                              {editingItems[item.code] ? (
+                                <div className="flex items-center gap-0.5">
+                                  <span className={`${sz.peso} ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>₱</span>
+                                  <input
+                                    type="number"
+                                    value={range.rebatePerBag || 0}
+                                    onChange={(e) => handleItemRangeChange(item.code, rangeIndex, 'rebatePerBag', e.target.value)}
+                                    className={`border rounded text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${sz.input} ${
+                                      isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'
+                                    }`}
+                                  />
+                                </div>
+                              ) : (
+                                <span className={`font-semibold rounded border whitespace-nowrap ${sz.value} ${colors.text} ${
+                                  isDark ? 'bg-slate-800/60 border-slate-700' : 'bg-slate-50 border-slate-200'
+                                }`}>
+                                  ₱{range.rebatePerBag ?? 0}
+                                </span>
+                              )}
+                              {rangeIndex < item.ranges.length - 1 && (
+                                <span className={`mx-0.5 ${sz.sep} ${isDark ? 'text-slate-600' : 'text-slate-300'}`}>·</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </td>
+
+                {/* ── Actions ───────────────────────────────────────────── */}
+                <td className="px-4 py-3 text-center align-middle max-w-[80px]">
+                  {editingItems[item.code] ? (
+                    <div className="flex gap-2 justify-center">
+                      <button
+                        onClick={() => handleSaveItem(item.code)}
+                        className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors shadow-sm"
+                        title="Save"
+                      >
+                        <Check size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleCancelEditItem(item.code)}
+                        className="p-1.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors shadow-sm"
+                        title="Cancel"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => access?.canEdit && handleEditItem(item.code)}
+                      disabled={!access?.canEdit}
+                      title={access?.canEdit ? 'Edit' : 'No edit permission'}
+                      className={`p-1.5 rounded transition-colors ${
+                        access?.canEdit
+                          ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
+                          : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
+                      }`}
+                    >
+                      <Edit size={12} />
+                    </button>
+                  )}
+                </td>
+
               </tr>
             ))}
           </tbody>
@@ -5356,6 +5210,204 @@ if (isMonthly) {
       </div>
     );
   };
+
+const renderPercentageItemsTable = ({ access } = {}) => {
+  const isDark = theme === 'dark';
+
+  if (!rebateDetails?.items || rebateDetails.items.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="text-center">
+          <Blocks size={48} className={`mx-auto mb-4 ${
+            isDark ? 'text-gray-600' : 'text-slate-300'
+          }`} />
+          <h5 className={`text-lg font-semibold mb-2 ${
+            isDark ? 'text-gray-300' : 'text-slate-700'
+          }`}>No Items Found</h5>
+          <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>
+            No items are associated with this Percentage rebate program.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead className={`sticky top-0 border-b ${
+          isDark 
+            ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
+            : 'bg-gray-50 border-gray-200'
+        }`}>
+          <tr>
+            <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] max-w-[180px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Item</th>
+            <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Code</th>
+            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Qty Per Unit</th>
+            {/* NEW: Unit of Measure column */}
+            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Unit of Measure</th>
+            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Percentage</th>
+            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Actions</th>
+          </tr>
+        </thead>
+        <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
+          {rebateDetails.items.map((item, idx) => (
+            <tr key={idx} className={`transition-colors duration-150 ${
+              isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
+            }`}>
+              <td className="px-3 py-2 align-top">
+                <div className="flex items-center gap-2 w-full">
+                  <div className={`w-5 h-5 rounded-md flex items-center justify-center shadow-sm flex-shrink-0 ${
+                    isDark 
+                      ? 'bg-gradient-to-br from-green-900/30 to-emerald-900/30' 
+                      : 'bg-gradient-to-br from-green-100 to-emerald-200'
+                  }`}>
+                    <Blocks size={10} className={
+                      isDark ? 'text-emerald-400' : 'text-emerald-600'
+                    } />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
+                      isDark ? 'text-gray-200' : 'text-gray-800'
+                    }`}>
+                      {item.description}
+                    </div>
+                  </div>
+                </div>
+              </td>
+              <td className="px-3 py-2 align-top">
+                <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
+                  isDark 
+                    ? 'bg-gray-800 text-gray-300' 
+                    : 'bg-gray-100 text-gray-700'
+                }`}>
+                  {item.code}
+                </code>
+              </td>
+              <td className="px-3 py-2 text-center align-top">
+                {editingItems[item.code] ? (
+                  <input
+                    type="number"
+                    value={item.unitPerQty || 1}
+                    onChange={(e) => handleItemChange(item.code, 'unitPerQty', e.target.value)}
+                    className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
+                      isDark 
+                        ? 'bg-gray-800 text-gray-100' 
+                        : 'bg-white text-gray-800'
+                    }`}
+                  />
+                ) : (
+                  <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
+                    isDark 
+                      ? 'bg-gray-800 text-gray-300' 
+                      : 'bg-gray-100 text-gray-900'
+                  }`}>
+                    {item.unitPerQty || 1}
+                  </span>
+                )}
+              </td>
+              {/* NEW: Unit of Measure column */}
+              <td className="px-3 py-2 text-center align-top">
+                {editingItems[item.code] ? (
+                  <input
+                    type="text"
+                    value={item.uom || ''}
+                    onChange={(e) => handleItemChange(item.code, 'uom', e.target.value)}
+                    className={`w-20 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
+                      isDark 
+                        ? 'bg-gray-800 text-gray-100' 
+                        : 'bg-white text-gray-800'
+                    }`}
+                  />
+                ) : (
+                  <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
+                    isDark 
+                      ? 'bg-gray-800 text-gray-300' 
+                      : 'bg-gray-100 text-gray-900'
+                  }`}>
+                    {item.uom || '—'}
+                  </span>
+                )}
+              </td>
+              <td className="px-3 py-2 text-center align-top">
+                {editingItems[item.code] ? (
+                  <div className="flex items-center gap-0.5 justify-center">
+                    <input
+                      type="number"
+                      value={item.percentage || 0}
+                      onChange={(e) => handleItemChange(item.code, 'percentage', e.target.value)}
+                      className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
+                        isDark 
+                          ? 'bg-gray-800 text-gray-100' 
+                          : 'bg-white text-gray-800'
+                      }`}
+                    />
+                    <span className={`text-xs ${
+                      isDark ? 'text-gray-300' : 'text-gray-700'
+                    }`}>%</span>
+                  </div>
+                ) : (
+                  <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
+                    isDark 
+                      ? 'bg-emerald-500/80 text-white' 
+                      : 'bg-emerald-500 text-white'
+                  }`}>
+                    {item.percentage || 0}%
+                  </span>
+                )}
+              </td>
+              <td className="px-3 py-2 text-center align-top">
+                {editingItems[item.code] ? (
+                  <div className="flex gap-1 justify-center">
+                    <button
+                      onClick={() => handleSaveItem(item.code)}
+                      className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
+                      title="Save"
+                    >
+                      <Check size={10} />
+                    </button>
+                    <button
+                      onClick={() => handleCancelEditItem(item.code)}
+                      className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+                      title="Cancel"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => access?.canEdit && handleEditItem(item.code)}
+                    disabled={!access?.canEdit}
+                    title={access?.canEdit ? 'Edit' : 'No edit permission'}
+                    className={`p-1 rounded transition-colors ${
+                      access?.canEdit
+                        ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
+                        : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
+                    }`}
+                  >
+                    <Edit size={10} />
+                  </button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
 
   const renderTransactionTable = () => {
     if (!modalCustomer || !modalCustomer.rebateType) {
@@ -6149,25 +6201,69 @@ if (isMonthly) {
         }`}>
           <div className={`p-8 w-full max-w-[1600px] mx-auto mt-6 `}>
             <div className="mb-8">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-sm ${
+              <div className="flex items-center justify-between gap-4">
+
+                {/* Left: title + icon */}
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm border ${
                     theme === 'dark'
-                      ? 'bg-gradient-to-br from-blue-500 to-blue-600 border border-blue-700/30'
-                      : 'bg-gradient-to-br from-blue-600 to-blue-800 border border-blue-200'
+                      ? 'bg-gradient-to-br from-blue-600 to-indigo-700 border-blue-700/40'
+                      : 'bg-gradient-to-br from-blue-600 to-indigo-700 border-blue-400/30'
                   }`}>
-                    <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                     </svg>
                   </div>
-                  <div>
-                    <h1 className={`text-lg font-bold ${
-                      theme === 'dark' ? 'text-gray-100' : 'text-gray-800'
-                    }`}>Rebate Analytics Dashboard</h1>
-                    <p className={`text-xs ${
-                      theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
-                    }`}>Welcome, <span className="font-bold">{userName}</span>! Here's your overview</p>
+                  <div className="min-w-0">
+                    <h1 className={`text-sm font-bold leading-none ${
+                      theme === 'dark' ? 'text-slate-100' : 'text-slate-800'
+                    }`}>
+                      Rebate Analytics Dashboard
+                    </h1>
+                    <p className={`text-[11px] mt-0.5 ${
+                      theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+                    }`}>
+                      Welcome back, <span className={`font-semibold ${theme === 'dark' ? 'text-slate-200' : 'text-slate-700'}`}>{userName}</span>
+                    </p>
                   </div>
+                </div>
+
+                {/* Right: meta info + date */}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {/* Current date */}
+                  <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] ${
+                    theme === 'dark'
+                      ? 'bg-slate-800 border-slate-700 text-slate-400'
+                      : 'bg-white border-slate-200 text-slate-500'
+                  }`}>
+                    <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    <span className="tabular-nums">
+                      {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </span>
+                  </div>
+
+                  {/* Divider */}
+                  <div className={`h-6 w-px ${theme === 'dark' ? 'bg-slate-700' : 'bg-slate-200'}`} />
+
+                  {/* Refresh button */}
+                  <button
+                    onClick={handleRefresh}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-all ${
+                      theme === 'dark'
+                        ? 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+                        : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+                    }`}
+                  >
+                    <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Refresh
+                  </button>
                 </div>
               </div>
             </div>
@@ -6257,8 +6353,11 @@ if (isMonthly) {
               onClearFilters={clearAllFilters}
               onApplyFilters={applyFilters}
               onFetchData={() => loadCustomerStatus(true)}   // calls your existing function, forceRefresh=true
-              fetchIntervalMs={5_000}                        // refresh every 30 seconds
-              autoFetchEnabled={true}                         // flip to false to pause
+              fetchIntervalMs={3000}                       // refresh every 30 seconds
+              autoFetchEnabled={!selectedRebate && !modalCustomer}                        // flip to false to pause
+              selectedProgramStatus={selectedProgramStatus}
+              setSelectedProgramStatus={setSelectedProgramStatus}
+              showStatus={dbType === "VAN"}
             />
           </div>
         </div>
@@ -6287,420 +6386,280 @@ if (isMonthly) {
           />
 
 {modalCustomer && (
-  <div className={`fixed inset-0 flex items-center justify-center z-50 backdrop-blur-md transition-all duration-300 ${
-    theme === 'dark' ? 'bg-black/70' : 'bg-black/50'
-  }`} onClick={() => setModalCustomer(null)}>
-    <div className={`rounded-3xl w-[80%] max-w-[1400px] max-h-[95vh] overflow-hidden relative shadow-2xl transition-all duration-300 border ${
-      theme === 'dark' 
-        ? 'bg-gray-800 border-gray-700/50 backdrop-blur-sm' 
-        : 'bg-white/80 border-white/50 backdrop-blur-sm'
-    }`} onClick={(e) => e.stopPropagation()}>
-
-      {/* Show loading component OVER the modal content */}
+  <div
+    className={`fixed inset-0 flex items-center justify-center z-50 backdrop-blur-sm transition-all duration-300 ${
+      theme === 'dark' ? 'bg-black/75' : 'bg-black/60'
+    }`}
+    onClick={() => setModalCustomer(null)}
+  >
+    <div
+      className={`flex flex-col rounded-2xl border shadow-2xl w-[88%] max-w-[1400px] h-[92vh] overflow-hidden relative font-sans ${
+        theme === 'dark'
+          ? 'bg-slate-900 border-slate-700/60'
+          : 'bg-slate-50 border-slate-200'
+      }`}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Loading overlay */}
       {isLoadingCustomer && (
         <div className="absolute inset-0 z-50">
           <Loading theme={theme} />
         </div>
       )}
-      
-      <button 
+
+      {/* ── Close button ─────────────────────────────────────────────── */}
+      <button
         onClick={() => setModalCustomer(null)}
-        className={`absolute right-4 top-4 z-10 w-8 h-8 flex items-center justify-center rounded-lg transition-all duration-200 shadow-sm hover:shadow border ${
-          theme === 'dark' 
-            ? 'bg-gray-700 hover:bg-gray-600 border-gray-600 hover:border-gray-500 text-gray-400 hover:text-gray-200' 
-            : 'bg-white hover:bg-gray-100 border-gray-300 hover:border-gray-400 text-gray-600 hover:text-gray-800'
+        className={`absolute right-4 top-4 z-20 w-8 h-8 flex items-center justify-center rounded-lg border transition-all shadow-sm ${
+          theme === 'dark'
+            ? 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600 hover:text-slate-200'
+            : 'bg-white border-slate-300 text-slate-500 hover:bg-slate-100 hover:text-slate-800'
         }`}
       >
-        <X size={18} />
-      </button> 
-      
-      <div className={`border-b px-6 py-4 ${
-        theme === 'dark' ? 'border-gray-700' : 'bg-white'
+        <X size={16} />
+      </button>
+
+      {/* ── Header ───────────────────────────────────────────────────── */}
+      <div className={`flex-shrink-0 border-b px-6 py-4 ${
+        theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
       }`}>
-        <div className="mb-4">
-          <div className="flex items-center gap-3 mb-2">
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-              theme === 'dark' 
-                ? 'bg-gradient-to-br from-blue-500 to-blue-600' 
-                : 'bg-gradient-to-br from-blue-500 to-blue-600' 
-            } shadow`}>
-              <User size={20} className="text-white" />
-            </div>
-            <div>
-              <h3 className={`text-lg font-bold ${
-                theme === 'dark' ? 'text-gray-100' : 'text-gray-900'
-              }`}>Customer Details</h3>
-              <p className={`text-xs ${
-                theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
-              } mt-1`}>View and manage customer information, transactions, and rebates</p>
-            </div>
+        {/* Title */}
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-gradient-to-br from-blue-600 to-indigo-700 shadow">
+            <User size={17} className="text-white" />
+          </div>
+          <div>
+            <h2 className={`text-sm font-bold leading-none ${
+              theme === 'dark' ? 'text-slate-100' : 'text-slate-800'
+            }`}>Customer Details</h2>
+            <p className={`text-[11px] mt-0.5 ${
+              theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+            }`}>View and manage customer monthly quotas, transactions, and earned rebates</p>
           </div>
         </div>
 
-        <div className="grid grid-cols-5 gap-3">
-          {/* Customer Name Card */}
-          <div className={`border rounded-xl shadow-sm p-3 transition-all duration-200 ${
-            theme === 'dark' 
-              ? 'bg-gradient-to-br from-red-900/20 to-red-800/20 border-red-700/30' 
-              : 'bg-gradient-to-br from-red-50 to-red-100 border-red-200'
+        {/* Info strip — 5 cards matching RebateDetailsModal */}
+        <div className="grid grid-cols-5 gap-2.5">
+          {/* Customer Name */}
+          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
+            theme === 'dark'
+              ? 'bg-rose-900/20 border-rose-700/30'
+              : 'bg-rose-50 border-rose-200'
           }`}>
-            <div className="flex items-start gap-3">
-              <div className={`w-10 h-10 rounded-lg flex items-center justify-center shadow ${
-                theme === 'dark' 
-                  ? 'bg-gradient-to-br from-red-500 to-red-600' 
-                  : 'bg-gradient-to-br from-red-500 to-red-600'
-              }`}>
-                <User size={14} className="text-white" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className={`text-xs font-medium mb-1 ${
-                  theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
-                }`}>Customer Name</div>
-                <div className={`text-sm font-bold truncate ${
-                  theme === 'dark' ? 'text-gray-100' : 'text-gray-900'
-                }`}>{modalCustomer.customer}</div>
-              </div>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-rose-500 to-red-600 shadow-sm">
+              <User size={14} className="text-white" />
+            </div>
+            <div className="min-w-0">
+              <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${
+                theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+              }`}>Customer</p>
+              <p className={`text-xs font-bold truncate ${
+                theme === 'dark' ? 'text-slate-100' : 'text-slate-800'
+              }`}>{modalCustomer.customer}</p>
             </div>
           </div>
-          
-          {/* Rebate Type Card */}
-          <div className={`border rounded-xl shadow-sm p-3 transition-all duration-200 ${
-            theme === 'dark' 
-              ? 'bg-gradient-to-br from-blue-900/20 to-blue-800/20 border-blue-700/30' 
-              : 'bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200'
+
+          {/* Rebate Type */}
+          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
+            theme === 'dark'
+              ? 'bg-blue-900/20 border-blue-700/30'
+              : 'bg-blue-50 border-blue-200'
           }`}>
-            <div className="flex items-start gap-3">
-              <div className={`w-10 h-10 rounded-lg flex items-center justify-center shadow ${
-                theme === 'dark' 
-                  ? 'bg-gradient-to-br from-blue-500 to-blue-600' 
-                  : 'bg-gradient-to-br from-blue-500 to-blue-600'
-              }`}>
-                <FileText size={14} className="text-white" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className={`text-xs font-medium mb-1 ${
-                  theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
-                }`}>Rebate Type</div>
-                <div className={`text-sm font-bold truncate ${
-                  theme === 'dark' ? 'text-gray-100' : 'text-gray-900'
-                }`}>{modalCustomer.rebateType}</div>
-              </div>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-blue-500 to-indigo-600 shadow-sm">
+              <FileText size={14} className="text-white" />
+            </div>
+            <div className="min-w-0">
+              <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${
+                theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+              }`}>Rebate Type</p>
+              <p className={`text-xs font-bold truncate ${
+                theme === 'dark' ? 'text-slate-100' : 'text-slate-800'
+              }`}>{modalCustomer.rebateType}</p>
             </div>
           </div>
-          
-          {/* Sales Employee Card */}
-          <div className={`border rounded-xl shadow-sm p-3 transition-all duration-200 ${
-            theme === 'dark' 
-              ? 'bg-gradient-to-br from-yellow-900/20 to-yellow-800/20 border-yellow-700/30' 
-              : 'bg-gradient-to-br from-yellow-50 to-yellow-100 border-yellow-200'
+
+          {/* Sales Employee */}
+          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
+            theme === 'dark'
+              ? 'bg-amber-900/20 border-amber-700/30'
+              : 'bg-amber-50 border-amber-200'
           }`}>
-            <div className="flex items-start gap-3">
-              <div className={`w-10 h-10 rounded-lg flex items-center justify-center shadow ${
-                theme === 'dark' 
-                  ? 'bg-gradient-to-br from-yellow-500 to-yellow-600' 
-                  : 'bg-gradient-to-br from-yellow-500 to-yellow-600'
-              }`}>
-                <UserCheck size={14} className="text-white" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className={`text-xs font-medium mb-1 ${
-                  theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
-                }`}>Sales Employee</div>
-                <div className={`text-sm font-bold truncate ${
-                  theme === 'dark' ? 'text-gray-100' : 'text-gray-900'
-                }`}>{modalCustomer.agent}</div>
-              </div>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-amber-500 to-orange-500 shadow-sm">
+              <UserCheck size={14} className="text-white" />
+            </div>
+            <div className="min-w-0">
+              <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${
+                theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+              }`}>Sales Employee</p>
+              <p className={`text-xs font-bold truncate ${
+                theme === 'dark' ? 'text-slate-100' : 'text-slate-800'
+              }`}>{modalCustomer.agent}</p>
             </div>
           </div>
-          
-          {/* Rebate Period Card */}
-          <div className={`border rounded-xl shadow-sm p-3 transition-all duration-200 ${
-            theme === 'dark' 
-              ? 'bg-gradient-to-br from-green-900/20 to-green-800/20 border-green-700/30' 
-              : 'bg-gradient-to-br from-green-50 to-green-100 border-green-200'
+
+          {/* Frequency */}
+          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
+            theme === 'dark'
+              ? 'bg-violet-900/20 border-violet-700/30'
+              : 'bg-violet-50 border-violet-200'
           }`}>
-            <div className="flex items-start gap-3">
-              <div className={`w-10 h-10 rounded-lg flex items-center justify-center shadow ${
-                theme === 'dark' 
-                  ? 'bg-gradient-to-br from-green-500 to-green-600' 
-                  : 'bg-gradient-to-br from-green-500 to-green-600'
-              }`}>
-                <Calendar size={14} className="text-white" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className={`text-xs font-medium mb-1 ${
-                  theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
-                }`}>Rebate Period</div>
-                <div className={`text-sm font-bold ${
-                  theme === 'dark' ? 'text-gray-100' : 'text-gray-900'
-                }`}>
-                  {formatDateRange(modalCustomer.dateFrom, modalCustomer.dateTo) || 
-                  formatDateRange(modalCustomer.details?.rebateDetails?.dateFrom, modalCustomer.details?.rebateDetails?.dateTo) ||
-                  'Not specified'}
-                </div>
-              </div>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-violet-500 to-purple-600 shadow-sm">
+              <Clock size={14} className="text-white" />
+            </div>
+            <div className="min-w-0">
+              <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${
+                theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+              }`}>Frequency</p>
+              <p className={`text-xs font-bold truncate ${
+                theme === 'dark' ? 'text-slate-100' : 'text-slate-800'
+              }`}>{modalCustomer.frequency || 'Quarterly'}</p>
             </div>
           </div>
-          {/* Add this card in the grid after the Rebate Period Card */}
-            {/* Frequency Card - Add this after the Rebate Period Card */}
-            <div className={`border rounded-xl shadow-sm p-3 transition-all duration-200 ${
-              theme === 'dark' 
-                ? 'bg-gradient-to-br from-purple-900/20 to-purple-800/20 border-purple-700/30' 
-                : 'bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200'
-            }`}>
-              <div className="flex items-start gap-3">
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shadow ${
-                  theme === 'dark' 
-                    ? 'bg-gradient-to-br from-purple-500 to-purple-600' 
-                    : 'bg-gradient-to-br from-purple-500 to-purple-600'
-                }`}>
-                  <Calendar size={14} className="text-white" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className={`text-xs font-medium mb-1 ${
-                    theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
-                  }`}>Frequency</div>
-                  <div className={`text-sm font-bold ${
-                    theme === 'dark' ? 'text-gray-100' : 'text-gray-900'
-                  }`}>
-                    {modalCustomer.frequency || 'Quarterly'}
-                  </div>
-                </div>
-              </div>
+
+          {/* Rebate Period */}
+          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
+            theme === 'dark'
+              ? 'bg-emerald-900/20 border-emerald-700/30'
+              : 'bg-emerald-50 border-emerald-200'
+          }`}>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-emerald-500 to-teal-600 shadow-sm">
+              <Calendar size={14} className="text-white" />
             </div>
+            <div className="min-w-0">
+              <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${
+                theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
+              }`}>Period</p>
+              <p className={`text-xs font-bold truncate ${
+                theme === 'dark' ? 'text-slate-100' : 'text-slate-800'
+              }`}>
+                {formatDateRange(modalCustomer.dateFrom, modalCustomer.dateTo) ||
+                 formatDateRange(modalCustomer.details?.rebateDetails?.dateFrom, modalCustomer.details?.rebateDetails?.dateTo) ||
+                 'Not specified'}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Body ─────────────────────────────────────────────────────── */}
+      <div className="flex flex-col flex-1 min-h-0">
+
+        {/* ── Tab bar ─────────────────────────────────────────────────── */}
+        <div className={`flex-shrink-0 border-b px-6 py-2.5 ${
+          theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
+        }`}>
+          <div className={`flex items-center gap-1 rounded-lg p-1 w-fit ${
+            theme === 'dark' ? 'bg-slate-700/60' : 'bg-slate-100'
+          }`}>
+            {[
+              { icon: TrendingUp, label: 'Analytics',     value: 'quota'       },
+              { icon: FileText,   label: 'Transaction Log', value: 'transaction' },
+              { icon: CreditCard, label: 'Payout History',  value: 'payout'      },
+            ].map((tab) => (
+              <button
+                key={tab.value}
+                onClick={() => {
+                  if (customerModalTab !== tab.value) {
+                    setCustomerModalTab(tab.value);
+                    if (
+                      (tab.value === 'transaction' && detailedTransactions.length === 0) ||
+                      (tab.value === 'payout'      && detailedPayouts.length === 0)
+                    ) {
+                      handleTabChange(tab.value);
+                    }
+                  }
+                }}
+                className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                  customerModalTab === tab.value
+                    ? 'bg-blue-600 text-white shadow'
+                    : theme === 'dark'
+                      ? 'text-slate-400 hover:text-slate-200'
+                      : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <tab.icon size={14} />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Tab content ─────────────────────────────────────────────── */}
+        <div className={`flex-1 overflow-auto ${
+          theme === 'dark' ? 'bg-slate-900/60' : 'bg-slate-50'
+        }`}>
+          {customerModalTab === 'quota' && (
+            <VanQuotaPerformance
+              theme={theme}
+              onCustomerClick={handleCustomerClick}
+              customerModalTab={customerModalTab}
+              modalCustomer={modalCustomer}
+              isLoadingCustomer={isLoadingCustomer}
+              getFilteredMonthlyQuotas={getFilteredMonthlyQuotas}
+              formatDecimal={formatDecimal}
+              periodFrom={periodFrom}
+              periodTo={periodTo}
+              setPeriodFrom={setPeriodFrom}
+              setPeriodTo={setPeriodTo}
+              handleApplyPeriodFilter={() => applyPeriodFilter('quota')}
+              isAutoLoading={isAutoLoading}
+            />
+          )}
+          {customerModalTab === 'transaction' && (
+            <VanTransactionRecords
+              theme={theme}
+              modalCustomer={modalCustomer}
+              filteredTransactions={filteredTransactions}
+              transactionCurrentPage={transactionCurrentPage}
+              setTransactionCurrentPage={setTransactionCurrentPage}
+              transactionRowsPerPage={transactionRowsPerPage}
+              setTransactionRowsPerPage={setTransactionRowsPerPage}
+              isLoading={loadingTransactions[`${modalCustomer?.code}_transactions`] || false}
+              renderTransactionTable={renderTransactionTable}
+              periodFrom={periodFrom}
+              periodTo={periodTo}
+              setPeriodFrom={setPeriodFrom}
+              setPeriodTo={setPeriodTo}
+              handleApplyPeriodFilter={() => applyPeriodFilter('quota')}
+              isAutoLoading={isAutoLoading}
+            />
+          )}
+          {customerModalTab === 'payout' && (
+            <VanPayoutHistory
+              theme={theme}
+              customerModalTab={customerModalTab}
+              modalCustomer={modalCustomer}
+              paginatedPayouts={paginatedPayouts}
+              filteredPayouts={filteredPayouts}
+              payoutCurrentPage={payoutCurrentPage}
+              setPayoutCurrentPage={setPayoutCurrentPage}
+              payoutRowsPerPage={payoutRowsPerPage}
+              setPayoutRowsPerPage={setPayoutRowsPerPage}
+              editingPayoutId={editingPayoutId}
+              setEditingPayoutId={setEditingPayoutId}
+              editedAmountReleased={editedAmountReleased}
+              setEditedAmountReleased={setEditedAmountReleased}
+              saveMessage={saveMessage}
+              setSaveMessage={setSaveMessage}
+              handlePayoutStatusChange={handlePayoutStatusChange}
+              handleSaveAmountReleased={handleSaveAmountReleased}
+              loadDetailedPayoutsData={loadDetailedPayoutsData}
+              formatCurrency={formatCurrency}
+              periodFrom={periodFrom}
+              periodTo={periodTo}
+              setPeriodFrom={setPeriodFrom}
+              setPeriodTo={setPeriodTo}
+              handleApplyPeriodFilter={() => applyPeriodFilter('quota')}
+              isAutoLoading={isAutoLoading}
+              setFilteredPayouts={() => {}} 
+               setPaginatedPayouts={() => {}} 
+            />
+          )}
         </div>
       </div>
-      
-      <div className="flex flex-col h-[calc(95vh-190px)]">
-        
-        {/* Tab Navigation */}
-        <div className={`border-b px-6 py-3 ${
-          theme === 'dark' ? 'border-gray-700' : 'bg-white'
-        }`}>
-          <div className="flex items-center justify-between">
-            <div className={`flex items-center gap-1 rounded-lg p-1 ${
-              theme === 'dark' ? 'bg-gray-700' : 'bg-gray-100'
-            }`}>
-              {[
-                { icon: TrendingUp, label: "Performance", value: "quota" },
-                { icon: FileText, label: "Transaction Log", value: "transaction" },
-                { icon: CreditCard, label: "Payout History", value: "payout" }
-              ].map((tab) => (
-                <button 
-                  key={tab.value}
-                  className={`flex items-center gap-2 px-5 py-2 rounded-md text-xs font-medium transition-all min-w-[140px] justify-center ${
-                    customerModalTab === tab.value 
-                      ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow' 
-                      : theme === 'dark' 
-                        ? 'text-gray-400 hover:text-gray-200' 
-                        : 'text-gray-600 hover:text-gray-800'
-                  }`}
-                  onClick={() => {
-                    if (customerModalTab !== tab.value) {
-                      setCustomerModalTab(tab.value);
-                      if ((tab.value === 'transaction' && detailedTransactions.length === 0) ||
-                          (tab.value === 'payout' && detailedPayouts.length === 0)) {
-                        handleTabChange(tab.value);
-                      }
-                    }
-                  }}
-                >
-                  <tab.icon size={16} />
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-            
-            <div className="flex items-center gap-2">
-              {/* Filter Status */}
-              <div className="flex items-center gap-2">
-                <Filter size={14} className={theme === 'dark' ? 'text-gray-500' : 'text-gray-400'} />
-                <select 
-                  value={filterStatus}
-                  onChange={(e) => setFilterStatus(e.target.value)}
-                  className={`border rounded px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-32 ${
-                    theme === 'dark' 
-                      ? 'bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-400' 
-                      : 'border-gray-300 text-gray-800 placeholder-gray-500'
-                  }`}
-                >
-                  <option value="" className={theme === 'dark' ? 'bg-gray-700' : ''}>Filter Status</option>
-                  <option value="Eligible" className={theme === 'dark' ? 'bg-gray-700' : ''}>Eligible</option>
-                  <option value="Pending" className={theme === 'dark' ? 'bg-gray-700' : ''}>Pending</option>
-                  <option value="Not Eligible" className={theme === 'dark' ? 'bg-gray-700' : ''}>Not Eligible</option>
-                </select>
-              </div>
-              
-              {/* Date Filter */}
-              <div className="flex items-center gap-2">
-                <div className={`flex items-center gap-1 border rounded px-2 py-1.5 ${
-                  theme === 'dark' 
-                    ? 'border-gray-600 bg-gray-700' 
-                    : 'border-gray-300 bg-white'
-                }`}>
-                  <Calendar size={12} className={theme === 'dark' ? 'text-gray-500' : 'text-gray-400'} />
-                  <input
-                    type="date"
-                    value={periodFrom || ""}
-                    onChange={(e) => {
-                      console.log('📅 Manual date from change:', e.target.value);
-                      setPeriodFrom(e.target.value);
-                      setUseAutoDates(false);
-                    }}
-                    className={`text-xs focus:outline-none w-24 ${
-                      theme === 'dark' 
-                        ? 'bg-transparent text-gray-100' 
-                        : 'text-gray-800'
-                    }`}
-                    disabled={isAutoLoading}
-                  />
-                </div>
-                <span className={`text-xs ${theme === 'dark' ? 'text-gray-500' : 'text-gray-400'}`}>to</span>
-                <div className={`flex items-center gap-1 border rounded px-2 py-1.5 ${
-                  theme === 'dark' 
-                    ? 'border-gray-600 bg-gray-700' 
-                    : 'border-gray-300 bg-white'
-                }`}>
-                  <input
-                    type="date"
-                    value={periodTo || ""}
-                    onChange={(e) => {
-                      console.log('📅 Manual date to change:', e.target.value);
-                      setPeriodTo(e.target.value);
-                      setUseAutoDates(false);
-                    }}
-                    className={`text-xs focus:outline-none w-24 ${
-                      theme === 'dark' 
-                        ? 'bg-transparent text-gray-100' 
-                        : 'text-gray-800'
-                    }`}
-                    disabled={isAutoLoading}
-                  />
-                </div>
-                
-                {/* Apply button */}
-                <button
-                  onClick={async () => {
-                    console.log('🔄 Applying manual dates:', periodFrom, 'to', periodTo);
-                    if (customerModalTab === 'quota') {
-                      const quotaData = await fetchMonthlyQuotaData(
-                        modalCustomer.code, 
-                        modalCustomer.rebateCode, 
-                        modalCustomer.rebateType, 
-                        false
-                      );
-                      if (quotaData) {
-                        setModalCustomer(prev => ({
-                          ...prev,
-                          details: {
-                            ...prev.details,
-                            ...quotaData,
-                            monthlyQuotas: quotaData.monthlyQuotas || [],
-                            summary: quotaData.summary,
-                            dateRange: {
-                              ...prev.details?.dateRange,
-                              periodFrom: periodFrom,
-                              periodTo: periodTo,
-                              autoLoaded: false
-                            }
-                          }
-                        }));
-                      }
-                    } else if (customerModalTab === 'transaction') {
-                      await loadDetailedTransactionsData(false);
-                    } else if (customerModalTab === 'payout') {
-                      await loadDetailedPayoutsData(false);
-                    }
-                    setSaveMessage("Applied custom date range!");
-                    setTimeout(() => setSaveMessage(null), 2000);
-                  }}
-                  className={`px-3 py-1.5 text-xs font-medium rounded hover:shadow transition-all duration-200 ${
-                    isAutoLoading || !periodFrom || !periodTo
-                      ? theme === 'dark' 
-                        ? 'bg-gray-700 text-gray-400 cursor-not-allowed' 
-                        : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                      : 'bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700'
-                  }`}
-                  disabled={isAutoLoading || !periodFrom || !periodTo}
-                >
-                  Apply
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-              
-              <div className="flex-1 overflow-auto p-0">
-                  {customerModalTab === 'quota' && (
-                    <VanQuotaPerformance
-                      theme={theme}
-                      onCustomerClick={handleCustomerClick}
-                      customerModalTab={customerModalTab}
-                      modalCustomer={modalCustomer}
-                      isLoadingCustomer={isLoadingCustomer}
-                      getFilteredMonthlyQuotas={getFilteredMonthlyQuotas}
-                      formatDecimal={formatDecimal}
-                      periodFrom={periodFrom}
-                      periodTo={periodTo}
-                      setPeriodFrom={setPeriodFrom}
-                      setPeriodTo={setPeriodTo}
-                      handleApplyPeriodFilter={() => applyPeriodFilter('quota')}
-                      isAutoLoading={isAutoLoading}
-                    />
-                  )}
-                  {customerModalTab === 'transaction' && (
-                    <VanTransactionRecords
-                      theme={theme}
-                      modalCustomer={modalCustomer}
-                      filteredTransactions={filteredTransactions}
-                      transactionCurrentPage={transactionCurrentPage}
-                      setTransactionCurrentPage={setTransactionCurrentPage}
-                      transactionRowsPerPage={transactionRowsPerPage}
-                      setTransactionRowsPerPage={setTransactionRowsPerPage}
-                      isLoading={loadingTransactions[`${modalCustomer?.code}_transactions`] || false}
-                      renderTransactionTable={renderTransactionTable} 
-                      periodFrom={periodFrom}
-                      periodTo={periodTo}
-                      setPeriodFrom={setPeriodFrom}
-                      setPeriodTo={setPeriodTo}
-                      handleApplyPeriodFilter={() => applyPeriodFilter('quota')}
-                      isAutoLoading={isAutoLoading}
-                    />
-                  )}
-                  {customerModalTab === 'payout' && (
-                    <VanPayoutHistory
-                      theme={theme}
-                      customerModalTab={customerModalTab}
-                      modalCustomer={modalCustomer}
-                      paginatedPayouts={paginatedPayouts}
-                      filteredPayouts={filteredPayouts}
-                      payoutCurrentPage={payoutCurrentPage}
-                      setPayoutCurrentPage={setPayoutCurrentPage}
-                      payoutRowsPerPage={payoutRowsPerPage}
-                      setPayoutRowsPerPage={setPayoutRowsPerPage}
-                      editingPayoutId={editingPayoutId}
-                      setEditingPayoutId={setEditingPayoutId}
-                      editedAmountReleased={editedAmountReleased}
-                      setEditedAmountReleased={setEditedAmountReleased}
-                      saveMessage={saveMessage}
-                      setSaveMessage={setSaveMessage}
-                      handlePayoutStatusChange={handlePayoutStatusChange}
-                      handleSaveAmountReleased={handleSaveAmountReleased}
-                      loadDetailedPayoutsData={loadDetailedPayoutsData}
-                      formatCurrency={formatCurrency}
-                      periodFrom={periodFrom}
-                      periodTo={periodTo}
-                      setPeriodFrom={setPeriodFrom}
-                      setPeriodTo={setPeriodTo}
-                      handleApplyPeriodFilter={() => applyPeriodFilter('quota')}
-                      isAutoLoading={isAutoLoading}
-                    />
-                  )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+    </div>
+  </div>
+)}
     </div>
   );
 }

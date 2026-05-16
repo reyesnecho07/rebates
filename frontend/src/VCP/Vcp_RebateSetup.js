@@ -26,6 +26,7 @@ import {
   Lock,
   Search,
   PenLine,
+  ChevronDown,
 } from "lucide-react";
 import { useLocation, Link } from 'react-router-dom';
 import vcpLogo from "../assets/vcp.png";
@@ -45,12 +46,206 @@ import ItemSelectionModal from "../components/rebate/ItemSelectionModal";
 import DuplicationError from "../components/duplicationerror";
 import { useComponentRegistration } from '../hooks/useComponentRegistration';
 import useAccessControl from '../hooks/useAccessControl';
+import CancelModal from "../components/common/CancelModal";
+import RemoveRow from "../components/common/RemoveRow";
+
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 const safeObjectValues = (obj) => {
   if (!obj || typeof obj !== 'object') return [];
   return Object.values(obj);
 };
+
+const detectUnitOfMeasure = (itemName) => {
+  if (!itemName) return '';
+  
+  const normalized = itemName.toLowerCase();
+  
+  // Check for KG first (to avoid conflicts with grams)
+  if (/\d+(?:\.\d+)?\s*kgs?/.test(normalized) || /\d+(?:\.\d+)?\s*kilograms?/.test(normalized)) {
+    return 'Kg';
+  }
+  
+  // Check for Liters
+  if (/\d+(?:\.\d+)?\s*l\b/.test(normalized) || /\d+(?:\.\d+)?\s*liters?/.test(normalized) || /\d+(?:\.\d+)?\s*ltrs?/.test(normalized)) {
+    return 'Liter/s';
+  }
+  
+  // Check for ML (milliliters)
+  if (/\d+(?:\.\d+)?\s*mls?/.test(normalized) || /\d+(?:\.\d+)?\s*milliliters?/.test(normalized)) {
+    return 'ML';
+  }
+  
+  // Check for KL (kiloliters)
+  if (/\d+(?:\.\d+)?\s*kls?/.test(normalized) || /\d+(?:\.\d+)?\s*kiloliters?/.test(normalized)) {
+    return 'KL';
+  }
+  
+  // Check for GRAMS
+  // This matches ALL these formats:
+  // - 10g, 500g, 250g, 350g
+  // - 20gX10, 20GX10 (grams with multiplier)
+  // - 500G, 500 G, 500 gram
+  // - 500Gx2, 500g x2
+  // - (100X10G) - parentheses format
+  if (/\d+(?:\.\d+)?\s*g\s*(?:x\s*\d+)?/i.test(normalized) || 
+      /\d+(?:\.\d+)?\s*grams?\b/i.test(normalized) ||
+      /x\s*\d+\s*g/i.test(normalized)) {  // Matches "X10G" pattern
+    
+    // Special case: Skip if it's "CARBOMAX 3G 16.7kg" pattern (has kg after)
+    if (normalized.match(/\d+g\s+\d+(?:\.\d+)?\s*kg/)) {
+      return 'Kg'; // The kg is the real unit
+    }
+    
+    // Special case: Skip if it's "WARIX 600 WG" - the "600" is product code, not grams
+    // Check if the number is followed by "WG" (product code pattern)
+    if (normalized.match(/\d+\s*wg\b/)) {
+      // Look for actual gram pattern after the product code
+      if (normalized.match(/\d+g/i)) {
+        return 'Gram/s'; // There is a real gram unit
+      }
+      return ''; // No real unit found
+    }
+    
+    return 'Gram/s';
+  }
+  
+  // Check for Gallons
+  if (/\b\d+(?:\.\d+)?\s*gallons?\b/.test(normalized) || /\b\d+(?:\.\d+)?\s*gals?\b/.test(normalized) || /\bgallon\b/.test(normalized)) {
+    return 'Gal';
+  }
+  
+  // Check for Ounces
+  if (/\b\d+(?:\.\d+)?\s*ounces?\b/.test(normalized) || /\b\d+(?:\.\d+)?\s*ozs?\b/.test(normalized)) {
+    return 'Oz';
+  }
+  
+  // Check for Pounds
+  if (/\b\d+(?:\.\d+)?\s*pounds?\b/.test(normalized) || /\b\d+(?:\.\d+)?\s*lbs?\b/.test(normalized)) {
+    return 'Lbs';
+  }
+  
+  // Check for Bags
+  if (/\b\d+(?:\.\d+)?\s*bags?\b/.test(normalized) || /\bbag\b/.test(normalized) || /\bbags\b/.test(normalized)) {
+    return 'Bag/s';
+  }
+  
+  // Check for Bottles
+  if (/\b\d+(?:\.\d+)?\s*bottles?\b/.test(normalized) || /\b\d+(?:\.\d+)?\s*btls?\b/.test(normalized) || /\bbottle\b/.test(normalized)) {
+    return 'Btl/s';
+  }
+  
+  // Check for Cartons
+  if (/\b\d+(?:\.\d+)?\s*cartons?\b/.test(normalized) || /\b\d+(?:\.\d+)?\s*ctns?\b/.test(normalized) || /\bcarton\b/.test(normalized)) {
+    return 'Ctn';
+  }
+  
+  // Check for Boxes
+  if (/\b\d+(?:\.\d+)?\s*boxes?\b/.test(normalized) || /\b\d+(?:\.\d+)?\s*bxs?\b/.test(normalized) || /\bbox\b/.test(normalized)) {
+    return 'Bx/s';
+  }
+  
+  // Check for Bundles
+  if (/\b\d+(?:\.\d+)?\s*bundles?\b/.test(normalized) || /\bbundle\b/.test(normalized)) {
+    return 'Bundle';
+  }
+  
+  // Check for Pieces
+  if (/\b\d+(?:\.\d+)?\s*pieces?\b/.test(normalized) || /\b\d+(?:\.\d+)?\s*pcs?\b/.test(normalized)) {
+    return 'Pc/s';
+  }
+  
+  return '';
+};
+
+// UOM Options for dropdown/selection
+const UOM_OPTIONS = [
+  'Bag/s', 'Btl/s', 'Ctn', 'Pc/s', 'Bx/s', 'Gal', 'Kg', 'KL', 'Oz', 'Bundle', 'ML', 'Gram/s', 'Liter/s'
+];
+
+// Test function to verify all cases
+const testUnitDetection = () => {
+  const testCases = [
+    // Original test cases
+    { input: "RAT-X 80 WP 10g (RETAIL)", expected: "Gram/s" },
+    { input: "YIELD MASTER 15-15-30 500g", expected: "Gram/s" },
+    { input: "SAKUHOL 6% PELLETS 500Gx2 (RETAIL)", expected: "Gram/s" },
+    { input: "SAKUHOL 6% PELLETS 500G (RETAIL)", expected: "Gram/s" },
+    { input: "FUNGUFREE 80 WP (YELLOW) 250g (retail)", expected: "Gram/s" },
+    { input: "NICLOMAX 70 WP 350g W/ LONG SLEEVES", expected: "Gram/s" },
+    { input: "NICLOMAX 70 WP 350g (retail)", expected: "Gram/s" },
+    { input: "NICLOMAX 70 WP 35g (retail)", expected: "Gram/s" },
+    { input: "CARBOMAX 3G 16.7kg", expected: "Kg" },
+    { input: "CARBOMAX 3G 1kg (retail)", expected: "Kg" },
+    { input: "VAST 2,4-D ESTER 200L", expected: "Liter/s" },
+    { input: "RAT-X 80 WP 1KG (100X10G) (RETAIL)", expected: "Kg" },
+    
+    // New test cases for WARIX formats
+    { input: "WARIX 600 WG 20gX10 W/ LONGSLEEVES", expected: "Gram/s" },
+    { input: "WARIX 600 WG 20GX10 (11POUCHES+1POUCH)", expected: "Gram/s" },
+    { input: "WARIX 600 WG 20g x10", expected: "Gram/s" },
+    { input: "WARIX 600 WG 20G X 10", expected: "Gram/s" },
+    
+    // Edge cases
+    { input: "Water 5 gallons", expected: "Gal" },
+    { input: "Milk 2 liters", expected: "Liter/s" },
+    { input: "Juice 500ml", expected: "ML" },
+    { input: "Rice 10kg bag", expected: "Kg" },
+    { input: "Apples 5 lbs", expected: "Lbs" },
+    { input: "Coke 12oz can", expected: "Oz" },
+    { input: "Bread 1 loaf", expected: "" },
+    { input: "WARIX 600 WG (no unit)", expected: "" },
+  ];
+
+  console.log("=== UNIT DETECTION TEST RESULTS ===\n");
+  let passed = 0;
+  let failed = 0;
+  
+  testCases.forEach((test, index) => {
+    const result = detectUnitOfMeasure(test.input);
+    const status = result === test.expected ? "✓" : "✗";
+    const statusText = result === test.expected ? "PASS" : "FAIL";
+    
+    if (result === test.expected) {
+      passed++;
+    } else {
+      failed++;
+      console.log(`${status} ${statusText.padEnd(4)} | Expected: ${test.expected.padEnd(8)} | Got: ${result.padEnd(8)} | Input: ${test.input}`);
+    }
+  });
+  
+  // Re-run to show only failures or all? Let's show all in summary
+  console.log(`\n${"=".repeat(60)}`);
+  console.log(`Summary: ${passed} passed, ${failed} failed out of ${testCases.length} tests`);
+  console.log(`${"=".repeat(60)}`);
+  
+  // Show all results if there are failures
+  if (failed > 0) {
+    console.log("\n=== DETAILED RESULTS ===\n");
+    testCases.forEach((test, index) => {
+      const result = detectUnitOfMeasure(test.input);
+      const status = result === test.expected ? "✓" : "✗";
+      console.log(`${status} Input: ${test.input.padEnd(50)} => ${result || '—'}`);
+    });
+  } else {
+    console.log("\n✅ ALL TESTS PASSED!\n");
+    testCases.forEach((test, index) => {
+      const result = detectUnitOfMeasure(test.input);
+      console.log(`✓ ${test.input.padEnd(50)} => ${result || '—'}`);
+    });
+  }
+};
+
+// Run tests when script is executed
+if (typeof require !== 'undefined' && require.main === module) {
+  testUnitDetection();
+}
+
+// Export for use in your main code
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { detectUnitOfMeasure, UOM_OPTIONS, testUnitDetection };
+}
+
 const MenuList = (props) => (
   <components.MenuList {...props}>{props.children}</components.MenuList>
 );
@@ -65,35 +260,60 @@ const CustomOption = ({ innerRef, innerProps, isFocused, isSelected, children })
 );
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
-const Toast = ({ message, type, onClose }) => {
-  const bgColor = {
-    success: "bg-green-50 border-green-200 text-green-800",
-    error:   "bg-red-50 border-red-200 text-red-800",
-    warning: "bg-yellow-50 border-yellow-200 text-yellow-800",
-    info:    "bg-blue-50 border-blue-200 text-blue-800",
+const Toast = ({ message, type, onClose, isDark }) => {
+  const styles = {
+    success: {
+      bg:   isDark ? "bg-emerald-950 border-emerald-700/50" : "bg-white border-emerald-200",
+      text: isDark ? "text-emerald-300"  : "text-emerald-700",
+      icon: isDark ? "text-emerald-400"  : "text-emerald-500",
+      bar:  "bg-emerald-500",
+    },
+    error: {
+      bg:   isDark ? "bg-red-950 border-red-700/50" : "bg-white border-red-200",
+      text: isDark ? "text-red-300"  : "text-red-700",
+      icon: isDark ? "text-red-400"  : "text-red-500",
+      bar:  "bg-red-500",
+    },
+    warning: {
+      bg:   isDark ? "bg-amber-950 border-amber-700/50" : "bg-white border-amber-200",
+      text: isDark ? "text-amber-300"  : "text-amber-700",
+      icon: isDark ? "text-amber-400"  : "text-amber-500",
+      bar:  "bg-amber-500",
+    },
+    info: {
+      bg:   isDark ? "bg-slate-900 border-slate-700/50" : "bg-white border-blue-200",
+      text: isDark ? "text-slate-300"  : "text-slate-700",
+      icon: isDark ? "text-blue-400"   : "text-blue-500",
+      bar:  "bg-blue-500",
+    },
   };
-  const iconColor = {
-    success: "text-green-600", error: "text-red-600",
-    warning: "text-yellow-600", info: "text-blue-600",
-  };
+  const s = styles[type] || styles.info;
   const icons = {
-    success: <CheckCircle className="w-5 h-5" />, error: <X className="w-5 h-5" />,
-    warning: <AlertCircle className="w-5 h-5" />, info: <Info className="w-5 h-5" />,
+    success: <CheckCircle className="w-4 h-4" />,
+    error:   <X className="w-4 h-4" />,
+    warning: <AlertCircle className="w-4 h-4" />,
+    info:    <Info className="w-4 h-4" />,
   };
   return (
-    <div className={`flex items-center gap-3 px-4 py-3 rounded-lg border shadow-lg ${bgColor[type]} animate-slide-in-right`}>
-      <div className={iconColor[type]}>{icons[type]}</div>
-      <span className="text-sm font-medium flex-1">{message}</span>
-      <button onClick={onClose} className={`ml-2 hover:opacity-70 transition-opacity ${iconColor[type]}`}>
-        <X className="w-4 h-4" />
+    <div className={`relative flex items-center gap-3 px-4 py-3.5 rounded-xl border shadow-2xl overflow-hidden ${s.bg} animate-slide-in-right`}
+         style={{ backdropFilter: 'blur(12px)', minWidth: '320px' }}>
+      <div className={`absolute bottom-0 left-0 h-0.5 w-full opacity-60 ${s.bar}`} />
+      <div className={`flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center ${s.icon}`}
+           style={{ background: 'rgba(255,255,255,0.06)' }}>
+        {icons[type]}
+      </div>
+      <span className={`text-sm font-medium flex-1 leading-snug ${s.text}`}>{message}</span>
+      <button onClick={onClose} className={`ml-1 hover:opacity-60 transition-opacity flex-shrink-0 ${s.icon}`}>
+        <X className="w-3.5 h-3.5" />
       </button>
     </div>
   );
 };
-const ToastContainer = ({ toasts, removeToast }) => (
-  <div className="fixed bottom-4 right-4 z-50 space-y-2 max-w-md">
+
+const ToastContainer = ({ toasts, removeToast, isDark }) => (
+  <div className="fixed bottom-6 right-6 z-50 space-y-2.5 max-w-sm">
     {toasts.map((toast) => (
-      <Toast key={toast.id} message={toast.message} type={toast.type} onClose={() => removeToast(toast.id)} />
+      <Toast key={toast.id} message={toast.message} type={toast.type} onClose={() => removeToast(toast.id)} isDark={isDark} />
     ))}
   </div>
 );
@@ -102,24 +322,26 @@ const ToastContainer = ({ toasts, removeToast }) => (
 const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl p-6 max-w-sm w-full mx-auto shadow-xl border border-gray-100">
-        <div className="flex items-start gap-3 mb-4">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center flex-shrink-0 shadow-md">
-            <AlertTriangle className="w-5 h-5 text-white" />
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4">
+      <div className="bg-slate-900 rounded-2xl p-6 max-w-sm w-full mx-auto shadow-2xl border border-slate-700/60"
+           style={{ boxShadow: '0 0 0 1px rgba(255,255,255,0.05), 0 24px 48px rgba(0,0,0,0.6)' }}>
+        <div className="flex items-start gap-4 mb-5">
+          <div className="w-10 h-10 rounded-xl bg-red-500/15 border border-red-500/20 flex items-center justify-center flex-shrink-0">
+            <AlertTriangle className="w-5 h-5 text-red-400" />
           </div>
-          <div className="flex-1">
-            <h3 className="text-lg font-bold text-gray-900">{title}</h3>
-            <p className="text-gray-600 text-sm mt-1">{message}</p>
+          <div className="flex-1 pt-0.5">
+            <h3 className="text-base font-semibold text-white tracking-tight">{title}</h3>
+            <p className="text-slate-400 text-sm mt-1 leading-relaxed">{message}</p>
           </div>
         </div>
         <div className="flex gap-3 justify-end">
-          <button onClick={onClose} className="px-4 py-2.5 text-gray-700 hover:bg-gray-50 rounded-lg transition-all duration-200 font-medium border border-gray-200 hover:border-gray-300 text-sm">
+          <button onClick={onClose}
+            className="px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-all font-medium border border-slate-700/60 text-sm">
             Cancel
           </button>
-          <button onClick={onConfirm} className="px-4 py-2.5 bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700 rounded-lg transition-all duration-200 font-medium shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-sm flex items-center gap-2">
-            <Trash2 className="w-4 h-4" />
-            Delete
+          <button onClick={onConfirm}
+            className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition-all font-medium text-sm flex items-center gap-2 shadow-lg shadow-red-900/30">
+            Confirm
           </button>
         </div>
       </div>
@@ -128,25 +350,23 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
 };
 
 // ─── Search Rebate Modal ──────────────────────────────────────────────────────
-const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearch, searchLoading, searchError, theme }) => {
-  const [allCodes, setAllCodes]       = useState([]);
+const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearch, searchLoading, searchError, theme, canView }) => {
+  const [allCodes, setAllCodes]         = useState([]);
   const [codesLoading, setCodesLoading] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
-  const inputRef  = useRef(null);
-  const dropRef   = useRef(null);
+  const inputRef = useRef(null);
+  const dropRef  = useRef(null);
 
-  // Fetch all codes when modal opens
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || !canView) return;
     setCodesLoading(true);
-    fetch('http://192.168.100.193:3006/api/rebate-program/all-codes?db=VCP_OWN')
+    fetch('http://192.168.100.193:3009/api/rebate-program/all-codes?db=VCP_OWN')
       .then(r => r.json())
       .then(d => { if (d.success) setAllCodes(d.codes || []); })
       .catch(() => {})
       .finally(() => setCodesLoading(false));
-  }, [isOpen]);
+  }, [isOpen, canView]);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handle = (e) => {
       if (dropRef.current && !dropRef.current.contains(e.target) &&
@@ -158,13 +378,12 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
     return () => document.removeEventListener('mousedown', handle);
   }, []);
 
-  // Filter codes based on input
   const filtered = useMemo(() => {
     const q = searchCode.trim().toUpperCase();
-    if (!q) return allCodes.slice(0, 50); // show latest 50 when empty
+    if (!q) return allCodes.slice(0, 50);
     return allCodes.filter(c =>
       c.RebateCode.toUpperCase().includes(q) ||
-      (c.SlpName  && c.SlpName.toUpperCase().includes(q)) ||
+      (c.SlpName    && c.SlpName.toUpperCase().includes(q)) ||
       (c.RebateType && c.RebateType.toUpperCase().includes(q))
     ).slice(0, 50);
   }, [searchCode, allCodes]);
@@ -178,47 +397,104 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
   const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
 
   const typeColor = (type) => {
-    if (type === 'Fixed')       return theme === 'dark' ? 'bg-blue-900/40 text-blue-300'   : 'bg-blue-100 text-blue-700';
-    if (type === 'Incremental') return theme === 'dark' ? 'bg-green-900/40 text-green-300' : 'bg-green-100 text-green-700';
-    if (type === 'Percentage')  return theme === 'dark' ? 'bg-orange-900/40 text-orange-300': 'bg-orange-100 text-orange-700';
-    return theme === 'dark' ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600';
+    if (type === 'Fixed')       return 'bg-blue-500/10 text-blue-400 border border-blue-500/20';
+    if (type === 'Incremental') return 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+    if (type === 'Percentage')  return 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
+    return 'bg-slate-700 text-slate-400';
   };
 
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className={`rounded-2xl p-6 w-full max-w-md mx-auto shadow-xl border ${
-        theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'
-      }`}>
-        {/* Header */}
-        <div className="flex items-start gap-3 mb-5">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center flex-shrink-0 shadow-md">
-            <Search className="w-5 h-5 text-white" />
+  const isDark = theme === 'dark';
+
+  
+
+  
+
+  // If user doesn't have view access, show access denied message
+  if (!canView) {
+    return (
+      <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4">
+        <div className="rounded-2xl p-6 w-full max-w-md mx-auto border"
+          style={{
+            background: isDark ? 'rgba(15,20,30,0.97)' : 'rgba(255,255,255,0.98)',
+            border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.1)',
+            boxShadow: '0 0 0 1px rgba(255,255,255,0.04), 0 32px 64px rgba(0,0,0,0.5)',
+          }}>
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+                <Lock className="w-4 h-4 text-red-400" />
+              </div>
+              <div>
+                <h3 className={`text-base font-semibold tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                  Access Restricted
+                </h3>
+                <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                  You don't have permission to search rebate programs
+                </p>
+              </div>
+            </div>
+            <button onClick={onClose}
+              className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${isDark ? 'text-slate-500 hover:text-white hover:bg-slate-800' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'}`}>
+              <X className="w-4 h-4" />
+            </button>
           </div>
-          <div className="flex-1">
-            <h3 className={`text-lg font-bold ${theme === 'dark' ? 'text-gray-100' : 'text-gray-900'}`}>
-              Search Rebate Code
-            </h3>
-            <p className={`text-sm mt-0.5 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
-              Type or pick a rebate code to load and edit
+          <div className={`mb-5 p-4 rounded-xl text-center ${isDark ? 'bg-slate-800/50 border border-slate-700' : 'bg-slate-50 border border-slate-200'}`}>
+            <Lock className={`w-8 h-8 mx-auto mb-2 ${isDark ? 'text-slate-600' : 'text-slate-400'}`} />
+            <p className={`text-sm ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+              You need read access to search and view rebate programs.
             </p>
           </div>
-          <button onClick={onClose} className={`transition-colors ${theme === 'dark' ? 'text-gray-400 hover:text-gray-200' : 'text-gray-400 hover:text-gray-600'}`}>
-            <X className="w-5 h-5" />
+          <div className="flex gap-3 justify-end">
+            <button onClick={onClose}
+              className={`px-4 py-2.5 rounded-xl transition-all font-medium border text-sm ${isDark ? 'text-slate-400 hover:text-white hover:bg-slate-800 border-slate-700' : 'text-slate-600 hover:bg-slate-100 border-slate-200'}`}>
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-50 p-4">
+      <div className="rounded-2xl p-6 w-full max-w-md mx-auto border"
+        style={{
+          background: isDark ? 'rgba(15,20,30,0.97)' : 'rgba(255,255,255,0.98)',
+          border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.1)',
+          boxShadow: '0 0 0 1px rgba(255,255,255,0.04), 0 32px 64px rgba(0,0,0,0.5)',
+        }}>
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+              <Search className="w-4 h-4 text-blue-400" />
+            </div>
+            <div>
+              <h3 className={`text-base font-semibold tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                Search Rebate Code
+              </h3>
+              <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                Load an existing program to edit
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose}
+            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${isDark ? 'text-slate-500 hover:text-white hover:bg-slate-800' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'}`}>
+            <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Input + dropdown wrapper */}
+        {/* Input */}
         <div className="mb-5 relative">
-          <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wider ${
-            theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
-          }`}>
+          <label className={`block text-xs font-semibold mb-2 uppercase tracking-widest ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
             Rebate Code
           </label>
-
-          {/* Input row */}
           <div className="relative flex items-center">
+            <div className={`absolute left-3.5 top-1/2 -translate-y-1/2 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+              <Search className="w-4 h-4" />
+            </div>
             <input
               ref={inputRef}
               autoFocus
@@ -226,8 +502,8 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
               value={searchCode}
               onChange={e => { setSearchCode(e.target.value.toUpperCase()); setShowDropdown(true); }}
               onKeyDown={e => {
-                if (e.key === 'Enter')  { setShowDropdown(false); onSearch(); }
-                if (e.key === 'Escape') { if (showDropdown) setShowDropdown(false); else onClose(); }
+                if (e.key === 'Enter')     { setShowDropdown(false); onSearch(); }
+                if (e.key === 'Escape')    { if (showDropdown) setShowDropdown(false); else onClose(); }
                 if (e.key === 'ArrowDown') {
                   e.preventDefault();
                   const first = dropRef.current?.querySelector('[data-suggestion]');
@@ -235,23 +511,19 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
                 }
               }}
               placeholder="e.g. REB-00001"
-              className={`w-full px-4 py-3 pr-10 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono tracking-wide ${
-                theme === 'dark'
-                  ? 'bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-500'
-                  : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
+              className={`w-full pl-10 pr-10 py-3 border rounded-xl text-sm focus:outline-none transition-all font-mono tracking-wider ${
+                isDark
+                  ? 'bg-slate-800/60 border-slate-700 text-white placeholder-slate-600 focus:border-blue-500/60 focus:bg-slate-800'
+                  : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100'
               }`}
             />
-            {/* Chevron / spinner toggle */}
             <button
               type="button"
               onClick={() => setShowDropdown(v => !v)}
-              className={`absolute right-3 top-1/2 -translate-y-1/2 transition-colors ${
-                theme === 'dark' ? 'text-gray-400 hover:text-gray-200' : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
+              className={`absolute right-3 top-1/2 -translate-y-1/2 transition-colors ${isDark ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600'}`}>
               {codesLoading
                 ? <RefreshCw className="w-4 h-4 animate-spin" />
-                : <svg className={`w-4 h-4 transition-transform ${showDropdown ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                : <ChevronDown className={`w-4 h-4 transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
               }
             </button>
           </div>
@@ -260,22 +532,20 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
           {showDropdown && !codesLoading && (
             <div
               ref={dropRef}
-              className={`absolute z-50 left-0 right-0 mt-1 rounded-xl border shadow-2xl overflow-hidden ${
-                theme === 'dark' ? 'bg-gray-800 border-gray-600' : 'bg-white border-gray-200'
-              }`}
-              style={{ maxHeight: '260px', overflowY: 'auto' }}
-            >
+              className={`absolute z-50 left-0 right-0 mt-1.5 rounded-xl border shadow-2xl overflow-hidden`}
+              style={{
+                maxHeight: '240px', overflowY: 'auto',
+                background: isDark ? 'rgba(15,20,30,0.98)' : 'white',
+                border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.1)',
+              }}>
               {filtered.length === 0 ? (
-                <div className={`px-4 py-6 text-center text-sm ${theme === 'dark' ? 'text-gray-500' : 'text-gray-400'}`}>
-                  No matching rebate codes found
+                <div className={`px-4 py-8 text-center text-sm ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
+                  No matching codes found
                 </div>
               ) : (
                 <>
-                  {/* Count pill */}
-                  <div className={`px-3 py-2 text-xs font-semibold border-b sticky top-0 ${
-                    theme === 'dark' ? 'bg-gray-900 border-gray-700 text-gray-400' : 'bg-gray-50 border-gray-100 text-gray-500'
-                  }`}>
-                    {filtered.length} code{filtered.length !== 1 ? 's' : ''} {searchCode.trim() ? 'matched' : 'available'}
+                  <div className={`px-3 py-2 text-xs font-semibold border-b sticky top-0 ${isDark ? 'bg-slate-900 border-slate-800 text-slate-500' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
+                    {filtered.length} result{filtered.length !== 1 ? 's' : ''}
                   </div>
                   {filtered.map((item, i) => (
                     <button
@@ -290,17 +560,13 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
                         if (e.key === 'Escape')     { setShowDropdown(false); inputRef.current?.focus(); }
                       }}
                       className={`w-full text-left px-4 py-3 flex items-center justify-between gap-3 transition-colors border-b last:border-b-0 focus:outline-none ${
-                        theme === 'dark'
-                          ? 'border-gray-700 hover:bg-gray-700 focus:bg-gray-700'
-                          : 'border-gray-50 hover:bg-blue-50 focus:bg-blue-50'
-                      } ${searchCode.trim().toUpperCase() === item.RebateCode ? (theme === 'dark' ? 'bg-blue-900/30' : 'bg-blue-50') : ''}`}
+                        isDark
+                          ? 'border-slate-800/60 hover:bg-slate-800/80 focus:bg-slate-800/80'
+                          : 'border-slate-50 hover:bg-blue-50/60 focus:bg-blue-50/60'
+                      } ${searchCode.trim().toUpperCase() === item.RebateCode ? (isDark ? 'bg-blue-500/10' : 'bg-blue-50') : ''}`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
-                        {/* Code */}
-                        <span className={`font-mono font-bold text-sm flex-shrink-0 ${
-                          theme === 'dark' ? 'text-gray-100' : 'text-gray-800'
-                        }`}>
-                          {/* Highlight matching chars */}
+                        <span className={`font-mono font-semibold text-sm flex-shrink-0 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
                           {searchCode.trim()
                             ? (() => {
                                 const q   = searchCode.trim().toUpperCase();
@@ -310,7 +576,7 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
                                 return (
                                   <>
                                     {str.slice(0, idx)}
-                                    <span className={theme === 'dark' ? 'text-blue-300' : 'text-blue-600'}>{str.slice(idx, idx + q.length)}</span>
+                                    <span className="text-blue-400">{str.slice(idx, idx + q.length)}</span>
                                     {str.slice(idx + q.length)}
                                   </>
                                 );
@@ -318,21 +584,17 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
                             : item.RebateCode
                           }
                         </span>
-                        {/* Meta */}
                         <div className="flex flex-col min-w-0">
-                          <span className={`text-xs truncate ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
-                            {item.SlpName || '—'}
-                          </span>
+                          <span className={`text-xs truncate ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>{item.SlpName || '—'}</span>
                           {(item.DateFrom || item.DateTo) && (
-                            <span className={`text-xs ${theme === 'dark' ? 'text-gray-500' : 'text-gray-400'}`}>
+                            <span className={`text-xs ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
                               {formatDate(item.DateFrom)} – {formatDate(item.DateTo)}
                             </span>
                           )}
                         </div>
                       </div>
-                      {/* Type badge */}
                       {item.RebateType && (
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${typeColor(item.RebateType)}`}>
+                        <span className={`text-xs px-2 py-0.5 rounded-md font-medium flex-shrink-0 ${typeColor(item.RebateType)}`}>
                           {item.RebateType}
                         </span>
                       )}
@@ -343,41 +605,33 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
             </div>
           )}
 
-          {/* Error */}
           {searchError && (
-            <p className="mt-2 text-xs text-red-500 flex items-center gap-1.5">
-              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-              {searchError}
+            <p className="mt-2 text-xs text-red-400 flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />{searchError}
             </p>
           )}
         </div>
 
-        {/* Hint */}
-        <div className={`mb-5 p-3 rounded-lg border ${
-          theme === 'dark' ? 'bg-blue-900/20 border-blue-700/50 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-700'
-        }`}>
-          <p className="text-xs flex items-center gap-2">
-            <kbd className={`px-1.5 py-0.5 rounded text-xs font-mono font-bold ${
-              theme === 'dark' ? 'bg-blue-800 text-blue-200' : 'bg-blue-200 text-blue-800'
-            }`}>Ctrl+F</kbd>
-            <span>Open anytime · <span className="opacity-75">↑↓ to navigate · Enter to select</span></span>
+        {/* Shortcut hint */}
+        <div className={`mb-5 p-3 rounded-xl ${isDark ? 'bg-slate-800/50 border border-slate-700/40' : 'bg-slate-50 border border-slate-200'}`}>
+          <p className={`text-xs flex items-center gap-2 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+            <kbd className={`px-1.5 py-0.5 rounded text-xs font-mono font-semibold ${isDark ? 'bg-slate-700 text-slate-300' : 'bg-white border border-slate-200 text-slate-600 shadow-sm'}`}>Ctrl+F</kbd>
+            <span>Open anytime · ↑↓ navigate · Enter select</span>
           </p>
         </div>
 
         {/* Actions */}
         <div className="flex gap-3 justify-end">
-          <button onClick={onClose} className={`px-4 py-2.5 rounded-lg transition-all font-medium border text-sm ${
-            theme === 'dark' ? 'text-gray-300 hover:bg-gray-700 border-gray-600' : 'text-gray-700 hover:bg-gray-50 border-gray-200'
-          }`}>
+          <button onClick={onClose}
+            className={`px-4 py-2.5 rounded-xl transition-all font-medium border text-sm ${isDark ? 'text-slate-400 hover:text-white hover:bg-slate-800 border-slate-700' : 'text-slate-600 hover:bg-slate-100 border-slate-200'}`}>
             Cancel
           </button>
           <button
             onClick={() => { setShowDropdown(false); onSearch(); }}
             disabled={searchLoading || !searchCode.trim()}
-            className="px-5 py-2.5 bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700 rounded-lg transition-all font-medium shadow-md hover:shadow-lg text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
+            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all font-medium text-sm flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-blue-900/30">
             {searchLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-            {searchLoading ? "Searching…" : "Load & Edit"}
+            {searchLoading ? "Loading…" : "Load & Edit"}
           </button>
         </div>
       </div>
@@ -390,23 +644,21 @@ function Vcp_RebateSetup() {
   const location = useLocation();
   const { theme, updateTheme } = useTheme();
   const routePath = '/Vcp_RebateSetup';
-
-  // ── Access control ──────────────────────────────────────────────────────────
   const { access, accessLoading, accessError } = useAccessControl(routePath);
-
-  // ── Core state ──────────────────────────────────────────────────────────────
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const [collapsed, setCollapsed]                     = useState(false);
   const [activeNav, setActiveNav]                     = useState("/rebatesetup");
   const [activeTab, setActiveTab]                     = useState("Customer");
-  const [rebateType, setRebateType]                   = useState("");
-  const [quotaType, setQuotaType]                     = useState("withQuota");
+  const [rebateType, setRebateType]                   = useState("Percentage");
+  const [quotaType, setQuotaType]                     = useState("withoutQuota");
   const [showVanDropdown, setShowVanDropdown]         = useState(false);
   const [showNexchemDropdown, setShowNexchemDropdown] = useState(false);
   const [showVcpDropdown, setShowVcpDropdown]         = useState(true);
   const [toasts, setToasts]                           = useState([]);
   const [loading, setLoading]                         = useState(false);
   const [confirmModal, setConfirmModal]               = useState({ isOpen: false, action: null, data: null });
+  const [removeCustomerModal, setRemoveCustomerModal] = useState({ isOpen: false, index: null, name: "" });
+  const [removeItemModal, setRemoveItemModal] = useState({ isOpen: false, index: null, name: "" });
   const [quotaModal, setQuotaModal]                   = useState({ isOpen: false, customer: null, importedQuotas: [] });
   const [rangeModal, setRangeModal]                   = useState({ isOpen: false, customer: null });
   const [productRangeModal, setProductRangeModal]     = useState({ isOpen: false, product: null });
@@ -434,21 +686,25 @@ function Vcp_RebateSetup() {
   const [quotaCount, setQuotaCount]                 = useState(0);
   const [importedCustomerQuotas, setImportedCustomerQuotas] = useState({});
   const [duplicationError, setDuplicationError]     = useState({ isOpen: false, type: null, data: null });
-
-  // ── Search / Edit-mode state ────────────────────────────────────────────────
   const [searchModal, setSearchModal]     = useState({ isOpen: false });
   const [searchCode, setSearchCode]       = useState("");
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError]     = useState("");
-  // isViewMode = true  → a record was loaded; Save button will UPDATE instead of CREATE
   const [isViewMode, setIsViewMode]       = useState(false);
-  // The rebate code that was originally loaded — never overwritten by imports
   const [loadedRebateCode, setLoadedRebateCode] = useState("");
-
-  const API_BASE = 'http://192.168.100.193:3006/api';
+  const [cancelModal, setCancelModal] = useState(false);
+  const API_BASE = 'http://192.168.100.193:3009/api';
   const DB_NAME  = 'USER';
 
-  // ── Memoized options ────────────────────────────────────────────────────────
+  const isDark = theme === 'dark';
+
+  const hasAnyData = useMemo(() => {
+  const hasCustomers = customers.some(c => c.code && c.name);
+  const hasItems     = items.some(i => i.code && i.name);
+  const hasHeader    = !!(selectedSalesEmployee || selectedDateFrom || selectedDateTo || selectedFrequency || rebateType);
+  return hasCustomers || hasItems || hasHeader;
+  }, [customers, items, selectedSalesEmployee, selectedDateFrom, selectedDateTo, selectedFrequency, rebateType]);
+
   const customerOptions = useMemo(() =>
     customersDropdown.map(cust => ({ value: cust.CardName, label: cust.CardName })),
     [customersDropdown]
@@ -462,7 +718,6 @@ function Vcp_RebateSetup() {
     [salesEmployees]
   );
 
-  // ── Toast helpers ───────────────────────────────────────────────────────────
   const showToast = (message, type = "info") => {
     const id = Date.now() + Math.random();
     setToasts(prev => [...prev, { id, message, type }]);
@@ -470,7 +725,6 @@ function Vcp_RebateSetup() {
   };
   const removeToast = (id) => setToasts(prev => prev.filter(t => t.id !== id));
 
-  // ── Component registration ──────────────────────────────────────────────────
   const componentMetadata = {
     name: 'Vcp_RebateSetup',
     version: '2.0.0',
@@ -479,7 +733,6 @@ function Vcp_RebateSetup() {
   };
   useComponentRegistration(componentMetadata);
 
-  // ── Effects ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     const initializeData = async () => {
       const storedUser = JSON.parse(localStorage.getItem("currentUser")) || {};
@@ -528,7 +781,6 @@ function Vcp_RebateSetup() {
     }
   }, [selectedDateFrom, selectedDateTo, selectedFrequency, quotaType]);
 
-  // ── Ctrl+F keyboard shortcut ────────────────────────────────────────────────
   useEffect(() => {
     const handleKeyDown = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
@@ -542,7 +794,6 @@ function Vcp_RebateSetup() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // ── Rebate code generation (CREATE only) ────────────────────────────────────
   const generateNextRebateCode = async () => {
     try {
       const response = await fetch(`${API_BASE}/rebate-program/highest-code?db=VCP_OWN`);
@@ -553,6 +804,7 @@ function Vcp_RebateSetup() {
       return getFallbackRebateCode();
     } catch { return getFallbackRebateCode(); }
   };
+
   const getFallbackRebateCode = () => {
     const storageKey = `lastRebateCode_VCP_OWN`;
     const lastCode = localStorage.getItem(storageKey);
@@ -569,7 +821,6 @@ function Vcp_RebateSetup() {
     return nextCode;
   };
 
-  // ── Period calculation ──────────────────────────────────────────────────────
   const calculateQuotaPeriods = () => {
     const startDate = new Date(selectedDateFrom);
     const endDate   = new Date(selectedDateTo);
@@ -630,7 +881,6 @@ function Vcp_RebateSetup() {
     setItems(prev => prev.map(i => ({ ...i, ranges: i.ranges || {} })));
   };
 
-  // ── Data fetching ───────────────────────────────────────────────────────────
   const fetchSalesEmployees = async () => {
     try {
       setLoading(true);
@@ -645,6 +895,7 @@ function Vcp_RebateSetup() {
       setSalesEmployees([]);
     } finally { setLoading(false); }
   };
+
   const fetchCustomers = async () => {
     try {
       setLoading(true);
@@ -659,6 +910,7 @@ function Vcp_RebateSetup() {
       setCustomersDropdown([]);
     } finally { setLoading(false); }
   };
+
   const fetchItems = async () => {
     try {
       setLoading(true);
@@ -673,6 +925,7 @@ function Vcp_RebateSetup() {
       setItemsDropdown([]);
     } finally { setLoading(false); }
   };
+
   const handleRefreshData = async () => {
     try {
       setLoading(true);
@@ -698,7 +951,6 @@ function Vcp_RebateSetup() {
     }
   };
 
-  // ── Search rebate code ──────────────────────────────────────────────────────
   const handleSearchRebateCode = async () => {
     const code = searchCode.trim().toUpperCase();
     if (!code) { setSearchError("Please enter a rebate code."); return; }
@@ -714,18 +966,14 @@ function Vcp_RebateSetup() {
         return;
       }
       const prog = data.program;
-
-      // Populate header fields
       setRebateCode(prog.RebateCode);
-      setLoadedRebateCode(prog.RebateCode); // lock this in
+      setLoadedRebateCode(prog.RebateCode);
       setRebateType(prog.RebateType);
       setSelectedSalesEmployee(prog.SlpName);
       setSelectedDateFrom(prog.DateFrom ? prog.DateFrom.slice(0, 10) : "");
       setSelectedDateTo(prog.DateTo     ? prog.DateTo.slice(0, 10)   : "");
       setSelectedFrequency(prog.Frequency || "");
       setQuotaType(prog.QuotaType === "With Quota" ? "withQuota" : "withoutQuota");
-
-      // Fetch customers
       const custRes = await fetch(
         `${API_BASE}/rebate-program/customers/${encodeURIComponent(code)}?db=VCP_OWN&type=${encodeURIComponent(prog.RebateType)}`
       );
@@ -746,8 +994,6 @@ function Vcp_RebateSetup() {
           setEditingRows(prev => ({ ...prev, customer: state }));
         }
       }
-
-      // Fetch items
       const itemRes = await fetch(
         `${API_BASE}/rebate-program/items/${encodeURIComponent(code)}?db=VCP_OWN&type=${encodeURIComponent(prog.RebateType)}`
       );
@@ -760,6 +1006,7 @@ function Vcp_RebateSetup() {
             unitPerQty:       i.UnitPerQty    != null ? String(i.UnitPerQty)           : "",
             rebatePerBag:     i.RebatePerBag  != null ? String(i.RebatePerBag)         : "",
             percentagePerBag: i.PercentagePerBag != null ? String(i.PercentagePerBag)  : "",
+            unitOfMeasure:    i.UnitOfMeasure || detectUnitOfMeasure(i.ItemName || ""),
             ranges:           {},
           }));
           setItems(mapped);
@@ -768,7 +1015,6 @@ function Vcp_RebateSetup() {
           setEditingRows(prev => ({ ...prev, item: state }));
         }
       }
-
       setIsViewMode(true);
       setSearchModal({ isOpen: false });
       setActiveTab("Customer");
@@ -780,18 +1026,14 @@ function Vcp_RebateSetup() {
     }
   };
 
-  // ── Excel Import/Export ─────────────────────────────────────────────────────
   const handleImportExcel = async (event) => {
     if (!access.canEdit) { showToast("You do not have permission to import data", "error"); return; }
     const file = event.target.files[0];
     if (!file) return;
     if (!file.name.match(/\.(xlsx|xls)$/)) { showToast("Please select a valid Excel file (.xlsx or .xls)", "error"); return; }
     setLoading(true);
-
-    // Remember the currently-loaded rebate code before import potentially clobbers it
-    const preservedCode         = isViewMode ? loadedRebateCode : null;
-    const preservedIsViewMode   = isViewMode;
-
+    const preservedCode       = isViewMode ? loadedRebateCode : null;
+    const preservedIsViewMode = isViewMode;
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
@@ -800,14 +1042,14 @@ function Vcp_RebateSetup() {
         if (workbook.SheetNames.length === 0) throw new Error("No sheets found in Excel file");
         let customerDataImported = false, itemDataImported = false;
         let importedCustomers = [], importedItems = [];
+        let extracted = {};
+
         workbook.SheetNames.forEach(sheetName => {
           const worksheet = workbook.Sheets[sheetName];
           const jsonData  = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
           if (jsonData.length > 0) {
-            // Only extract header info when NOT in view/edit mode
-            // (we don't want the Excel's rebate code to override the loaded one)
             if (!preservedIsViewMode) {
-              extractHeaderInfoFromData(jsonData);
+              extracted = extractHeaderInfoFromData(jsonData);  // capture return value
             }
             const sheetLower = sheetName.toLowerCase();
             if (sheetLower.includes('customer')) {
@@ -834,7 +1076,7 @@ function Vcp_RebateSetup() {
                 if (Array.isArray(row) && row[0] === "Item Code" && row[1] === "Item Name") { dataStartRow = i + 1; break; }
               }
               if (dataStartRow > 0) {
-                importedItems = processItemDataSimple(jsonData.slice(dataStartRow));
+                importedItems = processItemDataSimple(jsonData.slice(dataStartRow), extracted.rebateType);  // pass extracted type
                 if (importedItems.length > 0) {
                   setItems(importedItems);
                   const state = {};
@@ -846,14 +1088,11 @@ function Vcp_RebateSetup() {
             }
           }
         });
-
-        // Restore the loaded rebate code if we're in view/edit mode
         if (preservedIsViewMode && preservedCode) {
           setRebateCode(preservedCode);
           setLoadedRebateCode(preservedCode);
           setIsViewMode(true);
         }
-
         if (!customerDataImported && !itemDataImported) {
           showToast("No valid customer or item data found in the Excel file", "warning");
         } else {
@@ -865,7 +1104,6 @@ function Vcp_RebateSetup() {
         }
       } catch (error) {
         showToast(`Import failed: ${error.message}`, "error");
-        // Restore even on error
         if (preservedIsViewMode && preservedCode) {
           setRebateCode(preservedCode);
           setLoadedRebateCode(preservedCode);
@@ -907,7 +1145,9 @@ function Vcp_RebateSetup() {
       return { importedCustomers: [], importedQuotasMap: {} };
     }
   };
-  const processItemDataSimple = (excelData) => {
+
+  const processItemDataSimple = (excelData, effectiveRebateType) => {
+    const rt = effectiveRebateType ?? rebateType;   // use passed value, fall back to state
     try {
       if (excelData.length === 0) { showToast("No item data found in sheet", "warning"); return []; }
       const dataRows = excelData.filter(row =>
@@ -929,8 +1169,8 @@ function Vcp_RebateSetup() {
           code:             itemData?.ItemCode || codeValue,
           name:             itemData?.ItemName || nameValue,
           unitPerQty:       qtyValue || "",
-          rebatePerBag:     "",
-          percentagePerBag: rebateType === "Percentage" ? percentageValue || "" : "",
+          rebatePerBag:     rt === "Fixed"       ? percentageValue || "" : "",
+          percentagePerBag: rt === "Percentage"  ? percentageValue || "" : "",
           ranges:           {},
         });
       });
@@ -942,34 +1182,48 @@ function Vcp_RebateSetup() {
       return [];
     }
   };
+
   const extractHeaderInfoFromData = (excelData) => {
-    if (!excelData || excelData.length < 2) return;
+    if (!excelData || excelData.length < 2) return {};
     const headerRow = excelData[0];
     const valueRow  = excelData[1];
-    if (!Array.isArray(headerRow) || !Array.isArray(valueRow)) return;
+    if (!Array.isArray(headerRow) || !Array.isArray(valueRow)) return {};
+
+    const extracted = {};
+
     headerRow.forEach((header, index) => {
       if (!header) return;
       const h = String(header).toLowerCase().trim();
       const v = valueRow[index] ? String(valueRow[index]).trim() : "";
-      if      (h.includes('rebate code'))      { if (v) setRebateCode(v); }
-      else if (h.includes('sales employee'))   { if (v) setSelectedSalesEmployee(v); }
-      else if (h.includes('date from'))        { if (v) setSelectedDateFrom(v); }
-      else if (h.includes('date to'))          { if (v) setSelectedDateTo(v); }
-      else if (h.includes('frequency'))        { if (v) setSelectedFrequency(v); }
+      if      (h.includes('rebate code'))      { if (v) { setRebateCode(v);              extracted.rebateCode = v; } }
+      else if (h.includes('sales employee'))   { if (v) { setSelectedSalesEmployee(v);   extracted.slpName = v; } }
+      else if (h.includes('date from'))        { if (v) { setSelectedDateFrom(v);         extracted.dateFrom = v; } }
+      else if (h.includes('date to'))          { if (v) { setSelectedDateTo(v);           extracted.dateTo = v; } }
+      else if (h.includes('frequency'))        { if (v) { setSelectedFrequency(v);        extracted.frequency = v; } }
       else if (h.includes('quota type')) {
-        if (v) { const vs = v.toLowerCase(); setQuotaType(vs.includes('without') || vs.includes('no quota') ? "withoutQuota" : "withQuota"); }
+        if (v) {
+          const vs = v.toLowerCase();
+          const qt = vs.includes('without') || vs.includes('no quota') ? "withoutQuota" : "withQuota";
+          setQuotaType(qt);
+          extracted.quotaType = qt;
+        }
       }
       else if (h.includes('rebate type')) {
         if (v) {
           const vs = v.toLowerCase();
-          if (vs.includes('fixed'))            setRebateType("Fixed");
-          else if (vs.includes('incremental')) setRebateType("Incremental");
-          else if (vs.includes('percentage'))  setRebateType("Percentage");
+          let rt = "Percentage";
+          if (vs.includes('fixed'))            rt = "Fixed";
+          else if (vs.includes('incremental')) rt = "Incremental";
+          setRebateType(rt);
+          extracted.rebateType = rt;
         }
       }
     });
-    if (!rebateType) setRebateType("Percentage");
+
+    if (!extracted.rebateType) setRebateType("Percentage");
+    return extracted;
   };
+
   const handleExportExcel = () => {
     if (!access.canExport) { showToast("You do not have permission to export data", "error"); return; }
     try {
@@ -1010,9 +1264,9 @@ function Vcp_RebateSetup() {
       showToast('Error exporting data to Excel.', "error");
     }
   };
+
   const handleDownload = () => handleExportExcel();
 
-  // ── Customer modal handlers ─────────────────────────────────────────────────
   const handleOpenCustomerModal = (index) => {
     if (!access.canEdit) { showToast("You do not have permission to edit customers", "error"); return; }
     setCurrentEditingRow({ type: 'customer', index });
@@ -1022,6 +1276,7 @@ function Vcp_RebateSetup() {
     } else { setTempSelectedCustomers([]); }
     setIsCustomerModalOpen(true);
   };
+
   const handleCustomerSelectionConfirm = (selectedCustomersData) => {
     const { index } = currentEditingRow;
     if (selectedCustomersData.length > 0) {
@@ -1064,7 +1319,6 @@ function Vcp_RebateSetup() {
     setCurrentEditingRow({ type: null, index: null });
   };
 
-  // ── Item modal handlers ─────────────────────────────────────────────────────
   const handleOpenItemModal = (index) => {
     if (!access.canEdit) { showToast("You do not have permission to edit items", "error"); return; }
     setCurrentEditingRow({ type: 'item', index });
@@ -1074,11 +1328,13 @@ function Vcp_RebateSetup() {
     } else { setTempSelectedItems([]); }
     setIsItemModalOpen(true);
   };
+
   const handleItemSelectionConfirm = (selectedItemsData) => {
     const { index } = currentEditingRow;
     if (selectedItemsData.length > 0) {
       if (index !== null) {
         const selected = selectedItemsData[0];
+        const selectedName = selected.ItemName || selected.name || '';
         const newItems = [...items];
         newItems[index] = {
           ...newItems[index],
@@ -1087,6 +1343,7 @@ function Vcp_RebateSetup() {
           unitPerQty:       newItems[index].unitPerQty || '',
           rebatePerBag:     newItems[index].rebatePerBag || '',
           percentagePerBag: newItems[index].percentagePerBag || '',
+          unitOfMeasure:    newItems[index].unitOfMeasure || detectUnitOfMeasure(selectedName),
           ranges:           {},
         };
         setItems(newItems);
@@ -1098,7 +1355,13 @@ function Vcp_RebateSetup() {
           const code   = si.ItemCode || si.code;
           const exists = newItems.some(i => i.code === code);
           if (!exists) {
-            newItems.push({ code, name: si.ItemName || si.name || '', unitPerQty: "", rebatePerBag: "", percentagePerBag: "", ranges: {} });
+            const siName = si.ItemName || si.name || '';
+            newItems.push({
+              code, name: siName,
+              unitPerQty: "", rebatePerBag: "", percentagePerBag: "",
+              unitOfMeasure: detectUnitOfMeasure(siName),
+              ranges: {}
+            });
             addedCount++;
           }
         });
@@ -1116,7 +1379,6 @@ function Vcp_RebateSetup() {
     setCurrentEditingRow({ type: null, index: null });
   };
 
-  // ── Modal openers ───────────────────────────────────────────────────────────
   const openQuotaModal = (customerIndex) => {
     if (quotaType === "withoutQuota") { showToast("Quota management is disabled for 'Without Quota' programs", "info"); return; }
     const customer = customers[customerIndex];
@@ -1128,6 +1390,7 @@ function Vcp_RebateSetup() {
       setQuotaModal({ isOpen: true, customer: { ...customer, index: customerIndex }, importedQuotas: importedCustomerQuotas[customerIndex] || [] });
     }
   };
+
   const openProductRangeModal = (productIndex) => {
     if (quotaType === "withoutQuota") { showToast("Range management is disabled for 'Without Quota' programs", "info"); return; }
     if (rebateType === "Incremental") {
@@ -1137,7 +1400,6 @@ function Vcp_RebateSetup() {
     }
   };
 
-  // ── Sub-save handlers ───────────────────────────────────────────────────────
   const handleSaveQuotas = (customerIndex, quotas) => {
     const newCustomers = [...customers];
     const targetQtys   = quotas.map(q => q.TargetQty || "0");
@@ -1147,12 +1409,14 @@ function Vcp_RebateSetup() {
     setCustomers(newCustomers);
     showToast("Quotas updated successfully", "success");
   };
+
   const handleSaveRanges = (customerIndex, ranges) => {
     const newCustomers = [...customers];
     newCustomers[customerIndex].ranges = ranges;
     setCustomers(newCustomers);
     showToast("Rebate ranges updated successfully", "success");
   };
+
   const handleSavePercentages = (customerIndex, percentagesArray) => {
     if (!percentagesArray || !Array.isArray(percentagesArray)) { showToast("Invalid data format", "error"); return; }
     const newCustomers = [...customers];
@@ -1166,18 +1430,22 @@ function Vcp_RebateSetup() {
     setCustomers(newCustomers);
     showToast("Target percentages updated successfully", "success");
   };
+
   const handleSaveProductRanges = (productIndex, ranges) => {
     const newItems = [...items];
     newItems[productIndex].ranges = ranges;
     setItems(newItems);
     showToast("Product rebate ranges updated successfully", "success");
   };
+
   const closeQuotaModal        = () => setQuotaModal({ isOpen: false, customer: null, importedQuotas: [] });
   const closeRangeModal        = () => setRangeModal({ isOpen: false, customer: null });
   const closePercentageModal   = () => setPercentageModal({ isOpen: false, customer: null });
   const closeProductRangeModal = () => setProductRangeModal({ isOpen: false, product: null });
+
   const toggleRowEdit = (type, index) => setEditingRows(prev => ({ ...prev, [type]: { ...prev[type], [index]: !prev[type][index] } }));
   const isRowEditable = (type, index) => editingRows[type][index];
+
   const handleQuotaTypeChange = (type) => {
     setQuotaType(type);
     if (type === "withoutQuota") {
@@ -1191,7 +1459,6 @@ function Vcp_RebateSetup() {
     }
   };
 
-  // ── Period helpers ──────────────────────────────────────────────────────────
   const getMonthlyPeriodsFromQuotaPeriods = () => {
     if (quotaPeriods && quotaPeriods.length > 0) {
       const monthlyPeriods = [];
@@ -1226,9 +1493,6 @@ function Vcp_RebateSetup() {
     return [];
   };
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // ── UPDATE (edit mode) ────────────────────────────────────────────────────────
-  // ─────────────────────────────────────────────────────────────────────────────
   const handleUpdate = async () => {
     if (!access.canEdit) { showToast("You do not have permission to update rebate setups", "error"); return; }
     if (!rebateType)            { showToast("Please select a rebate type", "error"); return; }
@@ -1239,7 +1503,6 @@ function Vcp_RebateSetup() {
     const validItems     = items.filter(i => i.code && i.name);
     if (validCustomers.length === 0) { showToast("Please add at least one valid customer", "error"); return; }
     if (validItems.length === 0)     { showToast("Please add at least one valid item", "error"); return; }
-
     setLoading(true);
     const codeToUpdate = loadedRebateCode;
     try {
@@ -1248,8 +1511,6 @@ function Vcp_RebateSetup() {
         : null;
       const slpCode = salesEmployee ? salesEmployee.SlpCode : null;
       if (!slpCode) throw new Error("Sales employee code not found");
-
-      // 1. Update the program header
       const progRes = await fetch(`${API_BASE}/rebate-program/${encodeURIComponent(codeToUpdate)}?db=VCP_OWN`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -1265,8 +1526,6 @@ function Vcp_RebateSetup() {
         }),
       });
       if (!progRes.ok) { const t = await progRes.text(); throw new Error(`Failed to update program header: ${t}`); }
-
-      // 2. Delete existing child records, then re-insert
       const delRes = await fetch(`${API_BASE}/rebate-program/${encodeURIComponent(codeToUpdate)}/details?db=VCP_OWN&type=${encodeURIComponent(rebateType)}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
@@ -1275,23 +1534,16 @@ function Vcp_RebateSetup() {
         const t = await delRes.text();
         throw new Error(`Failed to clear existing details: ${t}`);
       }
-
-      // 3. Re-insert with the same rebate code
       if      (rebateType === "Fixed")       await saveFixedRebateData(codeToUpdate, 'VCP_OWN');
       else if (rebateType === "Incremental") await saveIncrementalRebateData(codeToUpdate, 'VCP_OWN');
       else if (rebateType === "Percentage")  await savePercentageRebateData(codeToUpdate, 'VCP_OWN');
-
-      // Rebate code stays the same — do not reset it
-      showToast(`✅ Rebate program "${codeToUpdate}" updated successfully!`, "success");
+      showToast(`Rebate program "${codeToUpdate}" updated successfully!`, "success");
       setEditingRows({ customer: {}, item: {} });
     } catch (error) {
       showToast(`Failed to update rebate setup: ${error.message}`, "error");
     } finally { setLoading(false); }
   };
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // ── CREATE (new mode) ─────────────────────────────────────────────────────────
-  // ─────────────────────────────────────────────────────────────────────────────
   const handleSave = async () => {
     if (!access.canCreate) { showToast("You do not have permission to save rebate setups", "error"); return; }
     if (!rebateType)            { showToast("Please select a rebate type", "error"); return; }
@@ -1302,7 +1554,6 @@ function Vcp_RebateSetup() {
     const validItems     = items.filter(i => i.code && i.name);
     if (validCustomers.length === 0) { showToast("Please add at least one valid customer", "error"); return; }
     if (validItems.length === 0)     { showToast("Please add at least one valid item", "error"); return; }
-
     setLoading(true);
     try {
       const salesEmployee = Array.isArray(salesEmployees)
@@ -1310,8 +1561,6 @@ function Vcp_RebateSetup() {
         : null;
       const slpCode = salesEmployee ? salesEmployee.SlpCode : null;
       if (!slpCode) throw new Error("Sales employee code not found");
-
-      // Duplicate program check
       const dupCheckRes = await fetch(`${API_BASE}/rebate-program/check-duplicate-program`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ RebateType: rebateType, SlpCode: slpCode, DateFrom: selectedDateFrom, DateTo: selectedDateTo, db: 'VCP_OWN' }),
@@ -1324,8 +1573,6 @@ function Vcp_RebateSetup() {
         setLoading(false);
         return;
       }
-
-      // Item conflict check
       const duplicateItems = [];
       for (const item of validItems) {
         try {
@@ -1344,8 +1591,6 @@ function Vcp_RebateSetup() {
         setLoading(false);
         return;
       }
-
-      // Generate code and save
       const newRebateCode     = await generateNextRebateCode();
       const rebateProgramData = {
         RebateType: rebateType, SlpCode: slpCode, SlpName: selectedSalesEmployee,
@@ -1358,11 +1603,9 @@ function Vcp_RebateSetup() {
       if (!programRes.ok) { const t = await programRes.text(); throw new Error(`Failed to save rebate program: ${t}`); }
       const programResult = await programRes.json();
       const rebateCodeId  = programResult.rebateCode;
-
       if      (rebateType === "Fixed")       await saveFixedRebateData(rebateCodeId, 'VCP_OWN');
       else if (rebateType === "Incremental") await saveIncrementalRebateData(rebateCodeId, 'VCP_OWN');
       else if (rebateType === "Percentage")  await savePercentageRebateData(rebateCodeId, 'VCP_OWN');
-
       setRebateCode(rebateCodeId);
       showToast(`✅ Rebate setup saved successfully! ID: ${rebateCodeId}`, "success");
       setEditingRows({ customer: { 0: true }, item: { 0: true } });
@@ -1371,7 +1614,6 @@ function Vcp_RebateSetup() {
     } finally { setLoading(false); }
   };
 
-  // ── Save type-specific data ─────────────────────────────────────────────────
   const saveFixedRebateData = async (rebateCodeId, database) => {
     for (const customer of customers) {
       if (!customer.code || !customer.name) continue;
@@ -1405,11 +1647,11 @@ function Vcp_RebateSetup() {
       if (!item.code || !item.name) continue;
       const ir = await fetch(`${API_BASE}/fix-prod-rebate?db=${database}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseFloat(item.unitPerQty) || 0, RebatePerBag: parseFloat(item.rebatePerBag) || 0, db: 'VCP_OWN' }),
-      });
+        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseFloat(item.unitPerQty) || 0, RebatePerBag: parseFloat(item.rebatePerBag) || 0, UnitOfMeasure: item.unitOfMeasure || '', db: 'VCP_OWN' }),      });
       if (!ir.ok) { const t = await ir.text(); throw new Error(`Failed to save item ${item.code}: ${t}`); }
     }
   };
+
   const saveIncrementalRebateData = async (rebateCodeId, database) => {
     for (const customer of customers) {
       if (!customer.code || !customer.name) continue;
@@ -1438,7 +1680,7 @@ function Vcp_RebateSetup() {
       if (!item.code || !item.name) continue;
       const ir = await fetch(`${API_BASE}/inc-item-rebate?db=${database}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseInt(item.unitPerQty) || 0, db: 'VCP_OWN' }),
+        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseInt(item.unitPerQty) || 0, UnitOfMeasure: item.unitOfMeasure || '', db: 'VCP_OWN' }),
       });
       if (!ir.ok) { const t = await ir.text(); throw new Error(`Failed item: ${t}`); }
       const iResult      = await ir.json();
@@ -1458,6 +1700,7 @@ function Vcp_RebateSetup() {
       }
     }
   };
+
   const savePercentageRebateData = async (rebateCodeId, database) => {
     for (const customer of customers) {
       if (!customer.code || !customer.name) continue;
@@ -1499,33 +1742,36 @@ function Vcp_RebateSetup() {
       if (!item.code || !item.name) continue;
       const ir = await fetch(`${API_BASE}/per-prod-rebate?db=${database}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseFloat(item.unitPerQty) || 0, PercentagePerBag: parseFloat(item.percentagePerBag) || 0, db: 'VCP_OWN' }),
+        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseFloat(item.unitPerQty) || 0, PercentagePerBag: parseFloat(item.percentagePerBag) || 0, UnitOfMeasure: item.unitOfMeasure || '', db: 'VCP_OWN' }),
       });
       if (!ir.ok) { const t = await ir.text(); throw new Error(`Failed item: ${t}`); }
     }
   };
 
-  // ── Row CRUD helpers ────────────────────────────────────────────────────────
   const handleAddCustomer = () => {
     if (!access.canEdit) { showToast("You do not have permission to add customers", "error"); return; }
     setCurrentEditingRow({ type: 'customer', index: null });
     setTempSelectedCustomers([]);
     setIsCustomerModalOpen(true);
   };
+
   const handleAddItem = () => {
     if (!access.canEdit) { showToast("You do not have permission to add items", "error"); return; }
     setCurrentEditingRow({ type: 'item', index: null });
     setTempSelectedItems([]);
     setIsItemModalOpen(true);
   };
+
   const handleQtrRebateChange = (index, value) => {
     const newData = [...customers];
     if (value === "" || /^-?\d*$/.test(value)) { newData[index].qtrRebate = value; setCustomers(newData); }
   };
+
   const handleRebatePerBagChange = (index, value) => {
     const newData = [...items];
     if (value === "" || /^-?\d*\.?\d*$/.test(value)) { newData[index].rebatePerBag = value; setItems(newData); }
   };
+
   const handlePercentagePerBagChange = (index, value) => {
     const newData = [...items];
     if (value === "" || /^-?\d*\.?\d*$/.test(value)) {
@@ -1534,23 +1780,65 @@ function Vcp_RebateSetup() {
       setItems(newData);
     }
   };
+
   const handleDeleteCustomer = (index) => {
-    if (!access.canEdit) { showToast("You do not have permission to delete customers", "error"); return; }
-    if (customers.length <= 1) { showToast("At least one customer is required", "warning"); return; }
-    setConfirmModal({ isOpen: true, action: 'deleteCustomer', data: index, title: "Delete Customer", message: "Are you sure you want to delete this customer?" });
+    if (!access.canEdit) { 
+      showToast("You do not have permission to delete customers", "error"); 
+      return; 
+    }
+    if (customers.length <= 1) { 
+      showToast("At least one customer is required", "warning"); 
+      return; 
+    }
+    // Open the remove modal instead of confirmModal
+    setRemoveCustomerModal({ 
+      isOpen: true, 
+      index: index, 
+      name: customers[index]?.name || "" 
+    });
   };
+
   const handleDeleteItem = (index) => {
-    if (!access.canEdit) { showToast("You do not have permission to delete items", "error"); return; }
-    if (items.length <= 1) { showToast("At least one item is required", "warning"); return; }
-    setConfirmModal({ isOpen: true, action: 'deleteItem', data: index, title: "Delete Item", message: "Are you sure you want to delete this item?" });
+    if (!access.canEdit) { 
+      showToast("You do not have permission to delete items", "error"); 
+      return; 
+    }
+    if (items.length <= 1) { 
+      showToast("At least one item is required", "warning"); 
+      return; 
+    }
+    // Open the remove modal instead of confirmModal
+    setRemoveItemModal({ 
+      isOpen: true, 
+      index: index, 
+      name: items[index]?.name || "" 
+    });
   };
+
+  // Add these confirmation functions:
+  const confirmDeleteCustomer = () => {
+    const { index } = removeCustomerModal;
+    setCustomers(customers.filter((_, i) => i !== index));
+    showToast("Customer deleted successfully", "success");
+    setRemoveCustomerModal({ isOpen: false, index: null, name: "" });
+  };
+
+  const confirmDeleteItem = () => {
+    const { index } = removeItemModal;
+    setItems(items.filter((_, i) => i !== index));
+    showToast("Item deleted successfully", "success");
+    setRemoveItemModal({ isOpen: false, index: null, name: "" });
+  };
+
   const confirmAction = () => {
     const { action, data } = confirmModal;
     if (action === 'deleteCustomer') { setCustomers(customers.filter((_, i) => i !== data)); showToast("Customer deleted successfully", "success"); }
     else if (action === 'deleteItem') { setItems(items.filter((_, i) => i !== data)); showToast("Item deleted successfully", "success"); }
     setConfirmModal({ isOpen: false, action: null, data: null });
   };
+
   const handleReset = () => setConfirmModal({ isOpen: true, action: 'reset', data: null, title: "Reset Form", message: "Are you sure you want to reset all data? This action cannot be undone." });
+
   const resetForm = () => {
     setRebateType(""); setQuotaType("withQuota"); setCustomers([]); setItems([]);
     setSelectedSalesEmployee(""); setSelectedDateFrom(""); setSelectedDateTo(""); setSelectedFrequency("");
@@ -1561,41 +1849,71 @@ function Vcp_RebateSetup() {
     setConfirmModal({ isOpen: false, action: null, data: null });
   };
 
-  // ── Display helpers ─────────────────────────────────────────────────────────
   const getProductRangeSummary = (product) => {
     if (quotaType === "withoutQuota") return "Rebate";
     if (rebateType === "Incremental") return `${quotaPeriods.length} periods`;
     if (rebateType === "Percentage")  return product.percentagePerBag ? `${product.percentagePerBag}%` : "Not set";
     return product.rebatePerBag ? `${product.rebatePerBag}/bag` : "Not set";
   };
+
   const getQuotaTypeDisplay = () => quotaType === "withQuota" ? "With Quota" : "Without Quota";
 
-  // ── Access gate renderers ───────────────────────────────────────────────────
+  // ── Shared input/select class generators ──────────────────────────────────
+  const inputClass = `w-full px-3 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all min-h-[42px] ${
+    isDark
+      ? 'bg-slate-800/60 border-slate-700 text-slate-200 placeholder-slate-600 focus:border-blue-500/60 focus:ring-blue-500/10'
+      : 'bg-white border-slate-200 text-slate-800 placeholder-slate-400 focus:border-blue-400 focus:ring-blue-100'
+  }`;
+
+  const selectClass = `w-full px-3 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 transition-all min-h-[42px] appearance-none ${
+    isDark
+      ? 'bg-slate-800/60 border-slate-700 text-slate-200 focus:border-blue-500/60 focus:ring-blue-500/10'
+      : 'bg-white border-slate-200 text-slate-800 focus:border-blue-400 focus:ring-blue-100'
+  }`;
+
+  const labelClass = `block text-xs font-semibold uppercase tracking-widest mb-1.5 ${isDark ? 'text-slate-500' : 'text-slate-500'}`;
+
+  // Rebate type badge colors
+  const getRebateTypeBadge = (type) => {
+    if (type === 'Fixed')       return isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-400'     : 'bg-blue-50 border-blue-200 text-blue-700';
+    if (type === 'Incremental') return isDark ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-emerald-50 border-emerald-200 text-emerald-700';
+    if (type === 'Percentage')  return isDark ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'   : 'bg-amber-50 border-amber-200 text-amber-700';
+    return '';
+  };
+
   const renderAccessLoading = () => (
-    <div className="flex flex-col items-center justify-center min-h-[400px]">
-      <div className={`w-12 h-12 rounded-full border-4 border-t-transparent animate-spin mb-4 ${theme === 'dark' ? 'border-blue-400' : 'border-blue-500'}`} />
-      <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>Checking permissions...</p>
+    <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+      <div className={`w-10 h-10 rounded-full border-2 border-t-transparent animate-spin ${isDark ? 'border-blue-400' : 'border-blue-500'}`} />
+      <p className={`text-sm ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>Verifying access…</p>
     </div>
   );
+
   const renderAccessDenied = () => (
     <div className="flex flex-col items-center justify-center min-h-[400px] p-8 text-center">
-      <div className={`w-20 h-20 rounded-2xl flex items-center justify-center mb-4 ${theme === 'dark' ? 'bg-red-900/30 border border-red-700/40' : 'bg-red-50 border border-red-200'}`}>
-        <Lock size={36} className={theme === 'dark' ? 'text-red-400' : 'text-red-500'} />
+      <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 ${isDark ? 'bg-red-500/10 border border-red-500/20' : 'bg-red-50 border border-red-200'}`}>
+        <Lock size={28} className={isDark ? 'text-red-400' : 'text-red-500'} />
       </div>
-      <h2 className={`text-xl font-bold mb-2 ${theme === 'dark' ? 'text-gray-100' : 'text-gray-800'}`}>Access Restricted</h2>
-      <p className={`max-w-md text-sm mb-6 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+      <h2 className={`text-lg font-semibold mb-2 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>Access Restricted</h2>
+      <p className={`max-w-xs text-sm mb-6 leading-relaxed ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
         You don't have permission to view this page.
-        {accessError && <span className="block mt-2 text-xs opacity-75">Error: {accessError}</span>}
+        {accessError && <span className="block mt-1 text-xs opacity-60">Error: {accessError}</span>}
       </p>
-      <Link to="/HomePage" className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${theme === 'dark' ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'}`}>
-        Go to HomePage
+      <Link to="/HomePage"
+        className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-medium transition-colors">
+        Go to Home
       </Link>
     </div>
   );
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Page bg & card bg ────────────────────────────────────────────────────
+  const pageBg  = isDark ? 'bg-[#0a0f1a]' : 'bg-slate-100';
+  const cardBg  = isDark
+    ? 'bg-slate-900/90 border-slate-800'
+    : 'bg-white border-slate-200/80';
+  const divider = isDark ? 'border-slate-800' : 'border-slate-200';
+
   return (
-    <div className="flex min-h-screen w-full bg-gradient-to-br from-slate-50 to-blue-50 font-poppins text-slate-900">
+    <div className={`flex h-screen w-full font-sans ${pageBg} text-slate-900 overflow-hidden`}>
       <Sidebar
         collapsed={collapsed} setCollapsed={setCollapsed}
         showVanDropdown={showVanDropdown} setShowVanDropdown={setShowVanDropdown}
@@ -1603,210 +1921,194 @@ function Vcp_RebateSetup() {
         showVcpDropdown={showVcpDropdown} setShowVcpDropdown={setShowVcpDropdown}
         theme={theme}
       />
-      <main className={`flex-1 flex flex-col min-h-screen transition-all duration-500 ${collapsed ? "ml-20" : "ml-64"}`}>
+      <main className={`flex-1 flex flex-col h-screen overflow-hidden transition-all duration-300 ${collapsed ? "ml-20" : "ml-64"}`}>
         <Header collapsed={collapsed} userName={userName} userCode={userCode} initials={initials} logo={vcpLogo} theme={theme} />
-        <div className={`pt-16 flex-1 p-8 overflow-auto ${theme === 'dark' ? 'bg-gradient-to-br from-gray-900 to-gray-800' : 'bg-gradient-to-br from-slate-50 to-blue-50'}`}>
-          <div className={`bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-3xl border ${theme === 'dark' ? 'border-gray-700/50' : 'border-white/50'} shadow-2xl p-8 w-full max-w-[1600px] mx-auto mt-6`}>
 
-            {/* ── Title bar ── */}
-            <div className={`flex items-center justify-between mb-8 pb-6 border-b ${theme === 'dark' ? 'border-blue-700' : 'border-blue-200'}`}>
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow ${
+        <div className={`pt-16 flex-1 flex flex-col overflow-hidden ${pageBg}`}>
+          <div className={`rounded-2xl border shadow-xl ${cardBg} w-full max-w-[1600px] mx-auto mt-4 mb-4 mx-6 overflow-hidden flex flex-col flex-1`} style={{ margin: '1rem 1.5rem', maxWidth: 'calc(100% - 3rem)' }}>
+
+            {/* ── Top bar ─────────────────────────────────────────────────── */}
+            <div className={`flex items-center justify-between px-6 py-3.5 border-b ${divider} flex-shrink-0`}>
+              <div className="flex items-center gap-3.5">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
                   isViewMode
-                    ? 'bg-gradient-to-br from-amber-500 to-amber-600'
-                    : 'bg-gradient-to-br from-blue-500 to-blue-600'
+                    ? isDark ? 'bg-amber-500/15 border border-amber-500/25' : 'bg-amber-50 border border-amber-200'
+                    : isDark ? 'bg-blue-500/15 border border-blue-500/25'   : 'bg-blue-50 border border-blue-200'
                 }`}>
-                  {isViewMode ? <PenLine className="w-5 h-5 text-white" /> : <SettingsIcon className="w-5 h-5 text-white" />}
+                  {isViewMode
+                    ? <PenLine className={`w-4 h-4 ${isDark ? 'text-amber-400' : 'text-amber-600'}`} />
+                    : <SettingsIcon className={`w-4 h-4 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
+                  }
                 </div>
                 <div>
-                  <h1 className={`text-lg font-bold ${theme === 'dark' ? 'text-gray-100' : 'text-gray-800'}`}>
-                    {isViewMode ? `Editing Rebate Program` : 'Rebate Program Setup'}
+                  <h1 className={`text-base font-semibold tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                    {isViewMode ? 'Edit Rebate Program' : 'Rebate Program Setup'}
                   </h1>
-                  <p className={`text-xs ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+                  <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
                     {isViewMode
-                      ? `Loaded record — changes will UPDATE the existing program`
-                      : 'Configure your rebate program parameters and targets'}
+                      ? 'Loaded record — changes will UPDATE the existing program'
+                      : 'Configure rebate program parameters and targets'}
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                {/* Search / Ctrl+F */}
-              <button
+
+              <div className="flex items-center gap-2.5">
+                <button
                   onClick={() => { setSearchCode(""); setSearchError(""); setSearchModal({ isOpen: true }); }}
-                  className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors shadow-sm ${
-                    theme === 'dark' ? 'bg-blue-700 hover:bg-blue-600 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'
+                  className={`flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-xl transition-all border ${
+                    isDark
+                      ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 shadow-sm'
                   }`}
                   title="Search rebate code (Ctrl+F)"
                 >
-                  <Search size={16} />
-                  <span className="hidden sm:inline">Search</span>
-                  <kbd className={`hidden sm:inline-flex items-center px-1.5 py-0.5 rounded text-xs font-mono ${
-                    theme === 'dark' ? 'bg-blue-800 text-blue-200' : 'bg-blue-400 text-white'
-                  }`}>Ctrl+F</kbd>
+                  <Search size={14} />
+                  <span>Search</span>
+                  <kbd className={`px-1.5 py-0.5 rounded text-xs font-mono ${isDark ? 'bg-slate-700 text-slate-400' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
+                    Ctrl+F
+                  </kbd>
                 </button>
-                {/* Refresh */}
+
                 {!accessLoading && access.canView && (
                   <button
                     onClick={handleRefreshData}
                     disabled={loading}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    className={`w-9 h-9 flex items-center justify-center rounded-xl border transition-all ${
+                      isDark
+                        ? 'bg-slate-800 border-slate-700 text-slate-400 hover:text-emerald-400 hover:bg-slate-700'
+                        : 'bg-white border-slate-200 text-slate-400 hover:text-emerald-600 hover:bg-slate-50 shadow-sm'
+                    } disabled:opacity-40`}
                   >
-                    <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+                    <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
                   </button>
                 )}
               </div>
             </div>
 
-            {/* ── Access gate ── */}
-            {accessLoading
-              ? renderAccessLoading()
-              : !access.canView
-                ? renderAccessDenied()
-                : (
-                  <>
-                    {/* ── Edit-mode banner ── */}
-                    {isViewMode && (
-                      <div className={`mb-6 p-4 rounded-xl border flex items-center justify-between gap-4 ${
-                        theme === 'dark'
-                          ? 'bg-amber-900/20 border-amber-700 text-amber-300'
-                          : 'bg-amber-50 border-amber-300 text-amber-800'
-                      }`}>
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className={`w-2.5 h-2.5 rounded-full animate-pulse flex-shrink-0 ${theme === 'dark' ? 'bg-amber-400' : 'bg-amber-500'}`} />
-                          <div className="min-w-0">
-                            <p className="font-semibold text-sm flex flex-wrap items-center gap-2">
-                              <span>Editing:</span>
-                              <span className={`font-mono px-2 py-0.5 rounded text-xs font-bold ${
-                                theme === 'dark' ? 'bg-amber-800/60 text-amber-200' : 'bg-amber-200 text-amber-900'
-                              }`}>{loadedRebateCode}</span>
-                              <span className={`text-xs font-normal opacity-75`}>
-                                — any import or manual change will update this record on save
+            {/* ── Body ─────────────────────────────────────────────────────── */}
+            <div className="px-6 py-4 flex flex-col flex-1 overflow-hidden w-10px">
+              {accessLoading
+                ? renderAccessLoading()
+                : !access.canView
+                  ? renderAccessDenied()
+                  : (
+                    <>
+                      {/* ── Edit mode banner ── */}
+                      {isViewMode && (
+                        <div className={`mb-3 px-3 py-2 rounded-xl border flex items-center justify-between gap-4 flex-shrink-0 ${
+                          isDark
+                            ? 'bg-amber-500/8 border-amber-500/20 text-amber-300'
+                            : 'bg-amber-50 border-amber-200 text-amber-800'
+                        }`}>
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className={`w-2 h-2 rounded-full flex-shrink-0 animate-pulse ${isDark ? 'bg-amber-400' : 'bg-amber-500'}`} />
+                            <p className="text-sm font-medium flex flex-wrap items-center gap-2">
+                              <span className={isDark ? 'text-slate-400' : 'text-amber-700'}>Editing:</span>
+                              <code className={`px-2 py-0.5 rounded-lg text-xs font-mono font-bold ${isDark ? 'bg-amber-500/15 text-amber-300' : 'bg-amber-200/60 text-amber-900'}`}>
+                                {loadedRebateCode}
+                              </code>
+                              <span className={`text-xs font-normal ${isDark ? 'text-slate-500' : 'text-amber-600'}`}>
+                                — changes will update this record on save
                               </span>
                             </p>
                           </div>
+                          <button
+                            onClick={() => { setIsViewMode(false); resetForm(); }}
+                            className={`text-xs px-3 py-1.5 rounded-lg font-medium border transition-colors flex-shrink-0 ${
+                              isDark
+                                ? 'border-amber-600/40 hover:bg-amber-500/10 text-amber-400'
+                                : 'border-amber-300 hover:bg-amber-100 text-amber-700'
+                            }`}
+                          >
+                            Clear &amp; New
+                          </button>
                         </div>
-                        <button
-                          onClick={() => { setIsViewMode(false); resetForm(); }}
-                          className={`text-xs px-3 py-1.5 rounded-lg font-medium border transition-colors flex-shrink-0 ${
-                            theme === 'dark'
-                              ? 'border-amber-600 hover:bg-amber-800/40 text-amber-300'
-                              : 'border-amber-400 hover:bg-amber-100 text-amber-800'
-                          }`}
-                        >
-                          Clear &amp; New
-                        </button>
-                      </div>
-                    )}
+                      )}
 
-                    {/* ── Rebate type selector ── */}
-                    <div className={`mb-8 pb-8 border-b ${theme === 'dark' ? 'border-blue-700' : 'border-blue-200'}`}>
-                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                        {[
-                          { key: "Fixed",       icon: <LocateFixed className={`w-6 h-6 ${rebateType === "Fixed" ? "text-white" : theme === 'dark' ? "text-gray-400" : "text-gray-500"}`} />, color: "blue",   title: "Fixed Rebate",       desc: "Standard fixed rebate amounts per period", bullets: ["Fixed rebate amounts for each period","Consistent targets throughout the program","Simple and predictable rebate structure"] },
-                          { key: "Incremental", icon: <TrendingUp  className={`w-6 h-6 ${rebateType === "Incremental" ? "text-white" : theme === 'dark' ? "text-gray-400" : "text-gray-500"}`} />, color: "green",  title: "Incremental Rebate", desc: "Progressive rebates with quarterly ranges", bullets: ["Different ranges for each quarter/period","Copy ranges between periods easily","Flexible structure for seasonal variations"] },
-                          { key: "Percentage",  icon: <Percent     className={`w-6 h-6 ${rebateType === "Percentage" ? "text-white" : theme === 'dark' ? "text-gray-400" : "text-gray-500"}`} />, color: "orange", title: "Percentage Rebate",  desc: "Percentage-based rebates per period",      bullets: ["Percentage rebates based on sales volume","Variable targets throughout the program","Flexible percentage-based structure"] },
-                        ].map(({ key, icon, color, title, desc, bullets }) => {
-                          const isActive = rebateType === key;
-                          const borderActive = { blue: 'border-blue-500', green: 'border-green-500', orange: 'border-orange-500' }[color];
-                          const bgActive     = { blue: theme === 'dark' ? 'bg-blue-900/30' : 'bg-blue-50', green: theme === 'dark' ? 'bg-green-900/30' : 'bg-green-50', orange: theme === 'dark' ? 'bg-orange-900/30' : 'bg-orange-50' }[color];
-                          const iconBgActive = { blue: theme === 'dark' ? 'bg-blue-600' : 'bg-blue-500', green: theme === 'dark' ? 'bg-green-600' : 'bg-green-500', orange: theme === 'dark' ? 'bg-orange-600' : 'bg-orange-500' }[color];
-                          const dotActive    = { blue: 'bg-blue-500', green: 'bg-green-500', orange: 'bg-orange-500' }[color];
-                          const hoverBorder  = { blue: 'hover:border-blue-300', green: 'hover:border-green-300', orange: 'hover:border-orange-300' }[color];
-                          return (
-                            <div
-                              key={key}
-                              className={`border-2 rounded-2xl p-6 transition-all duration-300 hover:shadow-lg ${access.canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'} ${
-                                isActive
-                                  ? `${borderActive} ${bgActive} shadow-md`
-                                  : theme === 'dark' ? `border-gray-700 bg-gray-800 ${hoverBorder}` : `border-gray-200 bg-white ${hoverBorder}`
-                              }`}
-                              onClick={() => { if (access.canEdit) setRebateType(key); }}
-                            >
-                              <div className="flex items-center gap-4 mb-4">
-                                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${isActive ? iconBgActive : theme === 'dark' ? 'bg-gray-700' : 'bg-gray-100'}`}>{icon}</div>
-                                <div>
-                                  <h3 className={`text-lg font-bold ${theme === 'dark' ? 'text-gray-100' : 'text-gray-800'}`}>{title}</h3>
-                                  <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>{desc}</p>
-                                </div>
-                              </div>
-                              <ul className={`text-xs space-y-2 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
-                                {bullets.map(text => (
-                                  <li key={text} className="flex items-start gap-2">
-                                    <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${isActive ? dotActive : theme === 'dark' ? 'bg-gray-600' : 'bg-gray-400'}`}></div>
-                                    <span>{text}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                      {/* ── Header fields ── */}
+                      <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 mb-3 pb-3 border-b flex-shrink-0 ${divider}`}>
 
-                    {rebateType && (
-                      <>
-                        {/* ── Header fields ── */}
-                        <div className="grid grid-cols-1 lg:grid-cols-6 gap-6 mb-8 pb-8 border-b border-blue-200">
-                          {/* Rebate Code */}
-                          <div className="space-y-3">
-                            <label className={`text-sm font-semibold flex items-center gap-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
-                              <FileText className="w-4 h-4 text-blue-500" /> Rebate Code
-                            </label>
-                            <div className={`w-full px-4 py-3 border rounded-xl text-sm shadow-sm flex items-center gap-2 ${
+                        {/* Rebate Code */}
+                        <div>
+                          <label className={labelClass}>Rebate Code</label>
+                          <div className={`flex items-center gap-2 px-3 py-2.5 border rounded-xl min-h-[42px] ${
+                            isViewMode
+                              ? isDark ? 'bg-amber-500/8 border-amber-500/20' : 'bg-amber-50 border-amber-200'
+                              : isDark ? 'bg-slate-800/40 border-slate-700'   : 'bg-slate-50 border-slate-200'
+                          }`}>
+                            {isViewMode && <PenLine className={`w-3 h-3 flex-shrink-0 ${isDark ? 'text-amber-400' : 'text-amber-500'}`} />}
+                            <span className={`font-mono font-semibold text-sm truncate ${
                               isViewMode
-                                ? theme === 'dark' ? 'bg-amber-900/20 border-amber-600 text-amber-300' : 'bg-amber-50 border-amber-400 text-amber-800'
-                                : theme === 'dark' ? 'bg-gray-700 border-gray-600 text-gray-200'       : 'bg-gray-50 border-gray-300 text-gray-800'
-                            }`}>
-                              {isViewMode && <PenLine className="w-3.5 h-3.5 flex-shrink-0" />}
-                              <span className="font-medium font-mono">{isViewMode ? loadedRebateCode : rebateCode}</span>
-                            </div>
+                                ? isDark ? 'text-amber-300' : 'text-amber-800'
+                                : isDark ? 'text-slate-300' : 'text-slate-700'
+                            }`}>{isViewMode ? loadedRebateCode : rebateCode}</span>
                           </div>
-                          {/* Sales Employee */}
-                          <div className="space-y-3">
-                            <label className={`text-sm font-semibold flex items-center gap-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
-                              <User className="w-4 h-4 text-blue-500" /> Sales Employee
-                            </label>
+                        </div>
+
+                        {/* Rebate Type */}
+                        <div>
+                          <label className={labelClass}>Rebate Type</label>
+                          <div className="relative">
                             <select
-                              className={`w-full px-4 py-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-sm ${theme === 'dark' ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300 text-gray-800'} ${!access.canEdit ? 'opacity-60 cursor-not-allowed' : ''}`}
+                              className={`${selectClass} pr-9 font-medium ${rebateType ? `border ${getRebateTypeBadge(rebateType)}` : ''} ${!access.canEdit ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                              value={rebateType}
+                              onChange={(e) => { if (access.canEdit) setRebateType(e.target.value); }}
+                              disabled={!access.canEdit}
+                            >
+                              <option value="">Select Type</option>
+                              {/*<option value="Fixed">Fixed Rate</option>*/}
+                              {/*<option value="Incremental">Incremental Rate</option>*/}
+                              <option value="Percentage">Percentage Rebate</option>
+                            </select>
+                            <ChevronDown className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`} />
+                          </div>
+                        </div>
+
+                        {/* Sales Employee */}
+                        <div>
+                          <label className={labelClass}>Sales Employee</label>
+                          <div className="relative">
+                            <select
+                              className={`${selectClass} pr-9 ${!access.canEdit ? 'opacity-50 cursor-not-allowed' : ''}`}
                               value={selectedSalesEmployee}
                               onChange={(e) => { if (access.canEdit) setSelectedSalesEmployee(e.target.value); }}
                               disabled={loading || !access.canEdit}
                             >
-                              <option value="">{loading ? "Loading..." : "Select Sales Employee"}</option>
+                              <option value="">{loading ? "Loading…" : "Select Employee"}</option>
                               {salesEmployeeOptions.map((o, i) => <option key={i} value={o.value}>{o.label}</option>)}
                             </select>
+                            <ChevronDown className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`} />
                           </div>
-                          {/* Date From */}
-                          <div className="space-y-3">
-                            <label className={`text-sm font-semibold flex items-center gap-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
-                              <Calendar className="w-4 h-4 text-blue-500" /> Date From
-                            </label>
-                            <input type="date"
-                              className={`w-full px-4 py-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all shadow-sm ${theme === 'dark' ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300 text-gray-800'} ${!access.canEdit ? 'opacity-60 cursor-not-allowed' : ''}`}
-                              value={selectedDateFrom}
-                              onChange={(e) => { if (access.canEdit) setSelectedDateFrom(e.target.value); }}
-                              disabled={!access.canEdit}
-                            />
-                          </div>
-                          {/* Date To */}
-                          <div className="space-y-3">
-                            <label className={`text-sm font-semibold flex items-center gap-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
-                              <Calendar className="w-4 h-4 text-blue-500" /> Date To
-                            </label>
-                            <input type="date"
-                              className={`w-full px-4 py-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all shadow-sm ${theme === 'dark' ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300 text-gray-800'} ${!access.canEdit ? 'opacity-60 cursor-not-allowed' : ''}`}
-                              value={selectedDateTo}
-                              onChange={(e) => { if (access.canEdit) setSelectedDateTo(e.target.value); }}
-                              disabled={!access.canEdit}
-                            />
-                          </div>
-                          {/* Frequency */}
-                          <div className="space-y-3">
-                            <label className={`text-sm font-semibold flex items-center gap-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
-                              <Calculator className="w-4 h-4 text-blue-500" /> Frequency
-                            </label>
+                        </div>
+
+                        {/* Date From */}
+                        <div>
+                          <label className={labelClass}>Date From</label>
+                          <input type="date"
+                            className={`${inputClass} ${!access.canEdit ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            value={selectedDateFrom}
+                            onChange={(e) => { if (access.canEdit) setSelectedDateFrom(e.target.value); }}
+                            disabled={!access.canEdit}
+                          />
+                        </div>
+
+                        {/* Date To */}
+                        <div>
+                          <label className={labelClass}>Date To</label>
+                          <input type="date"
+                            className={`${inputClass} ${!access.canEdit ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            value={selectedDateTo}
+                            onChange={(e) => { if (access.canEdit) setSelectedDateTo(e.target.value); }}
+                            disabled={!access.canEdit}
+                          />
+                        </div>
+
+                        {/* Frequency */}
+                        <div>
+                          <label className={labelClass}>Frequency</label>
+                          <div className="relative">
                             <select
-                              className={`w-full px-4 py-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all shadow-sm ${theme === 'dark' ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300 text-gray-800'} ${!access.canEdit ? 'opacity-60 cursor-not-allowed' : ''}`}
+                              className={`${selectClass} pr-9 ${!access.canEdit ? 'opacity-50 cursor-not-allowed' : ''}`}
                               value={selectedFrequency}
                               onChange={(e) => { if (access.canEdit) setSelectedFrequency(e.target.value); }}
                               disabled={!access.canEdit}
@@ -1816,14 +2118,16 @@ function Vcp_RebateSetup() {
                               <option value="Monthly">Monthly</option>
                               <option value="Quarterly">Quarterly</option>
                             </select>
+                            <ChevronDown className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`} />
                           </div>
-                          {/* Quota Type */}
-                          <div className="space-y-3">
-                            <label className={`text-sm font-semibold flex items-center gap-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
-                              <Target className="w-4 h-4 text-blue-500" /> Quota Type
-                            </label>
+                        </div>
+
+                        {/* Quota Type */}
+                        <div>
+                          <label className={labelClass}>Quota Type</label>
+                          <div className="relative">
                             <select
-                              className={`w-full px-4 py-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all shadow-sm ${theme === 'dark' ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300 text-gray-800'} ${!access.canEdit ? 'opacity-60 cursor-not-allowed' : ''}`}
+                              className={`${selectClass} pr-9 ${!access.canEdit ? 'opacity-50 cursor-not-allowed' : ''}`}
                               value={quotaType}
                               onChange={(e) => { if (access.canEdit) handleQuotaTypeChange(e.target.value); }}
                               disabled={!access.canEdit}
@@ -1831,352 +2135,479 @@ function Vcp_RebateSetup() {
                               <option value="withQuota">With Quota</option>
                               <option value="withoutQuota">Without Quota</option>
                             </select>
+                            <ChevronDown className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isDark ? 'text-slate-500' : 'text-slate-400'}`} />
                           </div>
                         </div>
+                      </div>
 
-                        {/* ── Quota type indicator ── */}
-                        <div className={`mb-6 p-4 rounded-xl border ${
-                          quotaType === "withQuota"
-                            ? theme === 'dark' ? "bg-blue-900/20 border-blue-700 text-blue-300" : "bg-blue-50 border-blue-200 text-blue-800"
-                            : theme === 'dark' ? "bg-gray-800 border-gray-700 text-gray-300"    : "bg-gray-50 border-gray-200 text-gray-800"
-                        }`}>
-                          <div className="flex items-center gap-3">
-                            <div className={`w-3 h-3 rounded-full flex-shrink-0 ${quotaType === "withQuota" ? "bg-blue-500" : theme === 'dark' ? "bg-gray-500" : "bg-gray-500"}`}></div>
-                            <div>
-                              <p className="font-semibold text-sm">{quotaType === "withQuota" ? "With Quota Program" : "Without Quota Program"}</p>
-                              <p className={`text-xs opacity-80 ${theme === 'dark' ? 'text-gray-400' : ''}`}>
-                                {quotaType === "withQuota"
-                                  ? "Customers will have individual quota targets for each period."
-                                  : "No quota targets will be assigned to customers; performance will rely on system-generated values."}
-                              </p>
-                            </div>
-                          </div>
+                      {/* ── Quota type indicator ── */}
+                      <div className={`mb-3 px-3 py-2 rounded-xl border flex items-center gap-3 flex-shrink-0 ${
+                        quotaType === "withQuota"
+                          ? isDark ? 'bg-blue-500/8 border-blue-500/20' : 'bg-blue-50 border-blue-200'
+                          : isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-200'
+                      }`}>
+                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${quotaType === "withQuota" ? 'bg-blue-500' : isDark ? 'bg-slate-600' : 'bg-slate-400'}`} />
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className={`font-semibold text-xs ${
+                            quotaType === "withQuota"
+                              ? isDark ? 'text-blue-300' : 'text-blue-700'
+                              : isDark ? 'text-slate-300' : 'text-slate-700'
+                          }`}>
+                            {quotaType === "withQuota" ? "With Quota Program" : "Without Quota Program"}
+                          </p>
+                          <span className={`text-xs ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>—</span>
+                          <p className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                            {quotaType === "withQuota"
+                              ? "Customers will have individual quota targets for each period."
+                              : "No quota targets assigned; performance relies on system-generated values."}
+                          </p>
                         </div>
+                      </div>
 
-                        {/* ── Tab bar + Import/Export ── */}
-                        <div className={`flex items-center justify-between mb-8 border-b ${theme === 'dark' ? 'border-gray-700' : 'border-gray-200'}`}>
-                          <div className="flex">
-                            {["Customer", "Items"].map(tab => (
-                              <button key={tab}
-                                className={`px-8 py-4 font-semibold text-sm border-b-2 transition-all flex items-center gap-3 ${
-                                  activeTab === tab
-                                    ? theme === 'dark' ? "border-blue-500 text-blue-400 bg-blue-900/30 rounded-t-lg" : "border-blue-600 text-blue-600 bg-blue-50 rounded-t-lg"
-                                    : theme === 'dark' ? "border-transparent text-gray-400 hover:text-gray-300 hover:bg-gray-700 rounded-t-lg" : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-t-lg"
-                                }`}
-                                onClick={() => setActiveTab(tab)}
-                              >
-                                {tab === "Customer" ? <Users className="w-5 h-5" /> : <Package className="w-5 h-5" />}
+                      {/* ── Tab bar + Import/Export ── */}
+                      <div className={`flex items-center justify-between mb-3 border-b flex-shrink-0 ${divider}`}>
+                        <div className="flex gap-1">
+                          {["Customer", "Items"].map(tab => (
+                            <button key={tab}
+                              className={`px-5 py-3 font-semibold text-sm transition-all flex items-center gap-2.5 relative ${
+                                activeTab === tab
+                                  ? isDark ? 'text-blue-400' : 'text-blue-600'
+                                  : isDark ? 'text-slate-500 hover:text-slate-300' : 'text-slate-500 hover:text-slate-700'
+                              }`}
+                              onClick={() => setActiveTab(tab)}
+                            >
+                              {tab === "Customer" ? <Users className="w-4 h-4" /> : <Package className="w-4 h-4" />}
+                              <span>
                                 {tab === "Customer"
                                   ? (rebateType === "Incremental" ? "Customer Ranges" : rebateType === "Percentage" ? "Customer Percentages" : "Customer Quotas")
                                   : (rebateType === "Incremental" ? "Product Ranges"  : rebateType === "Percentage" ? "Product Setup"        : "Product Rebates")
                                 }
-                              </button>
-                            ))}
-                          </div>
-                          <div className="flex gap-3 items-center">
-                            {/* Import */}
-                            <label
-                              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors shadow-sm ${
-                                access.canEdit
-                                  ? 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
-                                  : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed opacity-60'
-                              }`}
-                              title={!access.canEdit ? 'No import permission' : isViewMode ? `Import will update ${loadedRebateCode}` : 'Import Excel'}
-                            >
-                              {!access.canEdit ? <Lock size={16} /> : <Upload size={16} />}
-                              {isViewMode ? 'Import & Update' : 'Import Excel'}
-                              <input type="file" accept=".xlsx,.xls" onChange={handleImportExcel} className="hidden" disabled={!access.canEdit} />
-                            </label>
-                            {/* Export */}
-                            <button
-                              onClick={handleDownload}
-                              disabled={!access.canExport}
-                              title={!access.canExport ? 'No export permission' : 'Export to Excel'}
-                              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors shadow-sm ${
-                                access.canExport
-                                  ? 'bg-purple-600 hover:bg-purple-700 text-white'
-                                  : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed opacity-60'
-                              }`}
-                            >
-                              {!access.canExport ? <Lock size={16} /> : <Download size={16} />}
-                              Export to Excel
+                              </span>
+                              {/* Active indicator */}
+                              {activeTab === tab && (
+                                <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full ${isDark ? 'bg-blue-500' : 'bg-blue-600'}`} />
+                              )}
                             </button>
-                          </div>
+                          ))}
                         </div>
 
-                        {/* ── Customer tab ── */}
-                        {activeTab === "Customer" && (
-                          <div className="mb-8">
-                            <div className="flex items-center justify-between mb-6">
-                              <h3 className={`text-xl font-bold ${theme === 'dark' ? 'text-gray-100' : 'text-gray-800'}`}>
-                                {rebateType === "Incremental" ? "Customer Rebate Ranges" : rebateType === "Percentage" ? "Customer Percentage Setup" : "Customer Quota Setup"}
-                              </h3>
-                              <div className="flex items-center gap-4">
-                                <div className={`text-sm px-3 py-1 rounded-full ${theme === 'dark' ? 'text-gray-300 bg-gray-700' : 'text-gray-500 bg-blue-50'}`}>
-                                  {customers.length} customer(s)
-                                </div>
-                                {quotaType === "withQuota" && (
-                                  <div className={`text-sm px-3 py-1 rounded-full font-medium ${theme === 'dark' ? 'text-blue-300 bg-blue-900/30' : 'text-blue-600 bg-blue-50'}`}>
-                                    {quotaPeriods.length} period{quotaPeriods.length !== 1 ? 's' : ''}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                            <div className={`border rounded-2xl overflow-hidden max-h-96 overflow-y-auto shadow-sm ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
-                              <div className="overflow-x-auto">
-                                <table className="w-full border-collapse text-sm">
-                                  <thead className={`sticky top-0 z-10 ${theme === 'dark' ? 'bg-gradient-to-r from-gray-800 to-gray-900' : 'bg-gradient-to-r from-gray-50 to-blue-50'}`}>
-                                    <tr>
-                                      {["Customer Code","Customer Name",...(rebateType === "Fixed" || rebateType === "Incremental" ? ["Qtr Rebate"] : []),quotaType === "withQuota" ? "Period" : "Status","Actions"].map(h => (
-                                        <th key={h} className={`px-6 py-4 text-left font-bold text-xs uppercase tracking-wider border-b ${theme === 'dark' ? 'text-gray-300 border-gray-700' : 'text-gray-700 border-gray-200'}`}>{h}</th>
-                                      ))}
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {customers.length === 0 ? (
-                                      <tr><td colSpan={5} className={`px-6 py-12 text-center text-sm ${theme === 'dark' ? 'text-gray-500' : 'text-gray-400'}`}>
-                                        <div className="flex flex-col items-center gap-2"><Users className="w-8 h-8 opacity-30" /><span>No customers added yet. Click "Add Customer" to get started.</span></div>
-                                      </td></tr>
-                                    ) : customers.map((c, idx) => (
-                                      <tr key={idx} className={`transition-colors border-b last:border-b-0 ${theme === 'dark' ? 'even:bg-gray-800/50 hover:bg-gray-700 border-gray-700' : 'even:bg-gray-50 hover:bg-blue-50 border-gray-100'}`}>
-                                        <td className="px-6 py-4">
-                                          <div className={`px-3 py-2 text-sm font-medium font-mono ${theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}`}>{c.code || "-"}</div>
-                                        </td>
-                                        <td className="px-6 py-4">
-                                          {isRowEditable('customer', idx) ? (
-                                            <button onClick={() => handleOpenCustomerModal(idx)} className={`flex items-center justify-between w-full px-4 py-2.5 border rounded-lg text-sm transition-all shadow-sm ${theme === 'dark' ? 'bg-gray-700 border-gray-600 text-gray-200 hover:bg-gray-600' : 'bg-white border-gray-300 text-gray-800 hover:bg-gray-50'}`}>
-                                              <span className="truncate">{c.name || "Select Customer"}</span>
-                                              <Users className={`w-4 h-4 flex-shrink-0 ml-2 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`} />
-                                            </button>
-                                          ) : (
-                                            <div className={`w-80 px-3 py-2 text-sm ${theme === 'dark' ? 'text-gray-300' : 'text-gray-800'}`}>{c.name || "-"}</div>
-                                          )}
-                                        </td>
-                                        {(rebateType === "Fixed" || rebateType === "Incremental") && (
-                                          <td className="px-6 py-4">
-                                            {isRowEditable('customer', idx) ? (
-                                              <input type="text" value={c.qtrRebate || ""} onChange={(e) => handleQtrRebateChange(idx, e.target.value)} placeholder="0"
-                                                className={`w-32 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${theme === 'dark' ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300 text-gray-800'}`}
-                                                disabled={!access.canEdit}
-                                              />
-                                            ) : (
-                                              <div className={`px-3 py-2 text-sm font-medium text-center ${theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}`}>{c.qtrRebate ? `${c.qtrRebate} Qtr` : "-"}</div>
-                                            )}
-                                          </td>
-                                        )}
-                                        <td className="px-6 py-4">
-                                          {quotaType === "withQuota" ? (
-                                            <div className="flex justify-center">
-                                              <button onClick={() => openQuotaModal(idx)} className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-all shadow-sm text-sm font-medium ${
-                                                rebateType === "Percentage" ? "bg-gradient-to-r from-orange-500 to-orange-600 text-white hover:from-orange-600 hover:to-orange-700"
-                                                : rebateType === "Incremental" ? "bg-gradient-to-r from-green-500 to-green-600 text-white hover:from-green-600 hover:to-green-700"
-                                                : "bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700"
-                                              }`}>
-                                                <Target className="w-4 h-4" />
-                                                <span>{rebateType === "Incremental" && Object.keys(c.ranges || {}).length > 0 ? `${Object.keys(c.ranges).length} ranges` : "Set Targets"}</span>
-                                              </button>
-                                            </div>
-                                          ) : (
-                                            <div className="flex justify-center">
-                                              <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-gray-500 to-gray-600 text-white rounded-lg text-sm font-medium">
-                                                <CheckCircle className="w-4 h-4" /> No Quota
-                                              </div>
-                                            </div>
-                                          )}
-                                        </td>
-                                        <td className="px-6 py-4">
-                                          <div className="flex gap-2 justify-center">
-                                            <button
-                                              className={`p-2 rounded-xl transition-all ${isRowEditable('customer', idx) ? (theme === 'dark' ? "bg-green-900/30 text-green-400 hover:bg-green-800/50" : "bg-green-100 text-green-600 hover:bg-green-200") : (theme === 'dark' ? "bg-blue-900/30 text-blue-400 hover:bg-blue-800/50" : "bg-blue-100 text-blue-600 hover:bg-blue-200")} ${!access.canEdit ? 'opacity-40 cursor-not-allowed' : ''}`}
-                                              onClick={() => { if (access.canEdit) toggleRowEdit('customer', idx); }}
-                                            >
-                                              {isRowEditable('customer', idx) ? <Save size={16} /> : <Edit size={16} />}
-                                            </button>
-                                            <button
-                                              className={`p-2 rounded-xl transition-all ${theme === 'dark' ? "text-red-400 hover:bg-red-900/30" : "text-red-600 hover:bg-red-100"} ${!access.canEdit ? 'opacity-40 cursor-not-allowed' : ''}`}
-                                              onClick={() => handleDeleteCustomer(idx)}
-                                            >
-                                              <Trash2 size={16} />
-                                            </button>
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          </div>
-                        )}
+                        <div className="flex gap-2 items-center pb-0.5">
+                          <label
+                            className={`flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-xl border transition-all cursor-pointer ${
+                              access.canEdit
+                                ? isDark
+                                  ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white'
+                                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 shadow-sm'
+                                : 'opacity-40 cursor-not-allowed border-transparent bg-slate-200 dark:bg-slate-800 text-slate-500'
+                            }`}
+                            title={!access.canEdit ? 'No import permission' : isViewMode ? `Import will update ${loadedRebateCode}` : 'Import Excel'}
+                          >
+                            {!access.canEdit ? <Lock size={14} /> : <Upload size={14} />}
+                            {isViewMode ? 'Import & Update' : 'Import'}
+                            <input type="file" accept=".xlsx,.xls" onChange={handleImportExcel} className="hidden" disabled={!access.canEdit} />
+                          </label>
 
-                        {/* ── Items tab ── */}
-                        {activeTab === "Items" && (
-                          <div className="mb-8">
-                            <h3 className={`text-xl font-bold mb-6 ${theme === 'dark' ? 'text-gray-100' : 'text-gray-800'}`}>
-                              {rebateType === "Incremental" ? "Product Rebate Ranges" : rebateType === "Percentage" ? "Product Setup" : "Product Rebate Configuration"}
+                          <button
+                            onClick={handleDownload}
+                            disabled={!access.canExport}
+                            title={!access.canExport ? 'No export permission' : 'Export to Excel'}
+                            className={`flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-xl border transition-all ${
+                              access.canExport
+                                ? isDark
+                                  ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white'
+                                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 shadow-sm'
+                                : 'opacity-40 cursor-not-allowed border-transparent bg-slate-200 dark:bg-slate-800 text-slate-500'
+                            }`}
+                          >
+                            {!access.canExport ? <Lock size={14} /> : <Download size={14} />}
+                            Export
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* ── Customer tab ── */}
+                      {activeTab === "Customer" && (
+                        <div className="flex flex-col flex-1 overflow-hidden">
+                          <div className="flex items-center gap-3 mb-2 flex-shrink-0">
+                            <h3 className={`text-sm font-semibold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                              {rebateType === "Incremental" ? "Customer Rebate Ranges" : rebateType === "Percentage" ? "Customer Percentage Setup" : "Customer Quota Setup"}
                             </h3>
-                            <div className={`border rounded-2xl overflow-hidden max-h-96 overflow-y-auto shadow-sm ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
-                              <div className="overflow-x-auto">
-                                <table className="w-full border-collapse text-sm min-w-[600px]">
-                                  <thead className={`sticky top-0 z-10 ${theme === 'dark' ? 'bg-gradient-to-r from-gray-800 to-purple-900/30' : 'bg-gradient-to-r from-gray-50 to-purple-50'}`}>
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${isDark ? 'bg-slate-800 text-slate-400 border border-slate-700' : 'bg-slate-100 text-slate-600'}`}>
+                              {customers.length}
+                            </span>
+                            {quotaType === "withQuota" && quotaPeriods.length > 0 && (
+                              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${isDark ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-blue-50 text-blue-700 border border-blue-200'}`}>
+                                {quotaPeriods.length} period{quotaPeriods.length !== 1 ? 's' : ''}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className={`rounded-xl border overflow-hidden flex-1 ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
+                            <div className="overflow-auto h-full" style={{ maxHeight: 'calc(100vh - 430px)' }}>
+                              <table className="w-full border-collapse text-sm">
+                                <thead className={`sticky top-0 z-10 ${isDark ? 'bg-slate-800/90' : 'bg-slate-50'}`}>
+                                  <tr>
+                                    {["Customer Code", "Customer Name",
+                                      ...(rebateType === "Fixed" || rebateType === "Incremental" ? ["Qtr Rebate"] : []),
+                                      quotaType === "withQuota" ? "Period" : "Status",
+                                      "Actions"
+                                    ].map(h => (
+                                      <th key={h} className={`px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider border-b ${isDark ? 'text-slate-500 border-slate-700/60' : 'text-slate-500 border-slate-200'}`}>{h}</th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {customers.length === 0 ? (
                                     <tr>
-                                      {["Item Code","Item Name","Qty",...(rebateType === "Percentage" ? ["Percentage Per Bag"] : [rebateType === "Incremental" ? "Rebate Ranges" : "Rebate Per Bag"]),"Actions"].map(h => (
-                                        <th key={h} className={`px-6 py-4 text-left font-bold text-xs uppercase tracking-wider border-b ${theme === 'dark' ? 'text-gray-300 border-gray-700' : 'text-gray-700 border-gray-200'}`}>{h}</th>
-                                      ))}
+                                      <td colSpan={5} className={`px-5 py-16 text-center ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
+                                        <div className="flex flex-col items-center gap-2">
+                                          <Users className="w-7 h-7 opacity-30" />
+                                          <span className="text-sm">No customers added yet</span>
+                                          <span className="text-xs opacity-60">Click "Add Customer" to get started</span>
+                                        </div>
+                                      </td>
                                     </tr>
-                                  </thead>
-                                  <tbody>
-                                    {items.length === 0 ? (
-                                      <tr><td colSpan={5} className={`px-6 py-12 text-center text-sm ${theme === 'dark' ? 'text-gray-500' : 'text-gray-400'}`}>
-                                        <div className="flex flex-col items-center gap-2"><Package className="w-8 h-8 opacity-30" /><span>No items added yet. Click "Add Item" to get started.</span></div>
-                                      </td></tr>
-                                    ) : items.map((item, idx) => (
-                                      <tr key={idx} className={`transition-colors border-b last:border-b-0 ${theme === 'dark' ? 'even:bg-gray-800/50 hover:bg-gray-700 border-gray-700' : 'even:bg-gray-50 hover:bg-purple-50 border-gray-100'}`}>
-                                        <td className="px-6 py-4">
-                                          <div className={`px-3 py-2 text-sm font-medium font-mono ${theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}`}>{item.code || "-"}</div>
-                                        </td>
-                                        <td className="px-6 py-4">
-                                          {isRowEditable('item', idx) ? (
-                                            <button onClick={() => handleOpenItemModal(idx)} className={`flex items-center justify-between w-full px-4 py-2.5 border rounded-lg text-sm transition-all shadow-sm ${theme === 'dark' ? 'bg-gray-700 border-gray-600 text-gray-200 hover:bg-gray-600' : 'bg-white border-gray-300 text-gray-800 hover:bg-gray-50'}`}>
-                                              <span className="truncate">{item.name || "Select Item"}</span>
-                                              <Package className={`w-4 h-4 flex-shrink-0 ml-2 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`} />
-                                            </button>
-                                          ) : (
-                                            <div className={`w-80 px-3 py-2 text-sm ${theme === 'dark' ? 'text-gray-300' : 'text-gray-800'}`}>{item.name || "-"}</div>
-                                          )}
-                                        </td>
-                                        <td className="px-6 py-4">
-                                          {isRowEditable('item', idx) ? (
-                                            <input type="text" value={item.unitPerQty || ""} onChange={(e) => { const nd = [...items]; nd[idx].unitPerQty = e.target.value; setItems(nd); }} placeholder="Unit per Qty"
-                                              className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 ${theme === 'dark' ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300 text-gray-800'}`}
+                                  ) : customers.map((c, idx) => (
+                                    <tr key={idx} className={`border-b last:border-b-0 transition-colors ${isDark ? 'border-slate-800 hover:bg-slate-800/50' : 'border-slate-100 hover:bg-slate-50/80'}`}>
+                                      <td className="px-5 py-3.5">
+                                        <code className={`font-mono text-xs font-medium px-2 py-1 rounded-lg ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700'}`}>
+                                          {c.code || "—"}
+                                        </code>
+                                      </td>
+                                      <td className="px-5 py-3.5">
+                                        {isRowEditable('customer', idx) ? (
+                                          <button onClick={() => handleOpenCustomerModal(idx)}
+                                            className={`flex items-center justify-between gap-2 px-3 py-2 border rounded-lg text-sm transition-all w-72 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300 shadow-sm'}`}>
+                                            <span className="truncate text-left">{c.name || "Select Customer"}</span>
+                                            <Users className={`w-3.5 h-3.5 flex-shrink-0 ${isDark ? 'text-slate-600' : 'text-slate-400'}`} />
+                                          </button>
+                                        ) : (
+                                          <span className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{c.name || "—"}</span>
+                                        )}
+                                      </td>
+                                      {(rebateType === "Fixed" || rebateType === "Incremental") && (
+                                        <td className="px-5 py-3.5">
+                                          {isRowEditable('customer', idx) ? (
+                                            <input type="text" value={c.qtrRebate || ""} onChange={(e) => handleQtrRebateChange(idx, e.target.value)} placeholder="0"
+                                              className={`w-28 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200 text-slate-800'}`}
                                               disabled={!access.canEdit}
                                             />
                                           ) : (
-                                            <div className={`px-3 py-2 text-sm ${theme === 'dark' ? 'text-gray-300' : 'text-gray-800'}`}>{item.unitPerQty || "-"}</div>
+                                            <span className={`text-sm font-medium ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{c.qtrRebate ? `${c.qtrRebate} Qtr` : "—"}</span>
                                           )}
                                         </td>
-                                        {rebateType === "Percentage" && (
-                                          <td className="px-6 py-4">
-                                            {isRowEditable('item', idx) ? (
-                                              <div className="relative">
-                                                <input type="text" value={item.percentagePerBag || ""} onChange={(e) => handlePercentagePerBagChange(idx, e.target.value)} placeholder="0.00"
-                                                  className={`w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 ${theme === 'dark' ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300 text-gray-800'}`}
-                                                  disabled={!access.canEdit}
-                                                />
-                                                <div className={`absolute left-3 top-1/2 -translate-y-1/2 text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>%</div>
-                                              </div>
-                                            ) : (
-                                              <div className={`px-3 py-2 text-sm font-medium ${theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}`}>{item.percentagePerBag ? `${item.percentagePerBag}%` : "-"}</div>
-                                            )}
-                                          </td>
+                                      )}
+                                      <td className="px-5 py-3.5">
+                                        {quotaType === "withQuota" ? (
+                                          <button onClick={() => openQuotaModal(idx)}
+                                            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                                              rebateType === "Percentage" ? (isDark ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20' : 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100')
+                                              : rebateType === "Incremental" ? (isDark ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20' : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100')
+                                              : (isDark ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20' : 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100')
+                                            }`}>
+                                            <Target className="w-3.5 h-3.5" />
+                                            <span>{rebateType === "Incremental" && Object.keys(c.ranges || {}).length > 0 ? `${Object.keys(c.ranges).length} ranges` : "Set Targets"}</span>
+                                          </button>
+                                        ) : (
+                                          <span className={`flex items-center gap-1.5 text-xs font-medium ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
+                                            <CheckCircle className="w-3.5 h-3.5" /> No Quota
+                                          </span>
                                         )}
-                                        {rebateType !== "Percentage" && (
-                                          <td className="px-6 py-4">
-                                            {rebateType === "Incremental" ? (
-                                              <button onClick={() => openProductRangeModal(idx)} className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white hover:from-purple-600 hover:to-purple-700 rounded-lg transition-all shadow-sm text-sm font-medium">
-                                                <TrendingUp className="w-4 h-4" />
-                                                {getProductRangeSummary(item)}
-                                              </button>
-                                            ) : (
-                                              <div className="w-full">
-                                                {isRowEditable('item', idx) ? (
-                                                  <input type="text" value={item.rebatePerBag || ""} onChange={(e) => handleRebatePerBagChange(idx, e.target.value)} placeholder="Rebate per bag"
-                                                    className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 ${theme === 'dark' ? 'bg-gray-700 border-gray-600 text-gray-200' : 'bg-white border-gray-300 text-gray-800'}`}
-                                                    disabled={!access.canEdit}
-                                                  />
-                                                ) : (
-                                                  <div className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg text-sm font-medium">
-                                                    <span className="text-xs">₱</span>{getProductRangeSummary(item).replace('$','₱')}
-                                                  </div>
-                                                )}
-                                              </div>
-                                            )}
-                                          </td>
-                                        )}
-                                        <td className="px-6 py-4">
-                                          <div className="flex gap-2 justify-center">
-                                            <button
-                                              className={`p-2 rounded-xl transition-all ${isRowEditable('item', idx) ? (theme === 'dark' ? "bg-green-900/30 text-green-400 hover:bg-green-800/50" : "bg-green-100 text-green-600 hover:bg-green-200") : (theme === 'dark' ? "bg-purple-900/30 text-purple-400 hover:bg-purple-800/50" : "bg-purple-100 text-purple-600 hover:bg-purple-200")} ${!access.canEdit ? 'opacity-40 cursor-not-allowed' : ''}`}
-                                              onClick={() => { if (access.canEdit) toggleRowEdit('item', idx); }}
-                                            >
-                                              {isRowEditable('item', idx) ? <Save size={16} /> : <Edit size={16} />}
-                                            </button>
-                                            <button
-                                              className={`p-2 rounded-xl transition-all ${theme === 'dark' ? "text-red-400 hover:bg-red-900/30" : "text-red-600 hover:bg-red-100"} ${!access.canEdit ? 'opacity-40 cursor-not-allowed' : ''}`}
-                                              onClick={() => handleDeleteItem(idx)}
-                                            >
-                                              <Trash2 size={16} />
-                                            </button>
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
+                                      </td>
+                                      <td className="px-5 py-3.5">
+                                        <div className="flex gap-1.5">
+                                          <button
+                                            className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${
+                                              isRowEditable('customer', idx)
+                                                ? (isDark ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100')
+                                                : (isDark ? 'bg-slate-800 text-slate-400 hover:bg-slate-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200')
+                                            } ${!access.canEdit ? 'opacity-30 cursor-not-allowed' : ''}`}
+                                            onClick={() => { if (access.canEdit) toggleRowEdit('customer', idx); }}
+                                          >
+                                            {isRowEditable('customer', idx) ? <Save size={13} /> : <Edit size={13} />}
+                                          </button>
+                                          <button
+                                            className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${isDark ? 'text-red-400 hover:bg-red-500/10' : 'text-red-500 hover:bg-red-50'} ${!access.canEdit ? 'opacity-30 cursor-not-allowed' : ''}`}
+                                            onClick={() => handleDeleteCustomer(idx)}
+                                          >
+                                            <Trash2 size={13} />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
                             </div>
                           </div>
-                        )}
+                        </div>
+                      )}
 
-                        {/* ── Bottom action bar ── */}
-                        <div className={`flex justify-between items-center mt-8 pt-6 border-t ${theme === 'dark' ? 'border-blue-700' : 'border-blue-200'}`}>
-                          <div className="flex gap-4">
-                            {activeTab === "Customer" && (
-                              <button onClick={handleAddCustomer} disabled={!access.canEdit}
-                                className={`flex items-center gap-2 px-6 py-3 text-white text-sm font-semibold rounded-xl transition-all shadow-lg ${access.canEdit ? 'bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800' : 'bg-gray-400 dark:bg-gray-600 cursor-not-allowed opacity-60'}`}>
-                                {!access.canEdit ? <Lock size={16} /> : <Users size={16} />} Add Customer
-                              </button>
-                            )}
-                            {activeTab === "Items" && (
-                              <button onClick={handleAddItem} disabled={!access.canEdit}
-                                className={`flex items-center gap-2 px-6 py-3 text-white text-sm font-semibold rounded-xl transition-all shadow-lg ${access.canEdit ? 'bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800' : 'bg-gray-400 dark:bg-gray-600 cursor-not-allowed opacity-60'}`}>
-                                {!access.canEdit ? <Lock size={16} /> : <Package size={16} />} Add Item
-                              </button>
-                            )}
+                      {/* ── Items tab ── */}
+                      {activeTab === "Items" && (
+                        <div className="flex flex-col flex-1 overflow-hidden">
+                          <div className="flex items-center gap-3 mb-2 flex-shrink-0">
+                            <h3 className={`text-sm font-semibold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                              {rebateType === "Incremental" ? "Product Rebate Ranges" : rebateType === "Percentage" ? "Product Setup" : "Product Rebate Configuration"}
+                            </h3>
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${isDark ? 'bg-slate-800 text-slate-400 border border-slate-700' : 'bg-slate-100 text-slate-600'}`}>
+                              {items.length}
+                            </span>
                           </div>
-                          <div className="flex gap-4">
-                            <button onClick={handleReset}
-                              className={`flex items-center gap-2 px-6 py-3 border text-sm font-semibold rounded-xl transition-all shadow-sm ${theme === 'dark' ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
-                              <X size={16} /> Reset
-                            </button>
 
-                            {/* ── Conditional Save vs Update button ── */}
-                            {isViewMode ? (
-                              <button
-                                onClick={handleUpdate}
-                                disabled={!access.canEdit}
-                                title={!access.canEdit ? 'No edit permission' : `Update ${loadedRebateCode}`}
-                                className={`flex items-center gap-2 px-8 py-3 text-white text-sm font-semibold rounded-xl transition-all shadow-lg ${
-                                  access.canEdit
-                                    ? 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700'
-                                    : 'bg-gray-400 dark:bg-gray-600 cursor-not-allowed opacity-60'
-                                }`}
-                              >
-                                {!access.canEdit ? <Lock size={16} /> : <PenLine size={16} />}
-                                Update {loadedRebateCode}
-                              </button>
-                            ) : (
-                              <button
-                                onClick={handleSave}
-                                disabled={!access.canCreate}
-                                title={!access.canCreate ? 'No create permission' : 'Save Rebate Setup'}
-                                className={`flex items-center gap-2 px-8 py-3 text-white text-sm font-semibold rounded-xl transition-all shadow-lg ${
-                                  access.canCreate
-                                    ? 'bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800'
-                                    : 'bg-gray-400 dark:bg-gray-600 cursor-not-allowed opacity-60'
-                                }`}
-                              >
-                                {!access.canCreate ? <Lock size={16} /> : <Save size={16} />}
-                                Save Rebate Setup
-                              </button>
-                            )}
+                          <div className={`rounded-xl border overflow-hidden flex-1 ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
+                            <div className="overflow-auto h-full" style={{ maxHeight: 'calc(100vh - 430px)' }}>
+                              <table className="w-full border-collapse text-sm min-w-[600px]">
+                                <thead className={`sticky top-0 z-10 ${isDark ? 'bg-slate-800/90' : 'bg-slate-50'}`}>
+                                  <tr>
+                                      {["Item Code", "Item Name", "Qty", "Unit of Measure",
+                                        ...(rebateType === "Percentage" ? ["% Per Unit"] : [rebateType === "Incremental" ? "Rebate Ranges" : "Rebate / Bag"]),
+                                        "Actions"
+                                      ].map(h => (
+                                      <th key={h} className={`px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider border-b ${isDark ? 'text-slate-500 border-slate-700/60' : 'text-slate-500 border-slate-200'}`}>{h}</th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {items.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={5} className={`px-5 py-16 text-center ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
+                                        <div className="flex flex-col items-center gap-2">
+                                          <Package className="w-7 h-7 opacity-30" />
+                                          <span className="text-sm">No items added yet</span>
+                                          <span className="text-xs opacity-60">Click "Add Item" to get started</span>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ) : items.map((item, idx) => (
+                                    <tr key={idx} className={`border-b last:border-b-0 transition-colors ${isDark ? 'border-slate-800 hover:bg-slate-800/50' : 'border-slate-100 hover:bg-slate-50/80'}`}>
+                                      <td className="px-5 py-3.5">
+                                        <code className={`font-mono text-xs font-medium px-2 py-1 rounded-lg ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700'}`}>
+                                          {item.code || "—"}
+                                        </code>
+                                      </td>
+                                      <td className="px-5 py-3.5">
+                                        {isRowEditable('item', idx) ? (
+                                          <button
+                                            onClick={() => handleOpenItemModal(idx)}
+                                            className={`flex items-center justify-between gap-2 px-3 py-2 border rounded-lg text-sm transition-all w-full min-w-[200px] ${
+                                              isDark
+                                                ? 'bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600'
+                                                : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300 shadow-sm'
+                                            }`}
+                                          >
+                                            <span className="text-left whitespace-normal">{item.name || "Select Item"}</span>
+                                            <Package className={`w-3.5 h-3.5 flex-shrink-0 ${isDark ? 'text-slate-600' : 'text-slate-400'}`} />
+                                          </button>
+                                        ) : (
+                                          <span className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{item.name || "—"}</span>
+                                        )}
+                                      </td>
+                                      <td className="px-5 py-3.5">
+                                        {isRowEditable('item', idx) ? (
+                                          <input type="text" value={item.unitPerQty || ""} onChange={(e) => { const nd = [...items]; nd[idx].unitPerQty = e.target.value; setItems(nd); }} placeholder="Qty"
+                                            className={`w-28 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200 text-slate-800'}`}
+                                            disabled={!access.canEdit}
+                                          />
+                                        ) : (
+                                          <span className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{item.unitPerQty || "—"}</span>
+                                        )}
+                                      </td>
+
+                                     {/* Unit of Measure */}
+                                        <td className="px-5 py-3.5">
+                                          {isRowEditable('item', idx) ? (
+                                            <div className="relative">
+                                              <select
+                                                value={item.unitOfMeasure || ''}
+                                                onChange={(e) => {
+                                                  const nd = [...items];
+                                                  nd[idx].unitOfMeasure = e.target.value;
+                                                  setItems(nd);
+                                                }}
+                                                disabled={!access.canEdit}
+                                                className={`w-32 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 appearance-none pr-8 ${
+                                                  isDark
+                                                    ? 'bg-slate-800 border-slate-700 text-slate-200'
+                                                    : 'bg-white border-slate-200 text-slate-800'
+                                                } ${!access.canEdit ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                              >
+                                                <option value="">Select UOM</option>
+                                                {UOM_OPTIONS.map(u => (
+                                                  <option key={u} value={u}>{u}</option>
+                                                ))}
+                                              </select>
+                                              <ChevronDown className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`} />
+                                            </div>
+                                          ) : (
+                                            <span className={`text-xs px-2 py-1 rounded-lg font-medium font-mono ${
+                                              item.unitOfMeasure
+                                                ? isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700'
+                                                : isDark ? 'text-slate-600' : 'text-slate-400'
+                                            }`}>
+                                              {item.unitOfMeasure || '—'}
+                                            </span>
+                                          )}
+                                        </td> 
+
+                                      {rebateType === "Percentage" && (
+                                        <td className="px-5 py-3.5">
+                                          {isRowEditable('item', idx) ? (
+                                            <div className="relative w-32">
+                                              <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>%</span>
+                                              <input type="text" value={item.percentagePerBag || ""} onChange={(e) => handlePercentagePerBagChange(idx, e.target.value)} placeholder="0.00"
+                                                className={`w-full pl-7 pr-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200 text-slate-800'}`}
+                                                disabled={!access.canEdit}
+                                              />
+                                            </div>
+                                          ) : (
+                                            <span className={`text-sm font-medium ${isDark ? 'text-amber-300' : 'text-amber-600'}`}>
+                                              {item.percentagePerBag ? (
+                                                  <>
+                                                    {item.percentagePerBag}% 
+                                                    {item.unitOfMeasure ? ` / ${item.unitOfMeasure}` : ''}
+                                                  </>
+                                                ) : "—"}
+                                            </span>
+                                          )}
+                                        </td>
+                                      )}
+
+                                      {rebateType !== "Percentage" && (
+                                        <td className="px-5 py-3.5">
+                                          {rebateType === "Incremental" ? (
+                                            <button onClick={() => openProductRangeModal(idx)}
+                                              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                                                isDark
+                                                  ? 'bg-violet-500/10 text-violet-400 border border-violet-500/20 hover:bg-violet-500/20'
+                                                  : 'bg-violet-50 text-violet-700 border border-violet-200 hover:bg-violet-100'
+                                              }`}>
+                                              <TrendingUp className="w-3.5 h-3.5" />
+                                              {getProductRangeSummary(item)}
+                                            </button>
+                                          ) : (
+                                            <div className="w-36">
+                                              {isRowEditable('item', idx) ? (
+                                                <div className="relative">
+                                                  <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>₱</span>
+                                                  <input type="text" value={item.rebatePerBag || ""} onChange={(e) => handleRebatePerBagChange(idx, e.target.value)} placeholder="0.00"
+                                                    className={`w-full pl-7 pr-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200 text-slate-800'}`}
+                                                    disabled={!access.canEdit}
+                                                  />
+                                                </div>
+                                              ) : (
+                                                <span className={`text-sm font-medium ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                                                  {item.rebatePerBag ? `₱${item.rebatePerBag}${item.unitOfMeasure ? `/${item.unitOfMeasure}` : '/bag'}` : "—"}
+                                                </span>
+                                              )}
+                                            </div>
+                                          )}
+                                        </td>
+                                      )}
+
+                                      <td className="px-5 py-3.5">
+                                        <div className="flex gap-1.5">
+                                          <button
+                                            className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${
+                                              isRowEditable('item', idx)
+                                                ? (isDark ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100')
+                                                : (isDark ? 'bg-slate-800 text-slate-400 hover:bg-slate-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200')
+                                            } ${!access.canEdit ? 'opacity-30 cursor-not-allowed' : ''}`}
+                                            onClick={() => { if (access.canEdit) toggleRowEdit('item', idx); }}
+                                          >
+                                            {isRowEditable('item', idx) ? <Save size={13} /> : <Edit size={13} />}
+                                          </button>
+                                          <button
+                                            className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${isDark ? 'text-red-400 hover:bg-red-500/10' : 'text-red-500 hover:bg-red-50'} ${!access.canEdit ? 'opacity-30 cursor-not-allowed' : ''}`}
+                                            onClick={() => handleDeleteItem(idx)}
+                                          >
+                                            <Trash2 size={13} />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
                         </div>
-                      </>
-                    )}
-                  </>
-                )
-            }
+                      )}
+
+                      {/* ── Bottom action bar ── */}
+                      <div className={`flex justify-between items-center pt-3 mt-auto border-t flex-shrink-0 ${divider}`}>
+                        <div className="flex gap-2">
+                          {activeTab === "Customer" && (
+                            <button onClick={handleAddCustomer} disabled={!access.canEdit}
+                              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-xl transition-all ${
+                                access.canEdit
+                                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20'
+                                  : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                              }`}>
+                              {!access.canEdit ? <Lock size={14} /> : <Users size={14} />} Add Customer
+                            </button>
+                          )}
+                          {activeTab === "Items" && (
+                            <button onClick={handleAddItem} disabled={!access.canEdit}
+                              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-xl transition-all ${
+                                access.canEdit
+                                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20'
+                                  : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                              }`}>
+                              {!access.canEdit ? <Lock size={14} /> : <Package size={14} />} Add Item
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setCancelModal(true)}
+                            disabled={!hasAnyData}
+                            className={`flex items-center gap-2 px-4 py-2.5 border text-sm font-medium rounded-xl transition-all ${
+                              !hasAnyData
+                                ? 'opacity-30 cursor-not-allowed border-slate-200 text-slate-400'
+                                : isDark
+                                  ? 'border-slate-700 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                                  : 'border-slate-200 text-slate-600 hover:bg-slate-50 shadow-sm'
+                            }`}
+                          >
+                            <X size={14} /> Cancel
+                          </button>
+                          {isViewMode ? (
+                            <button
+                              onClick={handleUpdate}
+                              disabled={!access.canEdit || !hasAnyData}
+                              title={!access.canEdit ? 'No edit permission' : !hasAnyData ? 'Add data first' : `Update ${loadedRebateCode}`}
+                              className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-xl transition-all ${
+                                access.canEdit && hasAnyData
+                                  ? 'bg-amber-500 hover:bg-amber-400 text-white shadow-lg shadow-amber-900/20'
+                                  : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                              }`}
+                            >
+                              {!access.canEdit ? <Lock size={14} /> : <PenLine size={14} />}
+                              Update {loadedRebateCode}
+                            </button>
+                          ) : (
+                            <button
+                              onClick={handleSave}
+                              disabled={!access.canCreate || !hasAnyData}
+                              title={!access.canCreate ? 'No create permission' : !hasAnyData ? 'Add data first' : 'Save Rebate Setup'}
+                              className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-xl transition-all ${
+                                access.canCreate && hasAnyData
+                                  ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20'
+                                  : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                              }`}
+                            >
+                              {!access.canCreate ? <Lock size={14} /> : <Save size={14} />}
+                              Save Program
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )
+              }
+            </div>
           </div>
         </div>
       </main>
@@ -2188,14 +2619,35 @@ function Vcp_RebateSetup() {
       <QuotaModal isOpen={quotaModal.isOpen} onClose={closeQuotaModal} customer={quotaModal.customer} onSave={(q) => handleSaveQuotas(quotaModal.customer.index, q)} quotaPeriods={quotaPeriods} importedQuotas={quotaModal.importedQuotas} rebateType={rebateType} quotaType={quotaType} selectedFrequency={selectedFrequency} theme={theme} />
       <RangeModal isOpen={rangeModal.isOpen} onClose={closeRangeModal} customer={rangeModal.customer} onSave={(r) => handleSaveRanges(rangeModal.customer.index, r)} quotaPeriods={quotaPeriods} rebateType={rebateType} quotaType={quotaType} theme={theme} />
       <ProductRangeModal isOpen={productRangeModal.isOpen} onClose={closeProductRangeModal} product={productRangeModal.product} onSave={(r) => handleSaveProductRanges(productRangeModal.product.index, r)} quotaPeriods={quotaPeriods} rebateType={rebateType} quotaType={quotaType} theme={theme} />
-
-      <SearchRebateModal isOpen={searchModal.isOpen} onClose={() => setSearchModal({ isOpen: false })} searchCode={searchCode} setSearchCode={setSearchCode} onSearch={handleSearchRebateCode} searchLoading={searchLoading} searchError={searchError} theme={theme} />
-
-      <ToastContainer toasts={toasts} removeToast={removeToast} />
+      <SearchRebateModal isOpen={searchModal.isOpen} onClose={() => setSearchModal({ isOpen: false })} searchCode={searchCode} setSearchCode={setSearchCode} onSearch={handleSearchRebateCode} searchLoading={searchLoading} searchError={searchError} theme={theme}canView={access.canView}  />
+      <ToastContainer toasts={toasts} removeToast={removeToast} isDark={isDark} />
       {loading && <Loading theme={theme} />}
       <ConfirmationModal isOpen={confirmModal.isOpen} onClose={() => setConfirmModal({ isOpen: false, action: null, data: null })} onConfirm={confirmModal.action === 'reset' ? resetForm : confirmAction} title={confirmModal.title} message={confirmModal.message} />
       <DuplicationError isOpen={duplicationError.isOpen} onClose={() => setDuplicationError({ isOpen: false, type: null, data: null })} type={duplicationError.type} data={duplicationError.data} theme={theme} />
-    </div>
+      <CancelModal
+      isOpen={cancelModal}
+      onClose={() => setCancelModal(false)}
+      onConfirm={() => { resetForm(); setCancelModal(false); }}
+      theme={theme}
+    />
+    <RemoveRow 
+      isOpen={removeCustomerModal.isOpen}
+      onClose={() => setRemoveCustomerModal({ isOpen: false, index: null, name: "" })}
+      onConfirm={confirmDeleteCustomer}
+      title="Delete Customer"
+      message={`Are you sure you want to delete "${removeCustomerModal.name}"? This action cannot be undone.`}
+      theme={theme}
+    />
+
+    <RemoveRow 
+      isOpen={removeItemModal.isOpen}
+      onClose={() => setRemoveItemModal({ isOpen: false, index: null, name: "" })}
+      onConfirm={confirmDeleteItem}
+      title="Delete Item"
+      message={`Are you sure you want to delete "${removeItemModal.name}"? This action cannot be undone.`}
+      theme={theme}
+    />
+   </div>
   );
 }
 

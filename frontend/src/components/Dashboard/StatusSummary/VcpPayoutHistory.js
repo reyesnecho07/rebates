@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { ChevronLeft, ChevronRight, Check, X, Edit, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, RefreshCw, Wallet, X, Zap } from 'lucide-react';
 
-const VcpPayoutHistory = ({ 
+const VcpPayoutHistory = ({
   theme = 'light',
   customerModalTab,
   modalCustomer,
@@ -23,801 +23,696 @@ const VcpPayoutHistory = ({
   beginningBalance = 0,
   beginningBalances = [],
   previousBalance = 0,
-  beginningBalanceRecord = null
+  beginningBalanceRecord = null,
 }) => {
   const isDark = theme === 'dark';
-  
-  // State for SAP sync
-  const [syncingSap, setSyncingSap] = useState(false);
+  const [syncingSap, setSyncingSap]         = useState(false);
   const [sapSyncMessage, setSapSyncMessage] = useState(null);
-  const [showSapDetails, setShowSapDetails] = useState({}); // Track which rows show SAP details
-  
+  const [showSapDetails, setShowSapDetails] = useState({});
+
   if (customerModalTab !== 'payout') return null;
 
-  const monthNames = ['January','February','March','April','May','June',
-                    'July','August','September','October','November','December'];
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const monthNames = [
+    'January','February','March','April','May','June',
+    'July','August','September','October','November','December',
+  ];
 
-const parsePeriodToNumber = (periodStr) => {
-  if (!periodStr) return 0;
-  for (let i = 0; i < monthNames.length; i++) {
-    if (periodStr.includes(monthNames[i])) {
-      const yearMatch = periodStr.match(/\b(20\d{2})\b/);
-      const year = yearMatch ? parseInt(yearMatch[1]) : 0;
-      return year * 100 + (i + 1);
-    }
-  }
-  return 0;
-};
-  
-  // Helper function to extract month and year from period string
-  const extractMonthYear = (period) => {
-    // Handle different period formats like "Jan 2024", "January 2024", "Q1 2024", etc.
-    const monthNames = [
-      'january', 'february', 'march', 'april', 'may', 'june',
-      'july', 'august', 'september', 'october', 'november', 'december'
-    ];
-    
-    const shortMonthNames = [
-      'jan', 'feb', 'mar', 'apr', 'may', 'jun',
-      'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
-    ];
-    
-    // Convert to lowercase for easier matching
-    const lowerPeriod = period.toLowerCase().trim();
-    
-    // Try to match full month name
+  const parsePeriodToNumber = (str) => {
+    if (!str) return 0;
     for (let i = 0; i < monthNames.length; i++) {
-      if (lowerPeriod.includes(monthNames[i])) {
-        // Extract year (look for 4-digit number)
-        const yearMatch = period.match(/\b(20\d{2})\b/);
-        const year = yearMatch ? parseInt(yearMatch[1]) : new Date().getFullYear();
-        return { month: i + 1, year, quarter: null };
+      if (str.includes(monthNames[i])) {
+        const y = str.match(/\b(20\d{2})\b/);
+        return (y ? parseInt(y[1]) : 0) * 100 + (i + 1);
       }
     }
-    
-    // Try to match short month name
-    for (let i = 0; i < shortMonthNames.length; i++) {
-      if (lowerPeriod.includes(shortMonthNames[i])) {
-        const yearMatch = period.match(/\b(20\d{2})\b/);
-        const year = yearMatch ? parseInt(yearMatch[1]) : new Date().getFullYear();
-        return { month: i + 1, year, quarter: null };
-      }
-    }
-    
-    // Try to match quarter format (Q1 2024)
-    const quarterMatch = lowerPeriod.match(/q([1-4])\s*(20\d{2})?/);
-    if (quarterMatch) {
-      const quarter = parseInt(quarterMatch[1]);
-      const year = quarterMatch[2] ? parseInt(quarterMatch[2]) : new Date().getFullYear();
-      // Convert quarter to month (Q1 = Jan-Mar, but we'll use the first month for sorting)
-      const month = (quarter - 1) * 3 + 1;
-      return { month, year, quarter };
-    }
-    
-    // Try to match month number format (MM/YYYY or MM-YYYY)
-    const monthNumMatch = period.match(/(\d{1,2})[\/\-]\s*(20\d{2})/);
-    if (monthNumMatch) {
-      const month = parseInt(monthNumMatch[1]);
-      const year = parseInt(monthNumMatch[2]);
-      if (month >= 1 && month <= 12) {
-        return { month, year, quarter: null };
-      }
-    }
-    
-    // Default: use current date
-    return { month: 1, year: new Date().getFullYear(), quarter: null };
-  };
-  
-  // Helper function to sort payouts by period (month/year)
-// Helper function to sort payouts by period (month/year) in ASCENDING order
-const sortPayoutsByPeriod = (payouts) => {
-  return [...payouts].sort((a, b) => {
-    const aDate = extractMonthYear(a.Period);
-    const bDate = extractMonthYear(b.Period);
-    
-    // First compare by year - ascending (older years first)
-    if (aDate.year !== bDate.year) {
-      return aDate.year - bDate.year; // Ascending: smaller year first
-    }
-    
-    // Then compare by month - ascending (January to December)
-    if (aDate.month !== bDate.month) {
-      return aDate.month - bDate.month; // Ascending: smaller month number first
-    }
-    
-    // If same month/year, maintain original order
     return 0;
-  });
-};
-  
-  // Sort the payouts for display
-  const sortedPaginatedPayouts = sortPayoutsByPeriod(paginatedPayouts);
-  const sortedFilteredPayouts = sortPayoutsByPeriod(filteredPayouts);
-  
-  // Function to manually sync SAP data
-  const handleSapSync = async () => {
-    if (!modalCustomer?.cardCode) {
-      setSapSyncMessage('❌ No customer selected');
-      setTimeout(() => setSapSyncMessage(null), 3000);
-      return;
+  };
+
+  const extractMonthYear = (period) => {
+    const lower = (period || '').toLowerCase().trim();
+    const short = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+    for (let i = 0; i < monthNames.length; i++) {
+      if (lower.includes(monthNames[i].toLowerCase())) {
+        const y = period.match(/\b(20\d{2})\b/);
+        return { month: i + 1, year: y ? parseInt(y[1]) : new Date().getFullYear() };
+      }
     }
-    
-    setSyncingSap(true);
-    setSapSyncMessage('🔄 Syncing with SAP Journal Entries...');
-    
+    for (let i = 0; i < short.length; i++) {
+      if (lower.includes(short[i])) {
+        const y = period.match(/\b(20\d{2})\b/);
+        return { month: i + 1, year: y ? parseInt(y[1]) : new Date().getFullYear() };
+      }
+    }
+    const q = lower.match(/q([1-4])\s*(20\d{2})?/);
+    if (q) return { month: (parseInt(q[1]) - 1) * 3 + 1, year: q[2] ? parseInt(q[2]) : new Date().getFullYear() };
+    const mn = period.match(/(\d{1,2})[\/\-]\s*(20\d{2})/);
+    if (mn && parseInt(mn[1]) >= 1 && parseInt(mn[1]) <= 12)
+      return { month: parseInt(mn[1]), year: parseInt(mn[2]) };
+    return { month: 1, year: new Date().getFullYear() };
+  };
+
+  const sortByPeriod = (arr) =>
+    [...arr].sort((a, b) => {
+      const ad = extractMonthYear(a.Period), bd = extractMonthYear(b.Period);
+      if (ad.year  !== bd.year)  return ad.year  - bd.year;
+      if (ad.month !== bd.month) return ad.month - bd.month;
+      const aOOP = (a.RebateType === 'SAP-OOP' || (a.PayoutId || '').startsWith('SAP-')) ? 1 : 0;
+      const bOOP = (b.RebateType === 'SAP-OOP' || (b.PayoutId || '').startsWith('SAP-')) ? 1 : 0;
+      return aOOP - bOOP;
+    });
+
+  const formatSapDate = (s) => {
+    if (!s) return '';
     try {
-      const payload = {
-        db: 'VCP_OWN',
-        rebateCode: modalCustomer?.rebateCode,
-        periodFrom: modalCustomer?.dateRange?.periodFrom,
-        periodTo: modalCustomer?.dateRange?.periodTo
-      };
-      
-      const response = await fetch(`http://192.168.100.193:3006/api/vcp/customer/${modalCustomer.cardCode}/sync-sap`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        setSapSyncMessage(`✅ SAP sync complete: Updated ${result.data.updatedCount} payout records`);
-        // Reload payouts data
-        await loadDetailedPayoutsData();
-      } else {
-        throw new Error(result.message || 'Sync failed');
-      }
-      
-    } catch (error) {
-      console.error('SAP sync error:', error);
-      setSapSyncMessage(`❌ SAP sync failed: ${error.message}`);
-    } finally {
-      setSyncingSap(false);
-      setTimeout(() => setSapSyncMessage(null), 5000);
+      return new Date(s).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    } catch {
+      return s;
     }
   };
-  
-  // Toggle SAP details for a specific row
-  const toggleSapDetails = (payoutId) => {
-    setShowSapDetails(prev => ({
-      ...prev,
-      [payoutId]: !prev[payoutId]
-    }));
+
+  // Resolution label map — explains why an OOP row landed where it did
+  const MATCH_TYPE_LABELS = {
+    exact         : null,
+    after_last    : 'Auto-assigned: latest period used',
+    before_first  : 'Auto-assigned: earliest period used',
+    gap_previous  : 'Auto-assigned: nearest past period',
+    gap_next      : 'Auto-assigned: nearest upcoming period',
+    fallback      : 'Auto-assigned: best-fit period',
   };
-  
+
+  const resolutionLabel = (matchType) => MATCH_TYPE_LABELS[matchType] ?? null;
 
 
-  // Format SAP date
-  const formatSapDate = (dateString) => {
-    if (!dateString) return '';
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', { 
-        year: 'numeric', 
-        month: 'short', 
-        day: 'numeric' 
-      });
-    } catch (e) {
-      return dateString;
-    }
+  const toggleSapDetails = (id) =>
+    setShowSapDetails(prev => ({ ...prev, [id]: !prev[id] }));
+
+  // ── Sorted data ───────────────────────────────────────────────────────────
+  const sortedPaginated = sortByPeriod(paginatedPayouts || []);
+  const sortedFiltered  = sortByPeriod(filteredPayouts  || []);
+
+  // ── Pagination ────────────────────────────────────────────────────────────
+  const totalPages = Math.max(1, Math.ceil(sortedFiltered.length / payoutRowsPerPage));
+  const safePage   = Math.min(payoutCurrentPage, totalPages);
+
+  const getPageNums = () => {
+    const total = totalPages, cur = safePage;
+    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+    if (cur <= 4)         return [1, 2, 3, 4, 5, '...', total];
+    if (cur >= total - 3) return [1, '...', total - 4, total - 3, total - 2, total - 1, total];
+    return [1, '...', cur - 1, cur, cur + 1, '...', total];
   };
-  
-  // Styling classes based on theme
-  const headerClasses = `px-6 py-3 border-b ${
-    isDark ? 'border-gray-700' : 'border-gray-200'
-  } ${isDark ? 'bg-gradient-to-r from-gray-800 to-gray-900' : 'bg-gray-50'}`;
 
-  const titleClasses = `text-base font-bold ${
-    isDark ? 'text-gray-100' : 'text-gray-900'
-  }`;
+  // ── Theme tokens ──────────────────────────────────────────────────────────
+  const T = {
+    bg:      isDark ? 'bg-slate-900'                      : 'bg-white',
+    header:  isDark ? 'bg-slate-800/80 border-slate-700'  : 'bg-slate-50 border-slate-200',
+    thead:   isDark ? 'bg-slate-800/80 border-slate-700'  : 'bg-slate-50 border-slate-200',
+    divider: isDark ? 'divide-slate-700'                  : 'divide-slate-100',
+    footer:  isDark ? 'bg-slate-800 border-slate-700'     : 'bg-white border-slate-200',
+    select:  isDark ? 'bg-slate-700 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-700',
+    row:     isDark ? 'hover:bg-slate-800/60'             : 'hover:bg-slate-50',
+    tp:      isDark ? 'text-slate-100'                    : 'text-slate-800',
+    ts:      isDark ? 'text-slate-400'                    : 'text-slate-500',
+    tm:      isDark ? 'text-slate-500'                    : 'text-slate-400',
+  };
 
-  const subtitleClasses = `text-xs ${
-    isDark ? 'text-gray-400' : 'text-gray-600'
-  }`;
+  const thCls = `px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest ${T.ts}`;
 
-  const tableContainerClasses = `flex-1 overflow-auto ${
-    isDark ? 'bg-gray-800' : 'bg-white'
-  }`;
+  const PaginationBtn = ({ icon: Icon, onClick, disabled }) => (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`w-7 h-7 rounded flex items-center justify-center transition-all ${
+        disabled
+          ? isDark ? 'text-slate-600 cursor-not-allowed' : 'text-slate-300 cursor-not-allowed'
+          : isDark ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100'
+      }`}
+    >
+      <Icon size={14} />
+    </button>
+  );
 
-  const tableHeaderClasses = `sticky top-0 ${
-    isDark 
-      ? 'bg-gradient-to-r from-gray-800 to-gray-900' 
-      : 'bg-gray-50'
-  }`;
+  // ── Badge helpers ─────────────────────────────────────────────────────────
+  const badge = (value, color) => {
+    const map = {
+      blue:    isDark ? 'bg-blue-900/30 text-blue-300 border-blue-700/40'          : 'bg-blue-50 text-blue-700 border-blue-200',
+      violet:  isDark ? 'bg-violet-900/30 text-violet-300 border-violet-700/40'    : 'bg-violet-50 text-violet-700 border-violet-200',
+      emerald: isDark ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700/40' : 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      amber:   isDark ? 'bg-amber-900/30 text-amber-300 border-amber-700/40'       : 'bg-amber-50 text-amber-700 border-amber-200',
+      red:     isDark ? 'bg-red-900/30 text-red-300 border-red-700/40'             : 'bg-red-50 text-red-700 border-red-200',
+      slate:   isDark ? 'bg-slate-700 text-slate-400 border-slate-600'             : 'bg-slate-100 text-slate-500 border-slate-200',
+      teal:    isDark ? 'bg-teal-900/30 text-teal-300 border-teal-700/40'          : 'bg-teal-50 text-teal-700 border-teal-200',
+    };
+    return `inline-block px-2 py-0.5 rounded border font-semibold tabular-nums text-xs whitespace-nowrap ${map[color] || map.slate}`;
+  };
 
-  const tableHeaderRowClasses = `font-semibold uppercase tracking-wider border-b ${
-    isDark ? 'border-gray-700 text-gray-300' : 'border-gray-200 text-gray-600'
-  }`;
-
-  const tableBodyClasses = `divide-y ${
-    isDark ? 'divide-gray-700' : 'divide-gray-100'
-  }`;
-
-  const footerClasses = `px-6 py-2 border-t ${
-    isDark ? 'border-gray-700 bg-gradient-to-r from-gray-800 to-gray-900' : 'border-gray-200 bg-gray-50'
-  }`;
-
-  const footerTextClasses = `text-xs ${
-    isDark ? 'text-gray-400' : 'text-gray-600'
-  }`;
-
-  const selectClasses = `border rounded px-2 py-1 text-xs ${
-    isDark 
-      ? 'bg-gray-700 border-gray-600 text-gray-100' 
-      : 'border-gray-300 text-gray-700'
-  }`;
-
-  const paginationButtonClasses = (isActive, isDisabled = false) => {
-    if (isDisabled) {
-      return `p-1 rounded transition-colors ${
-        isDark ? 'text-gray-600 cursor-not-allowed' : 'text-gray-400 cursor-not-allowed'
-      }`;
-    }
-    
-    if (isActive) {
-      return `px-2 py-0.5 text-xs rounded ${
-        isDark 
-          ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white' 
-          : 'bg-gradient-to-r from-blue-500 to-blue-600 text-white'
-      }`;
-    }
-    
-    return `px-2 py-0.5 text-xs rounded transition-colors ${
-      isDark 
-        ? 'text-gray-300 hover:bg-gray-700' 
-        : 'text-gray-700 hover:bg-gray-100'
+  const statusSelectCls = (status, editable) => {
+    if (!editable) return `appearance-none px-2 py-0.5 rounded border text-xs font-semibold italic ${
+      isDark ? 'bg-slate-700 text-slate-500 border-slate-600' : 'bg-slate-100 text-slate-400 border-slate-200'
     }`;
+    const map = {
+      Paid:             isDark ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700/40' : 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      'Partially Paid': isDark ? 'bg-amber-900/30 text-amber-300 border-amber-700/40'       : 'bg-amber-50 text-amber-700 border-amber-200',
+      Pending:          isDark ? 'bg-blue-900/30 text-blue-300 border-blue-700/40'          : 'bg-blue-50 text-blue-700 border-blue-200',
+      'No Payout':      isDark ? 'bg-slate-700 text-slate-400 border-slate-600'             : 'bg-slate-100 text-slate-500 border-slate-200',
+    };
+    return `appearance-none px-2 py-0.5 rounded border text-xs font-semibold cursor-pointer focus:outline-none ${map[status] || map['No Payout']}`;
   };
 
-  const navButtonClasses = (isDisabled = false) => {
-    if (isDisabled) {
-      return `p-1 rounded transition-colors ${
-        isDark ? 'text-gray-600 cursor-not-allowed' : 'text-gray-400 cursor-not-allowed'
-      }`;
-    }
-    
-    return `p-1 rounded transition-colors ${
-      isDark 
-        ? 'text-gray-300 hover:bg-gray-700' 
-        : 'text-gray-700 hover:bg-gray-200'
-    }`;
-  };
-
-  const ellipsisClasses = `text-gray-400 mx-1`;
-
-  const totalPages = Math.ceil(sortedFilteredPayouts.length / payoutRowsPerPage);
-  const getPaginationRange = () => {
-    const pages = [];
-    const maxVisiblePages = 5;
-    
-    if (totalPages <= maxVisiblePages) {
-      for (let i = 1; i <= totalPages; i++) {
-        pages.push(i);
-      }
-    } else {
-      if (payoutCurrentPage <= 3) {
-        pages.push(1, 2, 3, 4, '...', totalPages);
-      } else if (payoutCurrentPage >= totalPages - 2) {
-        pages.push(1, '...', totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
-      } else {
-        pages.push(1, '...', payoutCurrentPage - 1, payoutCurrentPage, payoutCurrentPage + 1, '...', totalPages);
-      }
-    }
-    
-    return pages;
-  };
-
+  // ── Row renderer ──────────────────────────────────────────────────────────
   const renderPayoutRow = (payout, index) => {
-    const isQtrRebate = payout.isQtrRebate;
-    const isPercentage = modalCustomer?.rebateType === 'Percentage';
-    const isFixed = modalCustomer?.rebateType === 'Fixed';
-    const hasTransactions = payout.BaseAmount > 0;
-    const isEligibleForPayout = payout.TotalAmount > 0;
-    const isNoTransactionOrNotEligible = !isEligibleForPayout;
-    const isEditable = payout.Status !== 'No Payout' && hasTransactions && isEligibleForPayout;
-    
-    // Check if this payout has SAP data
-    const hasSapData = payout.SapReleasedAmount > 0;
-    const isEditing = editingPayoutId === payout.Id;
-    const showSapDetailsForRow = showSapDetails[payout.Id];
-    
-    // Determine the source of the amount released (SAP or Manual)
-    const amountSource = hasSapData && payout.AmountReleased === payout.SapReleasedAmount 
-      ? 'sap' 
-      : 'manual';
-    
-    const rowClasses = `
-      ${isDark ? 'hover:bg-gray-700/50' : 'hover:bg-gray-50'} 
-      ${isQtrRebate ? 
-        (isDark 
-          ? 'bg-gradient-to-r from-blue-900/20 to-sky-900/20 border-l-4 border-l-blue-500' 
-          : 'bg-gradient-to-r from-blue-50 to-sky-50 border-l-4 border-l-blue-400') : ''}
-      ${isNoTransactionOrNotEligible ? 
-        (isDark ? 'bg-gray-700/30' : 'bg-gray-50/60') : ''}
-      ${payout.Status === 'No Payout' ? 
-        (isDark ? 'bg-gray-700/40 opacity-70' : 'bg-gray-50 opacity-70') : ''}
-      ${hasSapData ? 
-        (isDark ? 'border-l-2 border-l-purple-500' : 'border-l-2 border-l-purple-400') : ''}
-    `;
+    if (payout.isBeginningBalance || payout.Period?.startsWith('Balance of ')) return null;
 
-    const dateTextClasses = `font-medium ${
-      isDark ? 'text-gray-100' : 'text-gray-900'
-    }`;
+    // ── Out-of-period (OOP) SAP rows ─────────────────────────────────────────
+    const isOOP =
+      payout.RebateType === 'SAP-OOP' ||
+      (payout.PayoutId || '').startsWith('SAP-');
 
-    const qtrRebateTextClasses = `text-[10px] font-medium ${
-      isDark ? 'text-blue-400' : 'text-blue-600'
-    }`;
+    if (isOOP) {
+      const oopAmt   = Math.abs(payout.SapReleasedAmount || payout.TotalAmount || 0);
+      const isDeduct = (payout.SapReleasedAmount || 0) < 0 || payout.Status === 'Deducted';
+      const oopColor = isDeduct ? 'red' : 'violet';
+      const oopSign  = isDeduct ? '−' : '+';
 
-    const periodTextClasses = `font-medium ${
-      isQtrRebate ? 
-        (isDark ? 'text-purple-300' : 'text-purple-700') : 
-      isNoTransactionOrNotEligible ? 
-        (isDark ? 'text-gray-400 italic' : 'text-gray-500 italic') :
-      payout.Status === 'No Payout' ? 
-        (isDark ? 'text-gray-400' : 'text-gray-500') : 
-      isDark ? 'text-gray-200' : 'text-gray-800'
-    }`;
+      // matchType stored on the row tells us how the resolver assigned it
+      const matchType = payout.MatchType || null;
+      const resLabel  = matchType ? resolutionLabel(matchType) : null;
+      const oopLabel  = isDeduct ? 'SAP Deduction (auto-resolved)' : 'SAP Released (auto-resolved)';
 
-    // Base Amount Column Styling
-    const baseAmountClasses = `inline-block px-2 py-0.5 font-medium rounded border whitespace-nowrap ${
-      hasTransactions ? 
-        (isPercentage ? 
-          (isDark 
-            ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700' 
-            : 'bg-emerald-100 text-emerald-700 border-emerald-200') :
-          isDark 
-            ? 'bg-blue-900/30 text-blue-300 border-blue-700' 
-            : 'bg-blue-100 text-blue-700 border-blue-200'
-        ) : 
-      isDark 
-        ? 'bg-gray-700 text-gray-400 border-gray-600' 
-        : 'bg-gray-100 text-gray-500 border-gray-200'
-    }`;
-
-    // Total Amount Column Styling
-    const totalAmountClasses = `inline-block px-2 py-0.5 font-medium rounded border whitespace-nowrap ${
-      isNoTransactionOrNotEligible ? 
-        (isDark 
-          ? 'bg-gray-700 text-gray-400 border-gray-600 italic' 
-          : 'bg-gray-100 text-gray-500 border-gray-200 italic') :
-      isQtrRebate ? 
-        (isDark 
-          ? 'bg-purple-900/30 text-purple-300 border-purple-700' 
-          : 'bg-purple-100 text-purple-700 border-purple-200') :
-      payout.Status === 'No Payout' ? 
-        (isDark 
-          ? 'bg-gray-700 text-gray-400 border-gray-600' 
-          : 'bg-gray-100 text-gray-500 border-gray-200') :
-      payout.TotalAmount > 0 ? 
-        (isPercentage ?
-          (isDark 
-            ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700' 
-            : 'bg-emerald-100 text-emerald-700 border-emerald-200') :
-          isDark 
-            ? 'bg-amber-900/30 text-amber-300 border-amber-700' 
-            : 'bg-amber-50 text-amber-700 border-amber-100'
-        ) : 
-      isDark 
-        ? 'bg-gray-700 text-gray-400 border-gray-600' 
-        : 'bg-gray-50 text-gray-500 border-gray-200'
-    }`;
-
-    // Tooltip classes
-    const tooltipClasses = `absolute -top-8 left-1/2 transform -translate-x-1/2 text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none min-w-max ${
-      isDark ? 'bg-gray-900 text-white' : 'bg-gray-900 text-white'
-    }`;
-
-    const tooltipArrowClasses = `absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1 w-0 h-0 border-l-4 border-r-4 border-t-4 border-l-transparent border-r-transparent ${
-      isDark ? 'border-t-gray-900' : 'border-t-gray-900'
-    }`;
-
-    return (
-      <tr key={payout.Id || index} className={rowClasses}>
-        <td className="px-6 py-2">
-          <div className={dateTextClasses}>{payout.Date}</div>
-          {isQtrRebate && (
-            <div className={qtrRebateTextClasses}>Quarter Rebate</div>
-          )}
-          {isNoTransactionOrNotEligible && (
-            <div className={`text-[10px] font-medium ${
-              isDark ? 'text-gray-500' : 'text-gray-500'
+      return (
+        <tr
+          key={payout.Id || `oop-${index}`}
+          className={`transition-colors duration-100 border-b ${T.row} ${
+            isDark ? 'border-slate-700/50' : 'border-slate-100'
+          } border-l-2 ${
+            isDeduct
+              ? isDark ? 'border-l-red-500'    : 'border-l-red-400'
+              : isDark ? 'border-l-violet-500' : 'border-l-violet-400'
+          } opacity-90`}
+        >
+          {/* Date */}
+          <td className="px-5 py-2.5">
+            <span className={`font-medium ${T.tp}`}>{payout.Date || payout.PayoutDate}</span>
+            <div className={`text-[10px] mt-0.5 ${
+              isDeduct
+                ? isDark ? 'text-red-400'    : 'text-red-600'
+                : isDark ? 'text-violet-400' : 'text-violet-600'
             }`}>
-              {!hasTransactions ? 'No Transactions' : 'Not Eligible'}
+              {oopLabel}
             </div>
-          )}
-        </td>
-        <td className="px-3 py-2">
-          <div className={`${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-            <div className={periodTextClasses}>
+          </td>
+
+          {/* Period */}
+          <td className="px-4 py-2.5">
+            <div className={`font-medium text-xs ${
+              isDeduct
+                ? isDark ? 'text-red-300'    : 'text-red-700'
+                : isDark ? 'text-violet-300' : 'text-violet-700'
+            }`}>
               {payout.Period}
             </div>
-            {isNoTransactionOrNotEligible && (
-              <div className={`text-[10px] mt-0.5 ${
-                isDark ? 'text-gray-400' : 'text-gray-500'
-              }`}>
-                {!hasTransactions ? 'No transactions this month' : 'No eligible transactions'}
-              </div>
-            )}
-          </div>
-        </td>
-        
-        {/* Base Amount Column */}
-        <td className="px-3 py-2 text-center">
-          <div className="relative group inline-block">
-            <span className={baseAmountClasses}>
-              {formatCurrency(payout.BaseAmount || 0)}
-            </span>
-          </div>
-        </td>
-        
-        {/* Total Amount Column */}
-        <td className="px-3 py-2 text-center">
-          <div className="relative group inline-block">
-            <span className={totalAmountClasses}>
-              {formatCurrency(payout.TotalAmount)}
-            </span>
-            {isNoTransactionOrNotEligible && (
-              <div className={`${tooltipClasses} ${isDark ? 'bg-gray-800' : 'bg-gray-700'}`}>
-                {!hasTransactions ? 'No transactions → Total = 0' : 'Quota not met → Total = 0'}
-                <div className={tooltipArrowClasses}></div>
-              </div>
-            )}
-          </div>
-        </td>
-        
-        {/* Status Column */}
-        <td className="px-3 py-2 text-center">
-          <select 
-            value={payout.Status}
-            onChange={(e) => {
-              if (isEditable) {
-                handlePayoutStatusChange(payout.Id, e.target.value);
-              }
-            }}
-            disabled={isNoTransactionOrNotEligible || !isEditable}
-            className={`px-2 py-0.5 text-center rounded font-medium border appearance-none focus:outline-none w-full max-w-[100px] whitespace-nowrap text-xs ${
-              isNoTransactionOrNotEligible || !isEditable ? 
-                (isDark 
-                  ? 'bg-gray-700 text-gray-400 border-gray-600 cursor-not-allowed italic' 
-                  : 'bg-gray-100 text-gray-500 border-gray-300 cursor-not-allowed italic') :
-              payout.Status === 'Paid' ? 
-                (isDark 
-                  ? 'bg-green-900/30 text-green-300 border-green-700 cursor-pointer' 
-                  : 'bg-green-100 text-green-800 border-green-300 cursor-pointer') :
-              payout.Status === 'Partially Paid' ? 
-                (isDark 
-                  ? 'bg-yellow-900/30 text-yellow-300 border-yellow-700 cursor-pointer' 
-                  : 'bg-yellow-100 text-yellow-800 border-yellow-300 cursor-pointer') :
-              payout.Status === 'Pending' ? 
-                (isDark 
-                  ? 'bg-blue-900/30 text-blue-300 border-blue-700 cursor-pointer' 
-                  : 'bg-blue-100 text-blue-800 border-blue-300 cursor-pointer') : 
-              isDark 
-                ? 'bg-gray-700 text-gray-300 border-gray-600 cursor-pointer' 
-                : 'bg-gray-100 text-gray-800 border-gray-300 cursor-pointer'
-            }`}
-          >
-            <option value="No Payout">No Payout</option>
-            <option value="Pending">Pending</option>
-            <option value="Partially Paid">Partially Paid</option>
-            <option value="Paid">Paid</option>
-          </select>
-        </td>
-        
-        {/* Amount Released Column - UPDATED WITH SAP INTEGRATION */}
-        <td className="px-3 py-2 text-center">
-          <div className="flex flex-col items-center gap-1">
-            <div className="relative">
-              <span className={`absolute left-2 top-1/2 transform -translate-y-1/2 text-xs z-10 ${
-                isNoTransactionOrNotEligible ? 
-                  (isDark ? 'text-gray-500' : 'text-gray-400') : 
-                (isDark ? 'text-white' : 'text-black')
-              }`}>
-                ₱
-              </span>
-              <input
-                type="number"
-                value={payout.AmountReleased || 0}
-                className={`w-28 pl-6 pr-2 py-1 border rounded text-center text-xs ${
-                  isNoTransactionOrNotEligible ? 
-                    (isDark 
-                      ? 'border-gray-600 bg-gray-700 text-gray-400 italic' 
-                      : 'border-gray-300 bg-gray-100 text-gray-400 italic') :
-                  isDark 
-                    ? 'border-gray-600 bg-gray-700' 
-                    : 'border-gray-300 bg-gray-100'
-                } ${isDark ? 'text-white' : 'text-black'}`}
-                placeholder={isNoTransactionOrNotEligible ? "N/A" : "0.00"}
-                readOnly
-                disabled
-              />
-            </div>
-            
-            {/* SAP Badge and Details */}
-            {hasSapData && (
-              <div className="relative w-full">
 
-                {/* SAP Details Dropdown */}
-                {showSapDetailsForRow && payout.sapEntries && payout.sapEntries.length > 0 && (
-                  <div className={`absolute top-full left-1/2 transform -translate-x-1/2 mt-2 w-72 p-3 rounded-lg shadow-xl z-30 text-left ${
-                    isDark ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-200'
-                  }`}>
-                    <div className={`text-xs font-semibold mb-2 flex items-center justify-between ${
-                      isDark ? 'text-gray-200' : 'text-gray-800'
-                    }`}>
-                      <span>SAP Journal Entries</span>
-                      <button 
-                        onClick={() => toggleSapDetails(payout.Id)}
-                        className={`p-1 rounded hover:bg-gray-700`}
-                      >
-                        <X size={12} />
-                      </button>
+            {/* Resolution explanation badge */}
+            {resLabel && (
+              <div className={`mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold border ${
+                isDark
+                  ? 'bg-amber-900/20 border-amber-700/40 text-amber-300'
+                  : 'bg-amber-50 border-amber-200 text-amber-700'
+              }`}>
+                <Zap size={8} />
+                {resLabel}
+              </div>
+            )}
+
+            <div className={`text-[10px] mt-0.5 ${T.tm}`}>
+              SAP DocDate outside rebate period — auto-resolved
+            </div>
+          </td>
+
+          {/* Rebate Earned */}
+          <td className="px-4 py-2.5 text-center">
+            <span className={badge('—', 'slate')}>—</span>
+          </td>
+
+          {/* Total Amount */}
+          <td className="px-4 py-2.5 text-center">
+            <span className={badge(`${oopSign}${formatCurrency(oopAmt)}`, oopColor)}>
+              {oopSign}{formatCurrency(oopAmt)}
+            </span>
+          </td>
+
+          {/* Status */}
+          <td className="px-4 py-2.5 text-center">
+            <span className={`inline-block px-2 py-0.5 rounded border text-xs font-semibold ${
+              isDeduct
+                ? isDark ? 'bg-red-900/30 text-red-300 border-red-700/40'          : 'bg-red-50 text-red-700 border-red-200'
+                : isDark ? 'bg-violet-900/30 text-violet-300 border-violet-700/40' : 'bg-violet-50 text-violet-700 border-violet-200'
+            }`}>
+              {isDeduct ? 'Deducted' : 'Paid (SAP)'}
+            </span>
+          </td>
+
+          {/* Amount Released */}
+          <td className="px-4 py-2.5 text-center">
+            <span className={badge(
+              `${oopSign}₱${oopAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              oopColor
+            )}>
+              {oopSign}₱{oopAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </td>
+
+          {/* Balance */}
+          <td className="px-4 py-2.5 text-center">
+            <span className={badge('—', 'slate')}>—</span>
+          </td>
+        </tr>
+      );
+    }
+
+    // ── Regular / Settled rows ────────────────────────────────────────────────
+    const isSettled     = payout.Status === 'Settled' || !!payout.CarriedOverTo;
+    const carriedOverTo = payout.CarriedOverTo || '';
+    const carryOverNote = payout.CarryOverNote || '';
+    const hasTransactions = payout.BaseAmount > 0;
+    const isEligible      = payout.TotalAmount > 0;
+    const isFixed         = modalCustomer?.rebateType === 'Fixed';
+    const isQuotaNotMet   = isFixed && payout.Status === 'No Payout' && (payout.BaseAmount || 0) === 0;
+    const isNoQuotaFixed  = isFixed && (payout.BaseAmount || 0) > 0;
+    const isNotEligible   = !isEligible && !isSettled;
+
+    const isEditable =
+      !isSettled &&
+      payout.Status !== 'No Payout' &&
+      hasTransactions &&
+      isEligible;
+
+    const isQtr      = payout.isQtrRebate;
+    const hasSapData = payout.SapReleasedAmount > 0;
+    const isPercentage = modalCustomer?.rebateType === 'Percentage';
+
+    // Was this row populated by the universal resolver for a non-exact DocDate?
+    const resolvedExternally =
+      payout.MatchType && payout.MatchType !== 'exact' && hasSapData;
+
+    let rowAccent = '';
+    if (isSettled)            rowAccent = isDark ? 'border-l-2 border-l-teal-500'   : 'border-l-2 border-l-teal-400';
+    else if (isQtr)           rowAccent = isDark ? 'border-l-2 border-l-blue-500'   : 'border-l-2 border-l-blue-400';
+    else if (resolvedExternally) rowAccent = isDark ? 'border-l-2 border-l-amber-500' : 'border-l-2 border-l-amber-400';
+    else if (hasSapData)      rowAccent = isDark ? 'border-l-2 border-l-violet-500' : 'border-l-2 border-l-violet-400';
+
+    const rowOpacity =
+      payout.Status === 'No Payout' || (isNotEligible && !isSettled) ? 'opacity-70' : '';
+
+    const baseColor  = hasTransactions ? (isPercentage ? 'emerald' : 'blue') : 'slate';
+    const totalColor = isNotEligible   ? 'slate'
+                     : isQtr          ? 'violet'
+                     : isEligible     ? (isPercentage ? 'emerald' : 'amber')
+                     : 'slate';
+
+    const displayBalance = isSettled ? 0 : (payout.Balance ?? 0);
+    const balColor =
+      isNotEligible                             ? 'slate'
+      : displayBalance > 0 && isEditable        ? 'red'
+      : displayBalance === 0                    ? 'emerald'
+      : 'slate';
+
+    return (
+      <tr
+        key={payout.Id || index}
+        className={`transition-colors duration-100 border-b ${T.row} ${
+          isDark ? 'border-slate-700/50' : 'border-slate-100'
+        } ${rowAccent} ${rowOpacity}`}
+      >
+        {/* ── Date ──────────────────────────────────────────────────────── */}
+        <td className="px-5 py-2.5">
+          <span className={`font-medium ${T.tp}`}>{payout.Date}</span>
+          {isQtr && (
+            <div className={`text-[10px] mt-0.5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+              Quarter Rebate
+            </div>
+          )}
+          {isSettled && (
+            <div className={`text-[10px] mt-0.5 ${isDark ? 'text-teal-400' : 'text-teal-600'}`}>
+              Balance settled
+            </div>
+          )}
+          {isNotEligible && !isSettled && (
+            <div className={`text-[10px] mt-0.5 ${
+              isQuotaNotMet ? (isDark ? 'text-amber-400' : 'text-amber-600') : T.tm
+            }`}>
+              {isQuotaNotMet ? 'Quota not met' : !hasTransactions ? 'No Transactions' : 'Not Eligible'}
+            </div>
+          )}
+        </td>
+
+        {/* ── Period ────────────────────────────────────────────────────── */}
+        <td className="px-4 py-2.5">
+          <div className={`font-medium text-xs ${
+            isNotEligible && !isSettled ? `italic ${T.ts}`
+            : isSettled ? (isDark ? 'text-teal-300' : 'text-teal-700')
+            : isQtr     ? (isDark ? 'text-violet-300' : 'text-violet-700')
+            : T.tp
+          }`}>
+            {payout.Period}
+          </div>
+
+          {/* Carry-over note */}
+          {carriedOverTo && (
+            <div className={`text-[10px] mt-0.5 font-medium ${isDark ? 'text-teal-400' : 'text-teal-600'}`}>
+              Carried → {carriedOverTo} (fully paid)
+            </div>
+          )}
+          {carryOverNote && !carriedOverTo && (
+            <div className={`text-[10px] mt-0.5 ${T.tm}`}>{carryOverNote}</div>
+          )}
+
+          {/* Universal-resolver note: SAP amount came from a different DocDate */}
+          {resolvedExternally && (
+            <div className={`mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold border ${
+              isDark
+                ? 'bg-amber-900/20 border-amber-700/40 text-amber-300'
+                : 'bg-amber-50 border-amber-200 text-amber-700'
+            }`}>
+              <Zap size={8} />
+              {resolutionLabel(payout.MatchType)}
+            </div>
+          )}
+
+          {isNotEligible && !isSettled && (
+            <div className={`text-[10px] mt-0.5 ${
+              isQuotaNotMet
+                ? isDark ? 'text-amber-400/80' : 'text-amber-600/80'
+                : T.tm
+            }`}>
+              {isQuotaNotMet
+                ? 'Did not meet monthly quota'
+                : !hasTransactions
+                ? 'No transactions this month'
+                : 'No eligible transactions'}
+            </div>
+          )}
+          {isNoQuotaFixed && !isQtr && !isSettled && (
+            <div className={`text-[10px] mt-0.5 ${isDark ? 'text-blue-400/70' : 'text-blue-500/70'}`}>
+              Daily sales-based rebate
+            </div>
+          )}
+        </td>
+
+        {/* ── Rebate Earned ─────────────────────────────────────────────── */}
+        <td className="px-4 py-2.5 text-center">
+          <span className={badge(formatCurrency(payout.BaseAmount || 0), baseColor)}>
+            {formatCurrency(payout.BaseAmount || 0)}
+          </span>
+        </td>
+
+        {/* ── Total Amount ──────────────────────────────────────────────── */}
+        <td className="px-4 py-2.5 text-center">
+          <span className={badge(formatCurrency(payout.TotalAmount), totalColor)}>
+            {formatCurrency(payout.TotalAmount)}
+          </span>
+        </td>
+
+        {/* ── Status ────────────────────────────────────────────────────── */}
+        <td className="px-4 py-2.5 text-center">
+          {isSettled ? (
+            <span className={`inline-block px-2 py-0.5 rounded border text-xs font-semibold ${
+              isDark
+                ? 'bg-teal-900/30 text-teal-300 border-teal-700/40'
+                : 'bg-teal-50 text-teal-700 border-teal-200'
+            }`}>
+              Paid
+            </span>
+          ) : isEditable ? (
+            <select
+              value={payout.Status}
+              onChange={(e) => handlePayoutStatusChange(payout.Id, e.target.value)}
+              className={statusSelectCls(payout.Status, true)}
+            >
+              <option value="No Payout">No Payout</option>
+              <option value="Partially Paid">Partially Paid</option>
+              <option value="Paid">Paid</option>
+            </select>
+          ) : (
+            <span className={statusSelectCls(payout.Status, false)}>
+              {payout.Status || 'No Payout'}
+            </span>
+          )}
+        </td>
+
+        {/* ── Amount Released ───────────────────────────────────────────── */}
+        <td className="px-4 py-2.5 text-center">
+          <div className="flex flex-col items-center gap-1">
+            <span className={badge(
+              `₱${(payout.AmountReleased || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              isNotEligible && !isSettled ? 'slate' : 'blue'
+            )}>
+              ₱{(payout.AmountReleased || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            {isSettled && carriedOverTo && (
+              <div className={`text-[9px] mt-0.5 ${isDark ? 'text-teal-400' : 'text-teal-600'}`}>
+                Via {carriedOverTo}
+              </div>
+            )}
+
+            {/* SAP detail panel */}
+            {hasSapData && showSapDetails[payout.Id] && payout.sapEntries?.length > 0 && (
+              <div className={`relative z-30 w-64 mt-1 rounded-xl border shadow-xl p-3 text-left ${
+                isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
+              }`}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className={`text-[10px] font-bold uppercase tracking-widest ${T.ts}`}>
+                    SAP Journal Entries
+                  </span>
+                  <button
+                    onClick={() => toggleSapDetails(payout.Id)}
+                    className={`w-5 h-5 rounded flex items-center justify-center ${
+                      isDark ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-500'
+                    }`}
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+                <div className="max-h-40 overflow-y-auto space-y-2">
+                  {payout.sapEntries.map((entry, idx) => (
+                    <div
+                      key={idx}
+                      className={`text-[10px] pb-1.5 border-b last:border-0 ${
+                        isDark ? 'border-slate-700' : 'border-slate-100'
+                      }`}
+                    >
+                      <div className="flex justify-between">
+                        <span className={T.ts}>{formatSapDate(entry.docDate)}</span>
+                        <span className={`font-bold ${isDark ? 'text-violet-300' : 'text-violet-700'}`}>
+                          ₱{entry.amount?.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className={`mt-0.5 truncate ${T.tm}`}>
+                        {entry.memo || entry.acctName || `Account: ${entry.account}`}
+                      </div>
                     </div>
-                    
-                    <div className="max-h-48 overflow-y-auto">
-                      {payout.sapEntries.map((entry, idx) => (
-                        <div key={idx} className={`text-[10px] mb-2 pb-2 border-b ${
-                          isDark ? 'border-gray-700' : 'border-gray-100'
-                        } last:border-0`}>
-                          <div className="flex justify-between items-start">
-                            <div className={isDark ? 'text-gray-300' : 'text-gray-600'}>
-                              {formatSapDate(entry.docDate)}
-                            </div>
-                            <div className={`font-mono font-bold ${
-                              isDark ? 'text-purple-300' : 'text-purple-700'
-                            }`}>
-                              ₱{entry.amount.toFixed(2)}
-                            </div>
-                          </div>
-                          <div className={`text-[9px] mt-0.5 truncate ${
-                            isDark ? 'text-gray-400' : 'text-gray-500'
-                          }`}>
-                            {entry.memo || entry.acctName || `Account: ${entry.account}`}
-                          </div>
-                          <div className={`text-[8px] ${
-                            isDark ? 'text-gray-500' : 'text-gray-400'
-                          }`}>
-                            TransId: {entry.transId}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    
-                    <div className={`mt-2 text-[8px] pt-1 border-t ${
-                      isDark ? 'border-gray-700 text-gray-500' : 'border-gray-100 text-gray-400'
-                    }`}>
-                      Total SAP: ₱{payout.SapReleasedAmount.toFixed(2)} | {payout.sapEntries.length} transaction(s)
-                    </div>
-                  </div>
-                )}
+                  ))}
+                </div>
+                <div className={`mt-1.5 pt-1.5 border-t text-[9px] ${
+                  isDark ? 'border-slate-700 text-slate-500' : 'border-slate-100 text-slate-400'
+                }`}>
+                  Total: ₱{payout.SapReleasedAmount.toFixed(2)} · {payout.sapEntries.length} entry(s)
+                </div>
               </div>
             )}
           </div>
         </td>
-        
-        {/* Balance Column */}
-        <td className="px-3 py-2 text-center">
-          <div className="relative group inline-block">
-            <span className={`inline-block px-3 py-1 font-medium rounded border whitespace-nowrap cursor-help transition-colors ${
-              isNoTransactionOrNotEligible ? 
-                (isDark 
-                  ? 'bg-gray-700 text-gray-400 border-gray-600 italic' 
-                  : 'bg-gray-100 text-gray-500 border-gray-200 italic') :
-              payout.Balance > 0 && isEditable ? 
-                (isDark 
-                  ? 'bg-red-900/30 text-red-300 border-red-700 hover:bg-red-900/50' 
-                  : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100') :
-              payout.Balance === 0 ? 
-                (isDark 
-                  ? 'bg-green-900/30 text-green-300 border-green-700 hover:bg-green-900/50' 
-                  : 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100') : 
-              isDark 
-                ? 'bg-gray-700 text-gray-400 border-gray-600' 
-                : 'bg-gray-100 text-gray-500 border-gray-200'
-            }`}>
-              {formatCurrency(payout.Balance)}
-            </span>
-          </div>
+
+        {/* ── Balance ───────────────────────────────────────────────────── */}
+        <td className="px-4 py-2.5 text-center">
+          <span className={badge(formatCurrency(displayBalance), balColor)}>
+            {formatCurrency(displayBalance)}
+          </span>
+          {isSettled && (
+            <div className={`text-[9px] mt-0.5 ${isDark ? 'text-teal-400' : 'text-teal-600'}`}>
+              Paid in full
+            </div>
+          )}
         </td>
       </tr>
     );
   };
 
+  // ── Render ────────────────────────────────────────────────────────────────
+  const regularRows = sortedPaginated.filter(
+    p => !p.isBeginningBalance && !p.Period?.startsWith('Balance of ')
+  );
+  const nonOopRows      = regularRows.filter(p => !(p.PayoutId || '').startsWith('OOP-'));
+  const firstRegularNum = nonOopRows.length > 0
+    ? Math.min(...nonOopRows.map(p => parsePeriodToNumber(p.Period)))
+    : 0;
+  const showBegBalance = previousBalance !== 0 && firstRegularNum > 0;
+
   return (
-    <div className="h-full flex flex-col">
-      {/* Header with SAP Sync Button */}
-      <div className={headerClasses}>
-        <div className="flex items-center justify-between">
-          <div>
-            <h4 className={titleClasses}>Payout History</h4>
-            <p className={subtitleClasses}>Rebate payment records - Sorted by period (most recent first)</p>
-          </div>
+    <div className={`h-full flex flex-col ${T.bg}`}>
+
+      {/* ── Section header ────────────────────────────────────────────────── */}
+      <div className={`flex-shrink-0 px-5 py-3 border-b flex items-center justify-between ${T.header}`}>
+        <div>
+          <h4 className={`text-xs font-bold uppercase tracking-widest ${T.tp}`}>Payout History</h4>
+          <p className={`text-[11px] mt-0.5 ${T.ts}`}>Rebate payment records — sorted by period</p>
         </div>
-        
-        {/* SAP Sync Message */}
-        {sapSyncMessage && (
-          <div className={`mt-2 text-xs p-2 rounded flex items-center gap-2 ${
-            sapSyncMessage.includes('✅') 
-              ? (isDark ? 'bg-green-900/30 text-green-300 border border-green-700' : 'bg-green-50 text-green-700 border border-green-200')
-              : sapSyncMessage.includes('❌')
-                ? (isDark ? 'bg-red-900/30 text-red-300 border border-red-700' : 'bg-red-50 text-red-700 border border-red-200')
-                : (isDark ? 'bg-blue-900/30 text-blue-300 border border-blue-700' : 'bg-blue-50 text-blue-700 border border-blue-200')
-          }`}>
-            {sapSyncMessage.includes('🔄') && <RefreshCw size={12} className="animate-spin" />}
-            {sapSyncMessage}
+      </div>
+
+      {/* ── SAP sync message ──────────────────────────────────────────────── */}
+      {sapSyncMessage && (
+        <div className={`flex-shrink-0 px-5 py-2 border-b text-xs flex items-center gap-2 ${
+          sapSyncMessage.includes('✅')
+            ? isDark ? 'bg-emerald-900/20 border-emerald-800/30 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+            : sapSyncMessage.includes('❌')
+              ? isDark ? 'bg-red-900/20 border-red-800/30 text-red-300' : 'bg-red-50 border-red-200 text-red-600'
+              : isDark ? 'bg-blue-900/20 border-blue-800/30 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-700'
+        }`}>
+          {!sapSyncMessage.includes('✅') && !sapSyncMessage.includes('❌') && (
+            <RefreshCw size={12} className="animate-spin flex-shrink-0" />
+          )}
+          {sapSyncMessage}
+        </div>
+      )}
+
+      {/* ── Table ─────────────────────────────────────────────────────────── */}
+      <div className="flex-1 overflow-auto">
+        {regularRows.length === 0 && !showBegBalance ? (
+          <div className="h-full flex items-center justify-center py-16">
+            <div className="text-center">
+              <div className={`w-14 h-14 mx-auto rounded-xl flex items-center justify-center mb-4 ${
+                isDark ? 'bg-slate-800' : 'bg-slate-100'
+              }`}>
+                <Wallet size={22} className={T.tm} />
+              </div>
+              <h3 className={`text-sm font-bold mb-1 ${T.tp}`}>No Payout Records</h3>
+              <p className={`text-xs ${T.ts}`}>No payout records found for this period.</p>
+            </div>
           </div>
+        ) : (
+          <table className="w-full text-xs">
+            <thead className={`sticky top-0 border-b ${T.thead}`}>
+              <tr>
+                <th className={`${thCls} text-left  w-[12%]`}>Date</th>
+                <th className={`${thCls} text-left  w-[20%]`}>Period</th>
+                <th className={`${thCls} text-center w-[12%]`}>Rebate Earned</th>
+                <th className={`${thCls} text-center w-[12%]`}>Total Amount</th>
+                <th className={`${thCls} text-center w-[10%]`}>Status</th>
+                <th className={`${thCls} text-center w-[14%]`}>Amount Released</th>
+                <th className={`${thCls} text-center w-[14%]`}>Balance</th>
+              </tr>
+            </thead>
+            <tbody className={`divide-y ${T.divider}`}>
+
+              {/* ── Beginning balance row ────────────────────────────────── */}
+              {showBegBalance && (() => {
+                const year  = Math.floor(firstRegularNum / 100);
+                const month = firstRegularNum % 100;
+                const dateDisplay = `${String(month).padStart(2, '0')}.01.${year}`;
+                const pi = month === 1 ? 11 : month - 2;
+                const py = month === 1 ? year - 1 : year;
+                const fromMonth = `${monthNames[pi]} ${py}`;
+                return (
+                  <tr
+                    key="beg-balance"
+                    className={`border-b ${
+                      isDark
+                        ? 'border-slate-700/50 bg-emerald-900/10 border-l-2 border-l-emerald-500'
+                        : 'border-slate-100 bg-emerald-50/60 border-l-2 border-l-emerald-400'
+                    }`}
+                  >
+                    <td className="px-5 py-2.5">
+                      <span className={`font-bold ${isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>
+                        {dateDisplay}
+                      </span>
+                      <div className={`text-[10px] mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                        Beginning Balance
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className={`font-medium text-xs ${isDark ? 'text-emerald-200' : 'text-emerald-800'}`}>
+                        Beginning Balance
+                      </div>
+                      <div className={`text-[10px] mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                        (From {fromMonth} transactions)
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5" />
+                    <td className="px-4 py-2.5" />
+                    <td className="px-4 py-2.5" />
+                    <td className="px-4 py-2.5" />
+                    <td className="px-4 py-2.5 text-center">
+                      <span className={`inline-block px-2 py-0.5 rounded border font-bold tabular-nums text-xs ${
+                        isDark
+                          ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700/40'
+                          : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      }`}>
+                        {formatCurrency(previousBalance)}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })()}
+
+              {/* ── Regular payout rows ──────────────────────────────────── */}
+              {regularRows.map((payout, i) => renderPayoutRow(payout, i))}
+            </tbody>
+          </table>
         )}
       </div>
-      
-      {/* Table Content */}
-      <div className={tableContainerClasses}>
-        <table className="w-full text-xs">
-          <thead className={tableHeaderClasses}>
-            <tr className={tableHeaderRowClasses}>
-              <th className="px-6 py-2 text-left w-[12%]">Date</th>
-              <th className="px-3 py-2 text-left w-[20%]">Period</th>
-              <th className="px-3 py-2 text-center w-[12%]">Rebate Earned</th>
-              <th className="px-3 py-2 text-center w-[12%]">Total Amount</th>
-              <th className="px-3 py-2 text-center w-[10%]">Status</th>
-              <th className="px-3 py-2 text-center w-[12%]">Amount Released</th>
-              <th className="px-3 py-2 text-center w-[12%]">Balance</th>
-            </tr>
-          </thead>
-<tbody className={tableBodyClasses}>
-            {(() => {
-              const regularRows = sortedPaginatedPayouts.filter(p =>
-                !p.isBeginningBalance && !p.Period?.startsWith('Balance of ')
-              );
 
-              const firstRegularNum = regularRows.length > 0
-                ? Math.min(...regularRows.map(p => parsePeriodToNumber(p.Period)))
-                : 0;
-
-              const showBegBalance = previousBalance > 0 && firstRegularNum > 0;
-
-              const renderBegBalanceRow = () => {
-                if (!showBegBalance) return null;
-
-                const year = Math.floor(firstRegularNum / 100);
-                const month = firstRegularNum % 100;
-                const mm = String(month).padStart(2, '0');
-                const dateDisplay = `${mm}.01.${year}`;
-
-                const currentMonth = `${monthNames[month - 1]} ${year}`;
-                const prevMonthIdx = month === 1 ? 11 : month - 2;
-                const prevYear = month === 1 ? year - 1 : year;
-                const fromMonth = `${monthNames[prevMonthIdx]} ${prevYear}`;
-
-                const rowCls = isDark
-                  ? 'bg-gradient-to-r from-green-900/20 to-emerald-900/20 border-l-4 border-l-green-500'
-                  : 'bg-gradient-to-r from-green-50 to-emerald-50 border-l-4 border-l-green-400';
-                const amtCls = `inline-block px-3 py-1 font-bold rounded border ${
-                  isDark ? 'bg-green-900/30 text-green-300 border-green-700' : 'bg-green-100 text-green-700 border-green-200'
-                }`;
-                const labelCls = `font-bold ${isDark ? 'text-green-300' : 'text-green-700'}`;
-                const subCls = `text-[10px] mt-0.5 ${isDark ? 'text-green-400' : 'text-green-600'}`;
-
-                return (
-                  <tr key="beg-balance-row" className={rowCls}>
-                    <td className="px-6 py-3">
-                      <div className={labelCls}>{dateDisplay}</div>
-                      <div className={subCls}>Beginning Balance</div>
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className={`font-medium ${isDark ? 'text-green-200' : 'text-green-800'}`}>
-                        Balance for {currentMonth}
-                      </div>
-                      <div className={subCls}>(From {fromMonth} transactions)</div>
-                    </td>
-                    <td className="px-3 py-3 text-center" />
-                    <td className="px-3 py-3 text-center" />
-                    <td className="px-3 py-3 text-center" />
-                    <td className="px-3 py-3 text-center" />
-                    <td className="px-3 py-3 text-center">
-                      <span className={amtCls}>{formatCurrency(previousBalance)}</span>
-                    </td>
-                  </tr>
-                );
-              };
-
-              if (regularRows.length === 0 && !showBegBalance) {
-                return (
-                  <tr>
-                    <td colSpan={7} className="px-4 py-6 text-center">
-                      <div className={`${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                        No payout records found
-                      </div>
-                    </td>
-                  </tr>
-                );
-              }
-
-              return (
-                <>
-                  {renderBegBalanceRow()}
-                  {regularRows.map((payout, index) => renderPayoutRow(payout, index))}
-                </>
-              );
-            })()}
-          </tbody>
-        </table>
-      </div>
-      
-      {/* Pagination Footer */}
-      <div className={footerClasses}>
-        <div className="flex items-center justify-between">
-          <div className={footerTextClasses}>
-            Showing {Math.min((payoutCurrentPage - 1) * payoutRowsPerPage + 1, sortedFilteredPayouts.length)} to {Math.min(payoutCurrentPage * payoutRowsPerPage, sortedFilteredPayouts.length)} of <span className="font-bold">{sortedFilteredPayouts.length}</span> payout records
-            {modalCustomer?.sapData?.totalAmount > 0 && (
-              <span className={`ml-2 ${isDark ? 'text-purple-400' : 'text-purple-600'}`}>
-                | Total SAP: ₱{modalCustomer.sapData.totalAmount.toFixed(2)}
-              </span>
-            )}
-          </div>
-          
+      {/* ── Pagination footer ──────────────────────────────────────────────── */}
+      {sortedFiltered.length > 0 && (
+        <div className={`flex-shrink-0 flex flex-wrap gap-2 items-center justify-between px-5 py-2.5 border-t ${T.footer}`}>
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className={`text-xs ${
-                isDark ? 'text-gray-400' : 'text-gray-600'
-              }`}>Rows per page</span>
-              <select 
+            <p className={`text-[11px] ${T.ts}`}>
+              Showing{' '}
+              <span className={`font-semibold ${T.tp}`}>
+                {(safePage - 1) * payoutRowsPerPage + 1}–{Math.min(safePage * payoutRowsPerPage, sortedFiltered.length)}
+              </span>{' '}
+              of{' '}
+              <span className={`font-semibold ${T.tp}`}>{sortedFiltered.length}</span>
+            </p>
+            <div className="flex items-center gap-1.5">
+              <span className={`text-[11px] ${T.ts}`}>Per page</span>
+              <select
                 value={payoutRowsPerPage}
                 onChange={(e) => {
                   setPayoutRowsPerPage(Number(e.target.value));
                   setPayoutCurrentPage(1);
                 }}
-                className={selectClasses}
+                className={`text-xs border rounded-md px-1.5 py-0.5 outline-none ${T.select}`}
               >
-                <option value={10}>10</option>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
+                {[10, 25, 50].map(n => <option key={n} value={n}>{n}</option>)}
               </select>
             </div>
-            <div className="flex items-center gap-1">
-              <button 
-                onClick={() => setPayoutCurrentPage(prev => Math.max(prev - 1, 1))}
-                disabled={payoutCurrentPage === 1}
-                className={navButtonClasses(payoutCurrentPage === 1)}
-              >
-                <ChevronLeft size={14} />
-              </button>
-              
-              <div className="flex items-center gap-1">
-                {getPaginationRange().map((page, index) => (
-                  page === '...' ? (
-                    <span key={`ellipsis-${index}`} className={ellipsisClasses}>...</span>
-                  ) : (
-                    <button
-                      key={page}
-                      onClick={() => setPayoutCurrentPage(page)}
-                      className={paginationButtonClasses(payoutCurrentPage === page)}
-                    >
-                      {page}
-                    </button>
-                  )
-                ))}
-              </div>
-              
-              <button 
-                onClick={() => setPayoutCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                disabled={payoutCurrentPage >= totalPages}
-                className={navButtonClasses(payoutCurrentPage >= totalPages)}
-              >
-                <ChevronRight size={14} />
-              </button>
-            </div>
+          </div>
+          <div className="flex items-center gap-1">
+            <PaginationBtn icon={ChevronsLeft}  onClick={() => setPayoutCurrentPage(1)}                                  disabled={safePage === 1} />
+            <PaginationBtn icon={ChevronLeft}   onClick={() => setPayoutCurrentPage(p => Math.max(p - 1, 1))}           disabled={safePage === 1} />
+            {getPageNums().map((p, i) =>
+              p === '...' ? (
+                <span key={`e${i}`} className={`w-7 text-center text-xs ${T.tm}`}>…</span>
+              ) : (
+                <button
+                  key={p}
+                  onClick={() => setPayoutCurrentPage(p)}
+                  className={`w-7 h-7 rounded text-xs font-medium transition-all ${
+                    safePage === p
+                      ? 'bg-blue-600 text-white shadow'
+                      : isDark ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  {p}
+                </button>
+              )
+            )}
+            <PaginationBtn icon={ChevronRight}  onClick={() => setPayoutCurrentPage(p => Math.min(p + 1, totalPages))} disabled={safePage === totalPages} />
+            <PaginationBtn icon={ChevronsRight} onClick={() => setPayoutCurrentPage(totalPages)}                        disabled={safePage === totalPages} />
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

@@ -65,7 +65,7 @@ router.get('/highest-code', async (req, res) => {
 // SIMPLIFIED - Create rebate program
 router.post('/rebate-program', validateRebateProgram, async (req, res) => {
   try {
-    const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType } = req.body;
+    const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, Name } = req.body;
     
     console.log(`💾 Saving rebate program to database: ${req.database}`);
 
@@ -87,8 +87,8 @@ router.post('/rebate-program', validateRebateProgram, async (req, res) => {
 
     // Insert with the generated rebate code and CreatedDate
     const query = `
-      INSERT INTO RebateProgram (RebateCode, RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, CreatedDate)
-      VALUES (@RebateCode, @RebateType, @SlpCode, @SlpName, @DateFrom, @DateTo, @Frequency, @QuotaType, GETDATE())
+      INSERT INTO RebateProgram (RebateCode, RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, Name, CreatedDate)
+      VALUES (@RebateCode, @RebateType, @SlpCode, @SlpName, @DateFrom, @DateTo, @Frequency, @QuotaType, @Name, GETDATE())
     `;
     
     await req.db.request()
@@ -100,6 +100,7 @@ router.post('/rebate-program', validateRebateProgram, async (req, res) => {
       .input('DateTo', sql.Date, DateTo)
       .input('Frequency', sql.NVarChar, Frequency || 'Quarterly')
       .input('QuotaType', sql.NVarChar, QuotaType || 'With Quota')
+      .input('Name', sql.NVarChar, Name || '')
       .query(query);
     
     console.log(`✅ Rebate program saved successfully. RebateCode: ${nextRebateCode}`);
@@ -269,15 +270,15 @@ router.post('/fix-cust-quota', async (req, res) => {
 // Save to FixProdRebate table
 router.post('/fix-prod-rebate', async (req, res) => {
   try {
-    const { RebateCode, ItemCode, ItemName, RebatePerBag, UnitPerQty } = req.body;
+    const { RebateCode, ItemCode, ItemName, RebatePerBag, UnitPerQty, UnitOfMeasure } = req.body;
     
     console.log(`💾 Saving fixed product rebate to database: ${req.database}`);
     
     const nextId = await getNextId(req.db, 'FixProdRebate');
     
     const query = `
-      INSERT INTO FixProdRebate (Id, RebateCode, ItemCode, ItemName, UnitPerQty, RebatePerBag, CreatedDate)
-      VALUES (@Id, @RebateCode, @ItemCode, @ItemName, @UnitPerQty, @RebatePerBag, GETDATE())
+      INSERT INTO FixProdRebate (Id, RebateCode, ItemCode, ItemName, UnitPerQty, RebatePerBag, UnitOfMeasure, CreatedDate)
+      VALUES (@Id, @RebateCode, @ItemCode, @ItemName, @UnitPerQty, @RebatePerBag, @UnitOfMeasure, GETDATE())
     `;
     
     await req.db.request()
@@ -287,6 +288,7 @@ router.post('/fix-prod-rebate', async (req, res) => {
       .input('ItemName', sql.NVarChar, ItemName)
       .input('UnitPerQty', sql.Decimal(18, 2), UnitPerQty || 0)
       .input('RebatePerBag', sql.Decimal(18, 2), RebatePerBag || 0)
+      .input('UnitOfMeasure', sql.NVarChar, UnitOfMeasure || '')
       .query(query);
     
     console.log(`✅ Fixed product rebate saved successfully. ID: ${nextId}`);
@@ -386,15 +388,15 @@ router.post('/inc-cust-range', async (req, res) => {
 // Save to IncItemRebate table
 router.post('/inc-item-rebate', async (req, res) => {
   try {
-    const { RebateCode, ItemCode, ItemName, UnitPerQty } = req.body;
+    const { RebateCode, ItemCode, ItemName, UnitPerQty, UnitOfMeasure } = req.body;
     
     console.log(`💾 Saving incremental item rebate to database: ${req.database}`);
     
     const nextId = await getNextId(req.db, 'IncItemRebate');
     
     const query = `
-      INSERT INTO IncItemRebate (Id, RebateCode, ItemCode, ItemName, UnitPerQty, CreatedDate)
-      VALUES (@Id, @RebateCode, @ItemCode, @ItemName, @UnitPerQty, GETDATE())
+      INSERT INTO IncItemRebate (Id, RebateCode, ItemCode, ItemName, UnitPerQty, UnitOfMeasure, CreatedDate)
+      VALUES (@Id, @RebateCode, @ItemCode, @ItemName, @UnitPerQty, @UnitOfMeasure, GETDATE())
     `;
     
     await req.db.request()
@@ -403,6 +405,7 @@ router.post('/inc-item-rebate', async (req, res) => {
       .input('ItemCode', sql.NVarChar, ItemCode)
       .input('ItemName', sql.NVarChar, ItemName)
       .input('UnitPerQty', sql.Int, UnitPerQty || 0)
+      .input('UnitOfMeasure', sql.NVarChar, UnitOfMeasure || '')
       .query(query);
     
     console.log(`✅ Incremental item rebate saved successfully. ID: ${nextId}`);
@@ -566,15 +569,14 @@ router.post('/per-cust-quota', async (req, res) => {
 // Save to PerProdRebate table
 router.post('/per-prod-rebate', async (req, res) => {
   try {
-    const { RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag } = req.body;
+    const { RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag, UnitOfMeasure } = req.body;
     
     console.log(`💾 Saving percentage product rebate to database: ${req.database}`);
     
     // Don't get next ID for identity column - let SQL Server generate it
     const query = `
-      INSERT INTO PerProdRebate (RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag, CreatedDate)
-      VALUES (@RebateCode, @ItemCode, @ItemName, @UnitPerQty, @PercentagePerBag, GETDATE());
-      
+      INSERT INTO PerProdRebate (RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag, UnitOfMeasure, CreatedDate)
+      VALUES (@RebateCode, @ItemCode, @ItemName, @UnitPerQty, @PercentagePerBag, @UnitOfMeasure, GETDATE());
       SELECT SCOPE_IDENTITY() as NewId;
     `;
     
@@ -584,6 +586,7 @@ router.post('/per-prod-rebate', async (req, res) => {
       .input('ItemName', sql.NVarChar, ItemName)
       .input('UnitPerQty', sql.Int, UnitPerQty || 0)
       .input('PercentagePerBag', sql.Int, PercentagePerBag || 0)
+      .input('UnitOfMeasure', sql.NVarChar, UnitOfMeasure || '')
       .query(query);
     
     const newId = result.recordset[0].NewId;
@@ -631,7 +634,7 @@ router.get('/rebate-programs', async (req, res) => {
 
 /*===========================================*/
 /*              RESTRICTIONS                 */
-/*===========================================*/
+
 
 // Backend route for detailed duplicate check
 router.post('/check-duplicate-detailed', async (req, res) => {
@@ -1194,6 +1197,7 @@ router.post('/rebate-program/check-duplicate-program', async (req, res) => {
   }
 });
 
+
 /* To edit the rebate program  */
 // GET /api/rebate-program/by-code/:code
 router.get('/rebate-program/by-code/:code', async (req, res) => {
@@ -1314,16 +1318,20 @@ router.get('/rebate-program/items/:code', async (req, res) => {
 
 // PUT /api/rebate-program/:code — update program header
 router.put('/rebate-program/:code', async (req, res) => {
-  const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType } = req.body;
-  await req.db.request()
-    .input('c',  sql.NVarChar, req.params.code)
-    .input('rt', sql.NVarChar, RebateType).input('sc', sql.Int, SlpCode)
-    .input('sn', sql.NVarChar, SlpName).input('df', sql.Date, DateFrom)
-    .input('dt', sql.Date, DateTo).input('fr', sql.NVarChar, Frequency)
-    .input('qt', sql.NVarChar, QuotaType)
-    .query(`UPDATE RebateProgram SET RebateType=@rt, SlpCode=@sc, SlpName=@sn,
-      DateFrom=@df, DateTo=@dt, Frequency=@fr, QuotaType=@qt WHERE RebateCode=@c`);
-  res.json({ success: true });
+const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, Name } = req.body;
+await req.db.request()
+  .input('c',  sql.NVarChar, req.params.code)
+  .input('rt', sql.NVarChar, RebateType)
+  .input('sc', sql.Int, SlpCode)
+  .input('sn', sql.NVarChar, SlpName)
+  .input('df', sql.Date, DateFrom)
+  .input('dt', sql.Date, DateTo)
+  .input('fr', sql.NVarChar, Frequency)
+  .input('qt', sql.NVarChar, QuotaType)
+  .input('nm', sql.NVarChar, Name || '')
+  .query(`UPDATE RebateProgram SET RebateType=@rt, SlpCode=@sc, SlpName=@sn,
+    DateFrom=@df, DateTo=@dt, Frequency=@fr, QuotaType=@qt, Name=@nm WHERE RebateCode=@c`);
+res.json({ success: true });
 });
 
 // DELETE /api/rebate-program/:code/details?type=Fixed|Incremental|Percentage

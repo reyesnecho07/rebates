@@ -409,4 +409,133 @@ router.post('/nexchem/generate-multi-customer-report', async (req, res) => {
   }
 });
 
+// Get customers for a specific rebate code
+router.get('/nexchem/rebate/:rebateCode/customers', async (req, res) => {
+  try {
+    const { rebateCode } = req.params;
+    const { db } = req.query;
+    
+    const databaseToUse = db || 'NEXCHEM_OWN';
+    const ownPool = getPool(databaseToUse);
+    
+    if (!ownPool) {
+      return res.status(500).json({
+        success: false,
+        error: `Database pool for ${databaseToUse} not available`
+      });
+    }
+
+    console.log(`Fetching customers for rebate code: ${rebateCode}`);
+    
+    // First, get the rebate type
+    const typeQuery = `
+      SELECT RebateType FROM RebateProgram 
+      WHERE RebateCode = @rebateCode
+    `;
+    
+    const typeResult = await ownPool.request()
+      .input('rebateCode', rebateCode)
+      .query(typeQuery);
+    
+    if (typeResult.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: `Rebate code ${rebateCode} not found`
+      });
+    }
+    
+    const rebateType = typeResult.recordset[0].RebateType;
+    console.log(`Rebate type: ${rebateType}`);
+    
+    let customersQuery = '';
+    
+    if (rebateType === 'Fixed') {
+      customersQuery = `
+        SELECT DISTINCT 
+          T1.CardCode, 
+          T1.CardName,
+          T0.RebateCode,
+          T0.RebateType,
+          T0.DateFrom,
+          T0.DateTo
+        FROM RebateProgram T0
+        INNER JOIN FixCustRebate T1 ON T0.RebateCode = T1.RebateCode
+        WHERE T0.RebateCode = @rebateCode
+        ORDER BY T1.CardName
+      `;
+    } else if (rebateType === 'Incremental') {
+      customersQuery = `
+        SELECT DISTINCT 
+          T1.CardCode, 
+          T1.CardName,
+          T0.RebateCode,
+          T0.RebateType,
+          T0.DateFrom,
+          T0.DateTo
+        FROM RebateProgram T0
+        INNER JOIN IncCustRebate T1 ON T0.RebateCode = T1.RebateCode
+        WHERE T0.RebateCode = @rebateCode
+        ORDER BY T1.CardName
+      `;
+    } else if (rebateType === 'Percentage') {
+      customersQuery = `
+        SELECT DISTINCT 
+          T1.CardCode, 
+          T1.CardName,
+          T0.RebateCode,
+          T0.RebateType,
+          T0.DateFrom,
+          T0.DateTo
+        FROM RebateProgram T0
+        INNER JOIN PerCustRebate T1 ON T0.RebateCode = T1.RebateCode
+        WHERE T0.RebateCode = @rebateCode
+        ORDER BY T1.CardName
+      `;
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: `Unknown rebate type: ${rebateType}`
+      });
+    }
+    
+    const result = await ownPool.request()
+      .input('rebateCode', rebateCode)
+      .query(customersQuery);
+    
+    console.log(`Found ${result.recordset.length} customers for rebate code ${rebateCode}`);
+    
+    // Also get the rebate program details (dates, etc.)
+    const programQuery = `
+      SELECT DateFrom, DateTo, RebateType, SlpName
+      FROM RebateProgram
+      WHERE RebateCode = @rebateCode
+    `;
+    
+    const programResult = await ownPool.request()
+      .input('rebateCode', rebateCode)
+      .query(programQuery);
+    
+    const programInfo = programResult.recordset[0] || {};
+    
+    res.json({
+      success: true,
+      customers: result.recordset,
+      rebateInfo: {
+        rebateCode: rebateCode,
+        rebateType: rebateType,
+        dateFrom: programInfo.DateFrom,
+        dateTo: programInfo.DateTo,
+        slpName: programInfo.SlpName
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error fetching customers for rebate code:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 export default router;

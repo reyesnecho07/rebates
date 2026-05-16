@@ -234,8 +234,8 @@ router.post('/fix-cust-rebate', async (req, res) => {
     
     // UPDATED QUERY - Now includes Id parameter
     const query = `
-      INSERT INTO FixCustRebate (Id, RebateCode, CardCode, CardName, QtrRebate, CreatedDate)
-      VALUES (@Id, @RebateCode, @CardCode, @CardName, @QtrRebate, GETDATE())
+      INSERT INTO FixCustRebate (Id, RebateCode, CardCode, CardName, QtrRebate, CreatedDate, UpdatedDate)
+      VALUES (@Id, @RebateCode, @CardCode, @CardName, @QtrRebate, GETDATE(), GETDATE())
     `;
     
     console.log('🔍 Query to execute:');
@@ -357,8 +357,8 @@ router.post('/fix-cust-quota', async (req, res) => {
       
       // Use provided Id
       query = `
-        INSERT INTO FixCustQuota (Id, CustRebateId, Month, TargetQty, CreatedDate)
-        VALUES (@Id, @CustRebateId, @Month, @TargetQty, GETDATE())
+        INSERT INTO FixCustQuota (Id, CustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
+        VALUES (@Id, @CustRebateId, @Month, @TargetQty, GETDATE(), GETDATE())
       `;
       
       await req.db.request()
@@ -430,15 +430,15 @@ router.post('/fix-cust-quota', async (req, res) => {
 // Save to FixProdRebate table
 router.post('/fix-prod-rebate', async (req, res) => {
   try {
-    const { RebateCode, ItemCode, ItemName, RebatePerBag, UnitPerQty } = req.body;
+    const { RebateCode, ItemCode, ItemName, RebatePerBag, UnitPerQty, UnitOfMeasure } = req.body;
     
     console.log(`💾 Saving fixed product rebate to database: ${req.database}`);
     
     const nextId = await getNextId(req.db, 'FixProdRebate');
     
     const query = `
-      INSERT INTO FixProdRebate (Id, RebateCode, ItemCode, ItemName, UnitPerQty, RebatePerBag, CreatedDate)
-      VALUES (@Id, @RebateCode, @ItemCode, @ItemName, @UnitPerQty, @RebatePerBag, GETDATE())
+      INSERT INTO FixProdRebate (Id, RebateCode, ItemCode, ItemName, UnitPerQty, RebatePerBag, UnitOfMeasure, CreatedDate)
+      VALUES (@Id, @RebateCode, @ItemCode, @ItemName, @UnitPerQty, @RebatePerBag, @UnitOfMeasure, GETDATE())
     `;
     
     await req.db.request()
@@ -448,6 +448,7 @@ router.post('/fix-prod-rebate', async (req, res) => {
       .input('ItemName', sql.NVarChar, ItemName)
       .input('UnitPerQty', sql.Decimal(18, 2), UnitPerQty || 0)
       .input('RebatePerBag', sql.Decimal(18, 2), RebatePerBag || 0)
+      .input('UnitOfMeasure', sql.NVarChar, UnitOfMeasure || '')
       .query(query);
     
     console.log(`✅ Fixed product rebate saved successfully. ID: ${nextId}`);
@@ -547,15 +548,15 @@ router.post('/inc-cust-range', async (req, res) => {
 // Save to IncItemRebate table
 router.post('/inc-item-rebate', async (req, res) => {
   try {
-    const { RebateCode, ItemCode, ItemName, UnitPerQty } = req.body;
+    const { RebateCode, ItemCode, ItemName, UnitPerQty, UnitOfMeasure } = req.body;
     
     console.log(`💾 Saving incremental item rebate to database: ${req.database}`);
     
     const nextId = await getNextId(req.db, 'IncItemRebate');
     
     const query = `
-      INSERT INTO IncItemRebate (Id, RebateCode, ItemCode, ItemName, UnitPerQty, CreatedDate)
-      VALUES (@Id, @RebateCode, @ItemCode, @ItemName, @UnitPerQty, GETDATE())
+      INSERT INTO IncItemRebate (Id, RebateCode, ItemCode, ItemName, UnitPerQty, UnitOfMeasure, CreatedDate)
+      VALUES (@Id, @RebateCode, @ItemCode, @ItemName, @UnitPerQty, @UnitOfMeasure, GETDATE())
     `;
     
     await req.db.request()
@@ -564,6 +565,7 @@ router.post('/inc-item-rebate', async (req, res) => {
       .input('ItemCode', sql.NVarChar, ItemCode)
       .input('ItemName', sql.NVarChar, ItemName)
       .input('UnitPerQty', sql.Int, UnitPerQty || 0)
+      .input('UnitOfMeasure', sql.NVarChar, UnitOfMeasure || '')
       .query(query);
     
     console.log(`✅ Incremental item rebate saved successfully. ID: ${nextId}`);
@@ -728,15 +730,14 @@ router.post('/per-cust-quota', async (req, res) => {
 // Save to PerProdRebate table
 router.post('/per-prod-rebate', async (req, res) => {
   try {
-    const { RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag } = req.body;
+    const { RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag, UnitOfMeasure } = req.body;
     
     console.log(`💾 Saving percentage product rebate to database: ${req.database}`);
     
     // Don't get next ID for identity column - let SQL Server generate it
     const query = `
-      INSERT INTO PerProdRebate (RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag, CreatedDate)
-      VALUES (@RebateCode, @ItemCode, @ItemName, @UnitPerQty, @PercentagePerBag, GETDATE());
-      
+      INSERT INTO PerProdRebate (RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag, UnitOfMeasure, CreatedDate)
+      VALUES (@RebateCode, @ItemCode, @ItemName, @UnitPerQty, @PercentagePerBag, @UnitOfMeasure, GETDATE());
       SELECT SCOPE_IDENTITY() as NewId;
     `;
     
@@ -746,6 +747,7 @@ router.post('/per-prod-rebate', async (req, res) => {
       .input('ItemName', sql.NVarChar, ItemName)
       .input('UnitPerQty', sql.Int, UnitPerQty || 0)
       .input('PercentagePerBag', sql.Int, PercentagePerBag || 0)
+      .input('UnitOfMeasure', sql.NVarChar, UnitOfMeasure || '')
       .query(query);
     
     const newId = result.recordset[0].NewId;

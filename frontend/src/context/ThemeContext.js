@@ -16,7 +16,7 @@ export const ThemeProvider = ({ children }) => {
   const hasLoadedRef = useRef(false);
 
   // API Base URL
-  const API_BASE = 'http://192.168.100.193:3006/api/user';
+  const API_BASE = 'http://192.168.100.193:3009/api/user';
 
   // Function to get current user ID
   const getCurrentUserId = () => {

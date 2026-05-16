@@ -30,7 +30,7 @@ const Header = ({
   const profileDropdownRef = useRef(null);
   const profileButtonRef = useRef(null);
 
-  const API_BASE = 'http://192.168.100.193:3006/api';
+  const API_BASE = 'http://192.168.100.193:3009/api';
   const DB_NAME = 'USER';
 
   // Load profile image from localStorage on component mount

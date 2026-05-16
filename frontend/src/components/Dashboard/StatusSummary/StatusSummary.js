@@ -1,27 +1,30 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import ReactDOM from "react-dom";
 import {
-  Activity,
-  Search,
-  Filter,
-  X,
-  User,
-  UserCheck,
-  Tag,
-  TrendingUp,
-  CheckCircle,
-  XCircle,
-  CreditCard,
-  Wallet,
-  Users,
-  PhilippinePeso,
-  WifiOff,
-  ChevronRight,
-  ChevronDown,
-  Layers,
+  Activity, Search, Filter, X, User, UserCheck, Tag, TrendingUp,
+  CheckCircle, XCircle, CreditCard, Wallet, Users, PhilippinePeso,
+  WifiOff, ChevronRight, ChevronDown, Layers,
+  ChevronsLeft, ChevronsRight, ChevronLeft, Eye,
 } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Silent background polling hook
+// Grid templates
+// ─────────────────────────────────────────────────────────────────────────────
+const GRID_6 = "2fr 1.1fr 0.9fr 1fr 0.95fr 0.95fr";
+const GRID_7 = "2fr 1.1fr 0.9fr 1.2fr 1fr 0.95fr 0.95fr";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pagination helper
+// ─────────────────────────────────────────────────────────────────────────────
+const getPageNums = (current, total) => {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  if (current <= 4) return [1, 2, 3, 4, 5, "...", total];
+  if (current >= total - 3) return [1, "...", total - 4, total - 3, total - 2, total - 1, total];
+  return [1, "...", current - 1, current, current + 1, "...", total];
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Background polling hook
 // ─────────────────────────────────────────────────────────────────────────────
 const useBackgroundPoll = ({ onFetch, intervalMs = 30_000, enabled = true }) => {
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -39,15 +42,10 @@ const useBackgroundPoll = ({ onFetch, intervalMs = 30_000, enabled = true }) => 
     setFetchError(null);
     try {
       await onFetchRef.current();
-      if (mountedRef.current) {
-        setLastUpdated(new Date());
-        setCountdown(intervalMs / 1000);
-      }
+      if (mountedRef.current) { setLastUpdated(new Date()); setCountdown(intervalMs / 1000); }
     } catch (err) {
       if (mountedRef.current) setFetchError(err?.message || "Fetch failed");
-    } finally {
-      isFetchingRef.current = false;
-    }
+    } finally { isFetchingRef.current = false; }
   }, [intervalMs]);
   useEffect(() => {
     if (!enabled) return;
@@ -65,8 +63,7 @@ const useBackgroundPoll = ({ onFetch, intervalMs = 30_000, enabled = true }) => 
   useEffect(() => {
     const onVisibility = () => {
       if (document.hidden) {
-        clearInterval(timerRef.current);
-        clearInterval(countdownRef.current);
+        clearInterval(timerRef.current); clearInterval(countdownRef.current);
       } else {
         runFetch();
         timerRef.current     = setInterval(runFetch, intervalMs);
@@ -84,70 +81,438 @@ const useBackgroundPoll = ({ onFetch, intervalMs = 30_000, enabled = true }) => 
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// StatusSummary — grouped by customer
+// Filter Panel — portal, floats above everything
+// ─────────────────────────────────────────────────────────────────────────────
+const FilterPanel = ({
+  isDark, T,
+  agents,
+  selectedAgent, setSelectedAgent,
+  selectedRebateType, setSelectedRebateType,
+  selectedProgressStatus, setSelectedProgressStatus,
+  minRebateAmount, setMinRebateAmount,
+  maxRebateAmount, setMaxRebateAmount,
+  statusSummaryPeriodFrom, setStatusSummaryPeriodFrom,
+  statusSummaryPeriodTo, setStatusSummaryPeriodTo,
+  onClearFilters, onApplyFilters,
+  setCurrentCustomerPage, onClose,
+  anchorRef,
+  selectedProgramStatus, setSelectedProgramStatus,
+}) => {
+  const panelRef = useRef(null);
+  const [pos, setPos] = useState({ top: 0, right: 0 });
+  useEffect(() => {
+    if (anchorRef?.current) {
+      const rect = anchorRef.current.getBoundingClientRect();
+      setPos({ top: rect.bottom + window.scrollY + 6, right: window.innerWidth - rect.right });
+    }
+  }, [anchorRef]);
+  useEffect(() => {
+    const handler = (e) => {
+      if (
+        panelRef.current   && !panelRef.current.contains(e.target) &&
+        anchorRef?.current && !anchorRef.current.contains(e.target)
+      ) onClose();
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onClose, anchorRef]);
+  const selCls = `w-full px-2.5 py-1.5 border rounded-lg text-xs outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 font-medium ${
+    isDark ? "bg-slate-700 border-slate-600 text-slate-100" : "bg-white border-slate-300 text-slate-800"
+  }`;
+  const dateCls = `w-full px-2 py-1 text-xs border rounded-lg outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 ${
+    isDark ? "bg-slate-700 border-slate-600 text-slate-100" : "bg-white border-slate-300 text-slate-800"
+  }`;
+  return ReactDOM.createPortal(
+    <div
+      ref={panelRef}
+      style={{ position: "absolute", top: pos.top, right: pos.right, zIndex: 99999 }}
+      className={`w-80 rounded-xl border p-4 shadow-2xl ${T.popup}`}
+    >
+      <div className="flex items-center justify-between mb-4">
+        <h3 className={`text-xs font-bold ${T.textPrimary}`}>Filter Customers</h3>
+        <button onClick={onClose} className={`p-1 rounded hover:bg-slate-100 transition-colors ${T.textSecondary}`}>
+          <X size={13} />
+        </button>
+      </div>
+      <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-0.5">
+        {/* Sales Agent */}
+        <div>
+          <label className={`text-[10px] font-bold uppercase tracking-widest mb-1.5 block ${T.textSecondary}`}>Sales Agent</label>
+          <select value={selectedAgent} onChange={e => setSelectedAgent(e.target.value)} className={selCls}>
+            <option value="All">All Sales Agents</option>
+            {agents.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </div>
+        {/* Program Status */}
+      <div>
+        <label className={`text-[10px] font-bold uppercase tracking-widest mb-1.5 block ${T.textSecondary}`}>
+          Program Status
+        </label>
+        <div className="flex flex-wrap gap-1">
+          {["All", "Active", "Inactive"].map(s => (
+            <button
+              key={s}
+              onClick={() => setSelectedProgramStatus(s)}
+              className={`px-2.5 py-0.5 rounded text-[11px] font-medium border transition-all ${
+                selectedProgramStatus === s
+                  ? "bg-blue-600 text-white border-blue-600"
+                  : isDark
+                    ? "bg-slate-700 text-slate-300 border-slate-600 hover:bg-slate-600"
+                    : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+        {/* Rebate Type */}
+        <div>
+          <label className={`text-[10px] font-bold uppercase tracking-widest mb-1.5 block ${T.textSecondary}`}>Rebate Type</label>
+          <div className="flex flex-wrap gap-1">
+            {["All", "Fixed", "Incremental", "Percentage"].map(t => (
+              <button
+                key={t}
+                onClick={() => setSelectedRebateType(t)}
+                className={`px-2.5 py-0.5 rounded text-[11px] font-medium border transition-all ${
+                  selectedRebateType === t
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : isDark
+                      ? "bg-slate-700 text-slate-300 border-slate-600 hover:bg-slate-600"
+                      : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
+                }`}
+              >{t}</button>
+            ))}
+          </div>
+        </div>
+        {/* Progress Status (simplified) */}
+        <div>
+          <label className={`text-[10px] font-bold uppercase tracking-widest mb-1.5 block ${T.textSecondary}`}>Progress Status</label>
+          <div className="flex flex-wrap gap-1">
+            {["All", "Starting", "Progressing", "Eligible"].map(s => (
+              <button
+                key={s}
+                onClick={() => setSelectedProgressStatus(s)}
+                className={`px-2.5 py-0.5 rounded text-[11px] font-medium border transition-all ${
+                  selectedProgressStatus === s
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : isDark
+                      ? "bg-slate-700 text-slate-300 border-slate-600 hover:bg-slate-600"
+                      : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
+                }`}
+              >{s}</button>
+            ))}
+          </div>
+        </div>
+        {/* Rebate Amount Range */}
+        <div>
+          <label className={`text-[10px] font-bold uppercase tracking-widest mb-1.5 block ${T.textSecondary}`}>Rebate Amount Range</label>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <p className={`text-[10px] mb-0.5 ${T.textMuted}`}>Min (₱)</p>
+              <input
+                type="number" placeholder="0" value={minRebateAmount}
+                onChange={e => setMinRebateAmount(e.target.value)}
+                className={dateCls}
+              />
+            </div>
+            <div>
+              <p className={`text-[10px] mb-0.5 ${T.textMuted}`}>Max (₱)</p>
+              <input
+                type="number" placeholder="Any" value={maxRebateAmount}
+                onChange={e => setMaxRebateAmount(e.target.value)}
+                className={dateCls}
+              />
+            </div>
+          </div>
+        </div>
+        {/* Period Range */}
+        <div>
+          <label className={`text-[10px] font-bold uppercase tracking-widest mb-1.5 block ${T.textSecondary}`}>Period Range</label>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <p className={`text-[10px] mb-0.5 ${T.textMuted}`}>From</p>
+              <input type="date" value={statusSummaryPeriodFrom} onChange={e => setStatusSummaryPeriodFrom(e.target.value)} className={dateCls} />
+            </div>
+            <div>
+              <p className={`text-[10px] mb-0.5 ${T.textMuted}`}>To</p>
+              <input type="date" value={statusSummaryPeriodTo} onChange={e => setStatusSummaryPeriodTo(e.target.value)} className={dateCls} />
+            </div>
+          </div>
+        </div>
+        {/* Actions */}
+        <div className={`pt-3 border-t flex gap-2 ${isDark ? "border-slate-700" : "border-slate-100"}`}>
+          <button
+            onClick={() => { onClearFilters(); setCurrentCustomerPage(1); }}
+            className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${T.btn}`}
+          >Clear All</button>
+          <button
+            onClick={() => { onApplyFilters(); setCurrentCustomerPage(1); onClose(); }}
+            className="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-all"
+          >Apply</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pagination button
+// ─────────────────────────────────────────────────────────────────────────────
+const PaginationButton = ({ icon: Icon, onClick, disabled, isDark }) => (
+  <button
+    onClick={onClick}
+    disabled={disabled}
+    className={`w-7 h-7 rounded flex items-center justify-center transition-all ${
+      disabled
+        ? isDark ? "text-slate-600 cursor-not-allowed" : "text-slate-300 cursor-not-allowed"
+        : isDark ? "text-slate-300 hover:bg-slate-700" : "text-slate-600 hover:bg-slate-100"
+    }`}
+  >
+    <Icon size={14} />
+  </button>
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Row timestamp helper — shared by both sortedRows and customerGroups
+// ─────────────────────────────────────────────────────────────────────────────
+const rebateCodeNum = (code) => {
+  if (!code) return 0;
+  const match = String(code).match(/(\d+)$/);
+  return match ? parseInt(match[1], 10) : 0;
+};
+
+const rowTs = (r) => {
+  const codeNum = rebateCodeNum(r.rebateCode);
+  if (codeNum > 0) return codeNum;
+
+  const raw =
+    r.createdDate ||
+    r.createdAt   ||
+    r.dateAdded   ||
+    r.timestamp   ||
+    r.dateFrom    ||
+    r.from        ||
+    null;
+  if (raw) {
+    const t = new Date(raw).getTime();
+    if (!isNaN(t)) return t;
+  }
+  return typeof r.id === "number" ? r.id : 0;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Modal for selecting rebate code (only shows status for VAN rows)
+// ─────────────────────────────────────────────────────────────────────────────
+const RebateSelectionModal = ({ isDark, group, onClose, onSelectRebate }) => {
+  const modalRef = useRef(null);
+  const T = {
+    popup: isDark ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200",
+    textPrimary: isDark ? "text-slate-100" : "text-slate-800",
+    textSecondary: isDark ? "text-slate-400" : "text-slate-500",
+    textMuted: isDark ? "text-slate-500" : "text-slate-400",
+    row: isDark ? "hover:bg-slate-700/50 border-slate-700/50" : "hover:bg-slate-50 border-slate-100",
+  };
+  const fmt = (n) => {
+    const num = n || 0;
+    const abs = Math.abs(num);
+    const formatted = abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return num < 0 ? `-₱${formatted}` : `₱${formatted}`;
+  };
+  
+  const isVanRow = (row) => {
+    const unit = row.businessUnit || row.programType || row.customerType || "";
+    return unit.toLowerCase() === "van";
+  };
+
+  const getSimplifiedStatus = (row) => {
+    const calcPct = (r) => {
+      if (r.rebateType === "Fixed" || r.rebateType === "Percentage") {
+        const q = Object.values(r.quotas || {}).reduce((s, v) => s + v, 0);
+        return q > 0 ? parseFloat(Math.min(((r.totalAchieved || 0) / q) * 100, 100).toFixed(1)) : 0;
+      }
+      if (r.rebateType === "Incremental") {
+        if (r.currentRange) {
+          const cr = r.ranges?.find(rng => rng.rangeNo === r.currentRange);
+          if (cr) {
+            const mn = cr.minQty || 0, mx = cr.maxQty || (cr.minQty * 2) || 1000;
+            return parseFloat(Math.min(((r.totalAchieved - mn) / Math.max(mx - mn, 1)) * 100, 100).toFixed(1));
+          }
+        }
+        const fr = r.ranges?.[0];
+        if (fr) return parseFloat(Math.min((r.totalAchieved / fr.minQty) * 100, 99).toFixed(1));
+      }
+      return 0;
+    };
+    const pct = calcPct(row);
+    if (pct >= 100) return "Eligible";
+    if (pct > 0) return "Progressing";
+    return "Starting";
+  };
+  
+  const getStatusColor = (status) => {
+    switch(status) {
+      case "Eligible": return isDark ? "text-emerald-400 bg-emerald-900/30 border-emerald-700/40" : "text-emerald-700 bg-emerald-50 border-emerald-200";
+      case "Progressing": return isDark ? "text-amber-400 bg-amber-900/30 border-amber-700/40" : "text-amber-700 bg-amber-50 border-amber-200";
+      default: return isDark ? "text-slate-300 bg-slate-700 border-slate-600" : "text-slate-600 bg-slate-100 border-slate-200";
+    }
+  };
+
+  useEffect(() => {
+    const handleEscape = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [onClose]);
+
+  return ReactDOM.createPortal(
+    <div className="fixed inset-0 z-[100000] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div
+        ref={modalRef}
+        className={`w-full max-w-2xl rounded-xl border shadow-2xl ${T.popup} overflow-hidden`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className={`flex items-center justify-between p-4 border-b ${isDark ? "border-slate-700" : "border-slate-100"}`}>
+          <div>
+            <h3 className={`text-sm font-bold ${T.textPrimary}`}>{group.customer}</h3>
+            <p className={`text-[10px] ${T.textSecondary}`}>{group.code}</p>
+          </div>
+          <button onClick={onClose} className={`p-1 rounded ${isDark ? "hover:bg-slate-700" : "hover:bg-slate-100"}`}>
+            <X size={16} className={T.textSecondary} />
+          </button>
+        </div>
+        <div className="max-h-[60vh] overflow-y-auto p-2">
+          <div className="space-y-1">
+            {group.rows.map((row, idx) => {
+              const van = isVanRow(row);
+              const status = van ? getSimplifiedStatus(row) : null;
+              const statusColor = status ? getStatusColor(status) : "";
+              return (
+                <button
+                  key={idx}
+                  onClick={() => onSelectRebate(row)}
+                  className={`w-full text-left p-3 rounded-lg border transition-all ${T.row} ${
+                    isDark ? "border-slate-700/50" : "border-slate-100"
+                  }`}
+                >
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className={`font-semibold text-sm ${T.textPrimary}`}>{row.rebateCode || "—"}</div>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-semibold border ${
+                          row.isActive
+                            ? isDark ? "bg-emerald-900/30 text-emerald-400 border-emerald-700/40" : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : isDark ? "bg-slate-700 text-slate-400 border-slate-600" : "bg-slate-100 text-slate-500 border-slate-200"
+                        }`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${row.isActive ? "bg-emerald-500" : "bg-slate-400"}`} />
+                          {row.isActive ? "Active" : "Inactive"}
+                        </span>
+                        {van && status && (
+                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-semibold border ${statusColor}`}>
+                            {status === "Eligible" && <CheckCircle size={9} />}
+                            {status === "Progressing" && <Activity size={9} />}
+                            {status === "Starting" && <div className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />}
+                            {status}
+                          </span>
+                        )}
+                        <span className={`text-[10px] ${T.textMuted}`}>{row.rebateType}</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className={`font-bold text-xs ${T.textPrimary}`}>{fmt(row.rebateAmount)}</div>
+                    </div>
+                  </div>
+                  {row.dateFrom && row.dateTo && (
+                    <div className={`text-[9px] mt-1 ${T.textMuted}`}>
+                      {new Date(row.dateFrom).toLocaleDateString()} – {new Date(row.dateTo).toLocaleDateString()}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// StatusSummary Component – conditionally shows Status column based on `showStatus` prop
 // ─────────────────────────────────────────────────────────────────────────────
 const StatusSummary = ({
-  customers            = [],
-  filteredCustomers    = [],
-  agents               = [],
-  searchTerm           = "",   setSearchTerm           = () => {},
-  selectedAgent        = "All", setSelectedAgent       = () => {},
-  selectedRebateType   = "All", setSelectedRebateType  = () => {},
+  customers = [], filteredCustomers = [], agents = [],
+  searchTerm = "", setSearchTerm = () => {},
+  selectedAgent = "All", setSelectedAgent = () => {},
+  selectedRebateType = "All", setSelectedRebateType = () => {},
   selectedProgressStatus = "All", setSelectedProgressStatus = () => {},
-  minRebateAmount      = "",   setMinRebateAmount      = () => {},
-  maxRebateAmount      = "",   setMaxRebateAmount      = () => {},
+  minRebateAmount = "", setMinRebateAmount = () => {},
+  maxRebateAmount = "", setMaxRebateAmount = () => {},
   statusSummaryPeriodFrom = "", setStatusSummaryPeriodFrom = () => {},
-  statusSummaryPeriodTo   = "", setStatusSummaryPeriodTo   = () => {},
-  currentCustomerPage     = 1,  setCurrentCustomerPage  = () => {},
-  itemsPerCustomerPage    = 10,
+  statusSummaryPeriodTo = "", setStatusSummaryPeriodTo = () => {},
+  currentCustomerPage = 1, setCurrentCustomerPage = () => {},
+  itemsPerCustomerPage = 10,
   theme = "light",
   onCustomerClick = () => {},
-  onClearFilters  = () => {},
-  onApplyFilters  = () => {},
-  onFetchData      = null,
-  fetchIntervalMs  = 30_000,
+  onClearFilters = () => {},
+  onApplyFilters = () => {},
+  onFetchData = null,
+  fetchIntervalMs = 30_000,
   autoFetchEnabled = true,
+  selectedProgramStatus = "All",
+  setSelectedProgramStatus = () => {},
   isLoading = false,
+  showStatus = true,           // <-- NEW PROP: whether to show the Status column
 }) => {
-  const [showFilters,    setShowFilters]    = useState(false);
-  const [pageLoading,    setPageLoading]    = useState(false);
-  // Set of customer codes whose rebate-rows are expanded
-  const [expandedCustomers, setExpandedCustomers] = useState(new Set());
-  const filterRef       = useRef(null);
-  const filterButtonRef = useRef(null);
-  const isDark = theme === "dark";
-
-  // ── Silent background polling ──────────────────────────────────────────────
+  const [showFilters, setShowFilters]             = useState(false);
+  const [pageLoading, setPageLoading]             = useState(false);
+  const [selectedGroupForModal, setSelectedGroupForModal] = useState(null);
+  const filterBtnRef = useRef(null);
+  const isDark       = theme === "dark";
   const hasOnFetchData = typeof onFetchData === "function";
-  const { lastUpdated, fetchError, countdown, manualRefresh } = useBackgroundPoll({
-    onFetch:    hasOnFetchData ? onFetchData : async () => {},
+  const { fetchError, countdown, manualRefresh } = useBackgroundPoll({
+    onFetch: hasOnFetchData ? onFetchData : async () => {},
     intervalMs: fetchIntervalMs,
-    enabled:    hasOnFetchData && autoFetchEnabled,
+    enabled: hasOnFetchData && autoFetchEnabled,
   });
   useEffect(() => {
     if (hasOnFetchData && autoFetchEnabled) manualRefresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
-  const isQuarterlyCustomer = (row) =>
-    ["Quarterly", "quarterly", "Q"].includes(row.frequency);
+  // ── Theme tokens ───────────────────────────────────────────────────────────
+  const T = {
+    root:          isDark ? "bg-slate-900 border-slate-700"               : "bg-slate-50 border-slate-200",
+    headerBg:      isDark ? "bg-slate-800 border-slate-700"               : "bg-white border-slate-200",
+    tableBg:       isDark ? "bg-slate-900"                                : "bg-white",
+    thead:         isDark ? "bg-slate-800/80 border-slate-700"            : "bg-slate-50 border-slate-200",
+    row:           isDark ? "hover:bg-slate-800/70 border-slate-700/60"   : "hover:bg-slate-50 border-slate-100",
+    input:         isDark
+      ? "bg-slate-700 border-slate-600 text-slate-100 placeholder-slate-400 focus:ring-blue-500/30 focus:border-blue-500"
+      : "bg-white border-slate-300 text-slate-800 placeholder-slate-400 focus:ring-blue-500/20 focus:border-blue-500",
+    textPrimary:   isDark ? "text-slate-100"   : "text-slate-800",
+    textSecondary: isDark ? "text-slate-400"   : "text-slate-500",
+    textMuted:     isDark ? "text-slate-500"   : "text-slate-400",
+    divider:       isDark ? "divide-slate-700" : "divide-slate-100",
+    btn:           isDark
+      ? "bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600 hover:border-slate-500"
+      : "bg-white border-slate-300 text-slate-600 hover:bg-slate-50 hover:border-slate-400",
+    popup:         isDark ? "bg-slate-800 border-slate-700 shadow-2xl"    : "bg-white border-slate-200 shadow-xl",
+  };
 
-  const calculateProgressPercentage = (row) => {
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  const isQtr = (row) => ["Quarterly", "quarterly", "Q"].includes(row.frequency);
+  const calcPct = (row) => {
     if (row.rebateType === "Fixed" || row.rebateType === "Percentage") {
-      const totalQuota = Object.values(row.quotas || {}).reduce((s, q) => s + q, 0);
-      return totalQuota > 0
-        ? parseFloat(Math.min(((row.totalAchieved || 0) / totalQuota) * 100, 100).toFixed(1))
-        : 0;
-    } else if (row.rebateType === "Incremental") {
+      const q = Object.values(row.quotas || {}).reduce((s, v) => s + v, 0);
+      return q > 0 ? parseFloat(Math.min(((row.totalAchieved || 0) / q) * 100, 100).toFixed(1)) : 0;
+    }
+    if (row.rebateType === "Incremental") {
       if (row.currentRange) {
         const cr = row.ranges?.find(r => r.rangeNo === row.currentRange);
         if (cr) {
-          const min = cr.minQty || 0;
-          const max = cr.maxQty || (cr.minQty * 2) || 1_000;
-          return parseFloat(
-            Math.min(((row.totalAchieved - min) / Math.max(max - min, 1)) * 100, 100).toFixed(1)
-          );
+          const mn = cr.minQty || 0, mx = cr.maxQty || (cr.minQty * 2) || 1000;
+          return parseFloat(Math.min(((row.totalAchieved - mn) / Math.max(mx - mn, 1)) * 100, 100).toFixed(1));
         }
       }
       const fr = row.ranges?.[0];
@@ -155,79 +520,39 @@ const StatusSummary = ({
     }
     return 0;
   };
-
-  const getEligibilityStatus = (row, pct) => {
-    if (row.rebateType === "Fixed" || row.rebateType === "Percentage") {
-      if (pct >= 100) return "Eligible";
-      if (pct <= 0)   return "Not Eligible";
-      return "Pending";
-    } else if (row.rebateType === "Incremental") {
-      if (pct >= 50) return "Eligible";
-      if (pct <= 0)  return "Not Eligible";
-      return "Pending";
-    }
-    return "Not Eligible";
-  };
-
-  const getProgressStatusText = (row, pct) => {
-    if (row.rebateType === "Fixed" || row.rebateType === "Percentage") {
-      if (pct >= 100) return "Met Quota";
-      if (pct > 0)    return "On Track";
-      return "Starting";
-    } else if (row.rebateType === "Incremental") {
-      if (pct >= 50) return "Met Quota";
-      if (pct > 0)   return "Progressing";
-      return "Starting";
-    }
+  
+  const getSimplifiedStatus = (row) => {
+    const pct = calcPct(row);
+    if (pct >= 100) return "Eligible";
+    if (pct > 0) return "Progressing";
     return "Starting";
   };
-
-  const getProgressBarColor  = (row, pct) => {
-    const s = getEligibilityStatus(row, pct);
-    if (s === "Eligible") return "bg-green-500";
-    if (s === "Pending")  return "bg-yellow-500";
-    return "bg-red-500";
+  
+  const getStatusColor = (status) => {
+    switch(status) {
+      case "Eligible": return isDark ? "text-emerald-400 bg-emerald-900/30 border-emerald-700/40" : "text-emerald-700 bg-emerald-50 border-emerald-200";
+      case "Progressing": return isDark ? "text-amber-400 bg-amber-900/30 border-amber-700/40" : "text-amber-700 bg-amber-50 border-amber-200";
+      default: return isDark ? "text-slate-300 bg-slate-700 border-slate-600" : "text-slate-600 bg-slate-100 border-slate-200";
+    }
   };
 
-  const getProgressTextColor = (row, pct) => {
-    const s = getEligibilityStatus(row, pct);
-    if (s === "Eligible") return isDark ? "text-green-400" : "text-green-600";
-    if (s === "Pending")  return isDark ? "text-yellow-400" : "text-yellow-600";
-    return isDark ? "text-red-400" : "text-red-600";
+  const fmt = (n) => {
+    const num = n || 0;
+    const abs = Math.abs(num);
+    const formatted = abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return num < 0 ? `-₱${formatted}` : `₱${formatted}`;
   };
 
-  // Click-outside for filter panel
-  useEffect(() => {
-    const handler = (e) => {
-      if (
-        showFilters &&
-        filterRef.current      && !filterRef.current.contains(e.target) &&
-        filterButtonRef.current && !filterButtonRef.current.contains(e.target)
-      ) setShowFilters(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [showFilters]);
+  // ── Data processing with release‑date based reallocation ──────────────────
+  const sortedRows = useMemo(
+    () => [...filteredCustomers].sort((a, b) => rowTs(b) - rowTs(a)),
+    [filteredCustomers]
+  );
 
-  // ── Sort filtered rows newest-first ───────────────────────────────────────
-  const sortedRows = useMemo(() => {
-    return [...filteredCustomers].sort((a, b) => {
-      const ts = (c) => {
-        if (c.createdAt)  return new Date(c.createdAt).getTime();
-        if (c.dateAdded)  return new Date(c.dateAdded).getTime();
-        if (c.timestamp)  return new Date(c.timestamp).getTime();
-        if (typeof c.id === "number") return c.id;
-        return 0;
-      };
-      return ts(b) - ts(a);
-    });
-  }, [filteredCustomers]);
-
-  // ── Group rows by customer code ────────────────────────────────────────────
   const customerGroups = useMemo(() => {
     const map = new Map();
-    sortedRows.forEach((row) => {
-      const key = row.code || row.customer || "unknown";
+    sortedRows.forEach(row => {
+      const key = row.code;
       if (!map.has(key)) {
         map.set(key, {
           key,
@@ -235,52 +560,163 @@ const StatusSummary = ({
           code: row.code,
           agent: row.agent,
           color: row.color,
-          // first quarterly row wins for group-level quarterly display
           quarterlyRow: null,
           rows: [],
         });
       }
-      const group = map.get(key);
-      group.rows.push(row);
-      if (isQuarterlyCustomer(row) && !group.quarterlyRow) {
-        group.quarterlyRow = row;
-      }
+      const g = map.get(key);
+      g.rows.push(row);
+      if (isQtr(row) && !g.quarterlyRow) g.quarterlyRow = row;
     });
-    // Aggregate financials
-    return Array.from(map.values()).map((g) => {
-      const totalRebateAmount = g.rows.reduce((s, r) => s + (r.rebateAmount || 0), 0);
-      const totalPaidAmount   = g.rows.reduce((s, r) => s + (r.paidAmount   || 0), 0);
-      const totalBalance      = g.rows.reduce((s, r) => s + (r.rebateBalance || 0), 0);
-      const rebateTypes       = [...new Set(g.rows.map((r) => r.rebateType).filter(Boolean))];
-      const agents            = [...new Set(g.rows.map((r) => r.agent).filter(Boolean))];
-      return {
-        ...g,
-        totalRebateAmount,
-        totalPaidAmount,
-        totalBalance,
-        rebateTypes,
-        agentDisplay: agents.length === 1 ? agents[0] : agents.length > 1 ? "Multiple" : "—",
-        agentInitial: agents.length === 1 ? agents[0] : "M",
-        rebateCount: g.rows.length,
-      };
-    });
+
+    return Array.from(map.values())
+      .map(g => {
+        const allRows = [...g.rows];
+        const totalRebateAmount = allRows.reduce((s, r) => s + (r.rebateAmount || 0), 0);
+        const totalOriginalPaid = allRows.reduce((s, r) => s + (r.paidAmount || 0), 0);
+        const totalBalance = totalRebateAmount - totalOriginalPaid;
+
+        const hasReleaseDates = allRows.some(r => r.releaseDate);
+        let rowsWithAllocated = allRows;
+
+        if (hasReleaseDates) {
+          const releases = [];
+          allRows.forEach(row => {
+            if (row.paidAmount && row.paidAmount > 0 && row.releaseDate) {
+              releases.push({
+                amount: row.paidAmount,
+                date: new Date(row.releaseDate),
+                originalRow: row,
+              });
+            }
+          });
+          releases.sort((a, b) => a.date - b.date);
+
+          const rowsWithRanges = allRows.map(row => ({
+            ...row,
+            fromDate: row.dateFrom ? new Date(row.dateFrom) : null,
+            toDate: row.dateTo ? new Date(row.dateTo) : null,
+            allocatedPaid: 0,
+          }));
+
+          for (const release of releases) {
+            let allocated = false;
+            for (const row of rowsWithRanges) {
+              if (row.fromDate && row.toDate) {
+                if (release.date >= row.fromDate && release.date <= row.toDate) {
+                  row.allocatedPaid += release.amount;
+                  allocated = true;
+                  break;
+                }
+              } else if (row.fromDate && !row.toDate) {
+                if (release.date >= row.fromDate) {
+                  row.allocatedPaid += release.amount;
+                  allocated = true;
+                  break;
+                }
+              }
+            }
+            if (!allocated) {
+              const originalRow = rowsWithRanges.find(r => r === release.originalRow);
+              if (originalRow) originalRow.allocatedPaid += release.amount;
+            }
+          }
+
+          rowsWithAllocated = rowsWithRanges.map(row => ({
+            ...row,
+            paidAmountAllocated: row.allocatedPaid,
+            rebateBalanceAllocated: (row.rebateAmount || 0) - row.allocatedPaid,
+          }));
+        } else {
+          rowsWithAllocated = allRows.map(row => ({
+            ...row,
+            paidAmountAllocated: row.paidAmount || 0,
+            rebateBalanceAllocated: (row.rebateBalance !== undefined && row.rebateBalance !== null)
+              ? row.rebateBalance
+              : (row.rebateAmount || 0) - (row.paidAmount || 0),
+          }));
+        }
+
+        const finalRows = rowsWithAllocated.sort((a, b) => rowTs(b) - rowTs(a));
+
+        const rebateTypes = [...new Set(finalRows.map(r => r.rebateType).filter(Boolean))];
+        const agentList   = [...new Set(finalRows.map(r => r.agent).filter(Boolean))];
+        const newestTs = finalRows.reduce((max, r) => Math.max(max, rowTs(r)), 0);
+
+        return {
+          ...g,
+          rows: finalRows,
+          totalRebateAmount,
+          totalPaidAmount: totalOriginalPaid,
+          totalBalance,
+          rebateTypes,
+          agentDisplay: agentList.length === 1 ? agentList[0] : agentList.length > 1 ? "Multiple" : "—",
+          agentInitial: agentList.length === 1 ? agentList[0] : "M",
+          rebateCount: finalRows.length,
+          newestTs,
+        };
+      })
+      .sort((a, b) => b.newestTs - a.newestTs);
   }, [sortedRows]);
 
-  // ── Pagination at the group level ─────────────────────────────────────────
+  const filteredGroups = useMemo(() => {
+    if (selectedProgramStatus === "All") return customerGroups;
+    
+    return customerGroups
+      .map(group => {
+        let filteredRows = group.rows;
+        if (selectedProgramStatus === "Active") {
+          filteredRows = group.rows.filter(row => row.isActive === true);
+        } else if (selectedProgramStatus === "Inactive") {
+          filteredRows = group.rows.filter(row => row.isActive === false);
+        }
+        
+        if (filteredRows.length === 0) return null;
+        
+        const totalRebateAmount = filteredRows.reduce((s, r) => s + (r.rebateAmount || 0), 0);
+        const totalPaidAmount   = filteredRows.reduce((s, r) => s + (r.paidAmount || 0), 0);
+        const totalBalance      = Math.max(0, totalRebateAmount - totalPaidAmount);
+        
+        const rebateTypes = [...new Set(filteredRows.map(r => r.rebateType).filter(Boolean))];
+        const agentList   = [...new Set(filteredRows.map(r => r.agent).filter(Boolean))];
+        const newestTs    = filteredRows.reduce((max, r) => Math.max(max, rowTs(r)), 0);
+        const quarterlyRow = filteredRows.find(r => isQtr(r)) || null;
+        
+        return {
+          ...group,
+          rows: filteredRows,
+          totalRebateAmount,
+          totalPaidAmount,
+          totalBalance,
+          rebateTypes,
+          agentDisplay: agentList.length === 1 ? agentList[0] : agentList.length > 1 ? "Multiple" : "—",
+          agentInitial: agentList.length === 1 ? agentList[0] : "M",
+          rebateCount: filteredRows.length,
+          newestTs,
+          quarterlyRow,
+        };
+      })
+      .filter(g => g !== null)
+      .sort((a, b) => b.newestTs - a.newestTs);
+  }, [customerGroups, selectedProgramStatus]);
+
   const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(customerGroups.length / itemsPerCustomerPage)),
-    [customerGroups.length, itemsPerCustomerPage]
+    () => Math.max(1, Math.ceil(filteredGroups.length / itemsPerCustomerPage)),
+    [filteredGroups.length, itemsPerCustomerPage]
   );
-
   const paginatedGroups = useMemo(() => {
-    const start = (currentCustomerPage - 1) * itemsPerCustomerPage;
-    return customerGroups.slice(start, start + itemsPerCustomerPage);
-  }, [customerGroups, currentCustomerPage, itemsPerCustomerPage]);
-
-  const hasAnyQuarterly = useMemo(
-    () => paginatedGroups.some((g) => g.quarterlyRow !== null),
-    [paginatedGroups]
-  );
+    const s = (currentCustomerPage - 1) * itemsPerCustomerPage;
+    return filteredGroups.slice(s, s + itemsPerCustomerPage);
+  }, [filteredGroups, currentCustomerPage, itemsPerCustomerPage]);
+  
+  // Choose grid template based on showStatus
+  const rowStyle = {
+    display: "grid",
+    gridTemplateColumns: showStatus ? GRID_7 : GRID_6,
+    alignItems: "center",
+    width: "100%",
+    minWidth: 0,
+  };
 
   const handlePageChange = useCallback((page) => {
     if (page === currentCustomerPage) return;
@@ -289,648 +725,421 @@ const StatusSummary = ({
     setTimeout(() => setPageLoading(false), 80);
   }, [currentCustomerPage, setCurrentCustomerPage]);
 
-  const toggleExpand = useCallback((key) => {
-    setExpandedCustomers((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
+  const handleCustomerClick = (group) => {
+    setSelectedGroupForModal(group);
+  };
 
-  // ── Styles ────────────────────────────────────────────────────────────────
-  const textPrimaryClasses   = isDark ? "text-gray-100" : "text-gray-900";
-  const textSecondaryClasses = isDark ? "text-gray-400" : "text-gray-600";
-  const textMutedClasses     = isDark ? "text-gray-500" : "text-gray-500";
-  const containerClasses = `rounded-lg border shadow-sm ${isDark ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200"}`;
-  const headerClasses    = `flex justify-between items-center p-4 border-b ${isDark ? "border-gray-700" : "border-gray-100"}`;
-  const searchInputClasses = `pl-8 pr-3 py-2 border rounded-md text-xs w-56 outline-none transition-all duration-150 focus:border-blue-500 focus:ring-1 focus:ring-blue-100 font-medium ${
-    isDark
-      ? "bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-400 focus:ring-blue-900"
-      : "bg-white border-gray-300 text-gray-800 placeholder-gray-500"
-  }`;
-  const filterButtonClasses = `px-3 py-2 rounded-md border transition-all duration-150 flex items-center gap-1.5 font-medium text-xs ${
-    showFilters
-      ? "bg-blue-50 border-blue-300 text-blue-700"
-      : isDark
-        ? "bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600 hover:border-gray-500"
-        : "bg-white border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400"
-  }`;
-  const filterPopupClasses = `absolute top-full right-0 mt-1 w-80 rounded-md border shadow-lg z-50 p-4 ${
-    isDark ? "bg-gray-800 border-gray-700" : "bg-white border-gray-200"
-  }`;
-  const filterSelectClasses = `w-full px-3 py-2 border rounded-md text-xs outline-none transition-all duration-150 focus:border-blue-500 focus:ring-1 focus:ring-blue-100 font-medium ${
-    isDark ? "bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-900" : "bg-white border-gray-300"
-  }`;
-  const filterInputClasses = `w-full pl-6 pr-2 py-1.5 border rounded-md text-xs outline-none transition-all duration-150 focus:border-blue-500 focus:ring-1 focus:ring-blue-100 ${
-    isDark ? "bg-gray-700 border-gray-600 text-gray-100 focus:ring-blue-900" : "bg-white border-gray-300"
-  }`;
+  const handleSelectRebate = (row) => {
+    setSelectedGroupForModal(null);
+    onCustomerClick(row);
+  };
 
-  // Table header — always 7 cols (quarterly cols omitted at group level; shown inside expanded rows)
-const tableHeaderClasses = `px-4 py-2.5 items-center text-xs font-semibold border-b grid grid-cols-7 min-w-[700px] ${
-  hasAnyQuarterly ? "min-w-[860px]" : "min-w-[700px]"
-} ${isDark ? "bg-gray-900 border-gray-700 text-gray-300" : "bg-gray-50 border-gray-200 text-gray-700"}`;
+  const hasFilters =
+    selectedAgent !== "All" ||
+    selectedRebateType !== "All" ||
+    selectedProgressStatus !== "All" ||
+    selectedProgramStatus !== "All" || 
+    minRebateAmount !== "" ||
+    maxRebateAmount !== "" ||
+    statusSummaryPeriodFrom !== "" ||
+    statusSummaryPeriodTo !== "";
 
-  // ── Rebate-type badge ──────────────────────────────────────────────────────
-  const RebateTypeBadge = ({ type }) => (
-    <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold whitespace-nowrap border ${
-      type === "Fixed"
-        ? isDark ? "bg-blue-900/20 text-blue-300 border-blue-700/30"       : "bg-blue-100 text-blue-700 border-blue-200"
-        : type === "Incremental"
-        ? isDark ? "bg-purple-900/20 text-purple-300 border-purple-700/30" : "bg-purple-100 text-purple-700 border-purple-200"
-        : type === "Percentage"
-        ? isDark ? "bg-orange-900/20 text-orange-300 border-orange-700/30" : "bg-orange-100 text-orange-700 border-orange-200"
-        : isDark ? "bg-gray-700 text-gray-400 border-gray-600"             : "bg-gray-100 text-gray-700 border-gray-200"
-    }`}>
-      {type || "?"}
-    </span>
-  );
-
-  // ── Skeleton ───────────────────────────────────────────────────────────────
-  const LoadingSkeleton = () => (
-    <div className="animate-pulse">
-      {[...Array(5)].map((_, i) => (
-        <div key={i} className={`px-4 py-3 items-center grid grid-cols-7 border-b ${isDark ? "border-gray-700" : "border-gray-100"}`}>
-          <div className="col-span-2 flex items-center gap-2">
-            <div className={`w-6 h-6 rounded-md ${isDark ? "bg-gray-700" : "bg-gray-200"}`} />
-            <div className="flex-1 space-y-1">
-              <div className={`h-3 w-24 rounded ${isDark ? "bg-gray-700" : "bg-gray-200"}`} />
-              <div className={`h-2 w-16 rounded ${isDark ? "bg-gray-700" : "bg-gray-200"}`} />
-            </div>
-          </div>
-          {[...Array(5)].map((__, j) => (
-            <div key={j} className={`h-4 w-16 rounded ${isDark ? "bg-gray-700" : "bg-gray-200"}`} />
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-
-  // ── Expanded child row for a single rebate ────────────────────────────────
-  const RebateChildRow = ({ row, isLast }) => {
-    const isQtr = isQuarterlyCustomer(row);
-    const pct   = isQtr ? calculateProgressPercentage(row) : 0;
-    const eligibility = isQtr ? getEligibilityStatus(row, pct) : "N/A";
-    const statusText  = isQtr ? getProgressStatusText(row, pct) : "N/A";
-    const barColor    = isQtr ? getProgressBarColor(row, pct) : "";
-    const textColor   = isQtr ? getProgressTextColor(row, pct) : textMutedClasses;
-
+  // ── Sub-components ─────────────────────────────────────────────────────────
+  const RebateTypeBadge = ({ type }) => {
+    const map = {
+      Fixed:       isDark ? "bg-blue-900/30 text-blue-300 border-blue-700/40"       : "bg-blue-50 text-blue-700 border-blue-200",
+      Incremental: isDark ? "bg-violet-900/30 text-violet-300 border-violet-700/40" : "bg-violet-50 text-violet-700 border-violet-200",
+      Percentage:  isDark ? "bg-amber-900/30 text-amber-300 border-amber-700/40"    : "bg-amber-50 text-amber-700 border-amber-200",
+    };
     return (
-      <div className={`grid grid-cols-7 px-4 py-2 items-center text-xs ${hasAnyQuarterly ? "min-w-[860px]" : "min-w-[700px]"} transition-colors ${
-        isLast ? "" : `border-b ${isDark ? "border-gray-700/50" : "border-gray-100"}`
-      } ${isDark ? "bg-gray-700/20 hover:bg-gray-700/40" : "bg-gray-50/60 hover:bg-gray-50"}`}>
-
-        {/* Indent + rebate code */}
-        <div className="col-span-2 flex items-center gap-2 pl-8">
-          <div className={`w-1 h-8 rounded-full flex-shrink-0 ${
-            row.rebateType === "Fixed"       ? "bg-blue-400"
-            : row.rebateType === "Incremental" ? "bg-purple-400"
-            : row.rebateType === "Percentage"  ? "bg-orange-400"
-            : "bg-gray-400"
-          }`} />
-          <div className="min-w-0">
-            <div
-              className={`font-medium cursor-pointer hover:text-blue-500 truncate text-xs leading-tight transition-colors ${isDark ? "text-gray-300 hover:text-blue-400" : "text-gray-700"}`}
-              onClick={() => onCustomerClick(row)}
-              title={row.rebateCode || "—"}
-            >
-              {row.rebateCode || "—"}
-            </div>
-            {isQtr && (
-              <div className={`text-[9px] leading-tight mt-0.5 ${isDark ? "text-blue-400" : "text-blue-600"}`}>
-                Quarterly
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Agent — blank (already shown on parent) */}
-        <div />
-
-        {/* Rebate Type */}
-        <div className="flex justify-center">
-          <RebateTypeBadge type={row.rebateType} />
-        </div>
-
-        {/* Progress (quarterly only, else spacer × 2) */}
-        {hasAnyQuarterly ? (
-          <>
-            <div className="min-w-[95px]">
-              {isQtr ? (
-                <div className="space-y-1">
-                  <div className={`h-1.5 w-full rounded-full overflow-hidden ${isDark ? "bg-gray-700" : "bg-gray-200"}`}>
-                    <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className={`text-[10px] font-medium capitalize truncate ${textColor}`}>
-                      {statusText.length > 8 ? statusText.substring(0, 8) + "…" : statusText}
-                    </div>
-                    <span className={`text-[10px] font-bold px-1 py-0.5 rounded whitespace-nowrap min-w-[35px] text-center ${isDark ? "text-gray-300 bg-gray-700/50" : "text-gray-700 bg-gray-100"}`}>
-                      {pct}%
-                    </span>
-                  </div>
-                </div>
-              ) : <div />}
-            </div>
-            <div className="flex justify-center">
-              {isQtr ? (
-                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap border ${
-                  eligibility === "Eligible"
-                    ? isDark ? "bg-green-900/20 text-green-300 border-green-700/30"   : "bg-green-100 text-green-700 border-green-200"
-                    : eligibility === "Pending"
-                    ? isDark ? "bg-yellow-900/20 text-yellow-300 border-yellow-700/30" : "bg-yellow-100 text-yellow-700 border-yellow-200"
-                    : isDark ? "bg-gray-700 text-gray-400 border-gray-600" : "bg-gray-100 text-gray-600 border-gray-200"
-                }`}>
-                  {eligibility === "Eligible"
-                    ? <><CheckCircle size={9} /><span>Eligible</span></>
-                    : eligibility === "Pending"
-                    ? <><Activity size={9} /><span>Pending</span></>
-                    : <><XCircle size={9} /><span>Not</span></>}
-                </span>
-              ) : <div />}
-            </div>
-          </>
-        ) : null}
-
-        {/* Amount */}
-        <div className="text-center">
-          <span className={`font-semibold text-xs whitespace-nowrap truncate block px-1 ${textPrimaryClasses}`}>
-            ₱{(row.rebateAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </span>
-        </div>
-
-        {/* Released */}
-        <div className="text-center">
-          <span className={`font-semibold text-xs whitespace-nowrap truncate block px-1 ${isDark ? "text-white" : "text-black"}`}>
-            ₱{(row.paidAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </span>
-        </div>
-
-        {/* Balance */}
-        <div className="text-center">
-          <span className={`font-semibold text-xs whitespace-nowrap truncate block px-1 ${isDark ? "text-white" : "text-black"}`}>
-            ₱{(row.rebateBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </span>
-        </div>
-      </div>
+      <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold whitespace-nowrap border ${
+        map[type] || (isDark ? "bg-slate-700 text-slate-400 border-slate-600" : "bg-slate-100 text-slate-600 border-slate-200")
+      }`}>{type || "?"}</span>
     );
   };
 
-  // ── Group row (1 row per customer) ────────────────────────────────────────
-  const CustomerGroupRow = ({ group }) => {
-    const isExpanded   = expandedCustomers.has(group.key);
-    const isExpandable = group.rebateCount > 1;
-
+  const StatusBadge = ({ status }) => {
+    const colorClass = getStatusColor(status);
     return (
-      <>
-        {/* ── Group header ── */}
-<div
-  className={`px-4 py-3 items-center text-xs grid grid-cols-7 ${hasAnyQuarterly ? "min-w-[860px]" : "min-w-[700px]"} transition-all duration-150 ${
-    isDark ? "hover:bg-gray-700/50 border-gray-700" : "hover:bg-gray-50 border-gray-100"
-  } border-b`}
->
-          {/* Customer */}
-          <div className="col-span-2 min-w-[160px]">
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold whitespace-nowrap border ${colorClass}`}>
+        {status === "Eligible" && <CheckCircle size={9} />}
+        {status === "Progressing" && <Activity size={9} />}
+        {status === "Starting" && <div className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />}
+        {status}
+      </span>
+    );
+  };
+
+  const LoadingSkeleton = () => {
+    const numCols = showStatus ? 7 : 6;
+    return (
+      <div className="animate-pulse">
+        {[...Array(5)].map((_, i) => (
+          <div key={i} style={rowStyle} className={`px-4 py-3 border-b ${isDark ? "border-slate-700" : "border-slate-100"}`}>
             <div className="flex items-center gap-2">
-              {/* Expand toggle */}
-              <button
-                onClick={() => isExpandable && toggleExpand(group.key)}
-                className={`flex-shrink-0 transition-colors rounded ${
-                  isExpandable
-                    ? isDark ? "text-gray-400 hover:text-gray-200 hover:bg-gray-700" : "text-gray-400 hover:text-gray-700 hover:bg-gray-200"
-                    : "text-transparent cursor-default"
-                } p-0.5`}
-                aria-label={isExpanded ? "Collapse" : "Expand"}
-              >
-                {isExpanded
-                  ? <ChevronDown size={13} />
-                  : <ChevronRight size={13} />}
-              </button>
-
-              {/* Avatar */}
-              <div
-                className={`w-7 h-7 rounded-md flex items-center justify-center font-bold text-[11px] shadow-sm flex-shrink-0 ${
-                  isDark ? "bg-blue-900 text-blue-300" : group.color ? "" : "bg-blue-500 text-white"
-                }`}
-                style={!isDark && group.color ? { backgroundColor: group.color, color: "white" } : {}}
-              >
-                {group.customer?.charAt(0).toUpperCase() || "?"}
-              </div>
-
-              <div className="min-w-0 flex-1">
-                <div
-                  className={`font-semibold cursor-pointer hover:text-blue-600 truncate transition-colors text-xs leading-tight ${isDark ? "text-gray-100 hover:text-blue-400" : "text-gray-900"}`}
-                  onClick={() => onCustomerClick(group.rows[0])}
-                  title={group.customer || "Unknown Customer"}
-                >
-                  {group.customer || "Unknown Customer"}
-                </div>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <div className={`text-[10px] truncate leading-tight ${textSecondaryClasses}`} title={group.code}>
-                    {group.code || "No Code"}
-                  </div>
-                  {/* Rebate count badge */}
-                  {group.rebateCount > 1 && (
-                    <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-semibold border ${
-                      isDark ? "bg-gray-700 text-gray-300 border-gray-600" : "bg-gray-100 text-gray-600 border-gray-200"
-                    }`}>
-                      <Layers size={8} />
-                      {group.rebateCount}
-                    </span>
-                  )}
-                </div>
+              <div className={`w-7 h-7 rounded-md flex-shrink-0 ${isDark ? "bg-slate-700" : "bg-slate-200"}`} />
+              <div className="flex-1 space-y-1 min-w-0">
+                <div className={`h-3 w-20 rounded ${isDark ? "bg-slate-700" : "bg-slate-200"}`} />
+                <div className={`h-2 w-14 rounded ${isDark ? "bg-slate-700" : "bg-slate-200"}`} />
               </div>
             </div>
-          </div>
-
-          {/* Agent */}
-          <div className="min-w-[85px]">
-            <div className="flex items-center gap-2">
-              <div className={`w-6 h-6 rounded-md flex items-center justify-center font-bold text-[11px] ${
-                isDark
-                  ? "bg-gradient-to-br from-blue-900/40 to-indigo-900/40 border border-blue-800/30 text-blue-300"
-                  : "bg-gradient-to-br from-orange-400 to-red-500 text-white"
-              }`}>
-                {group.agentInitial?.charAt(0).toUpperCase() || "?"}
-              </div>
-              <div className={`font-medium truncate text-xs leading-tight ${textPrimaryClasses}`} title={group.agentDisplay}>
-                {group.agentDisplay}
-              </div>
-            </div>
-          </div>
-
-          {/* Rebate type(s) */}
-          <div className="min-w-[70px] flex justify-center">
-            {group.rebateTypes.length === 1 ? (
-              <RebateTypeBadge type={group.rebateTypes[0]} />
-            ) : group.rebateTypes.length > 1 ? (
-              <div className="flex flex-wrap gap-0.5 justify-center">
-                {group.rebateTypes.slice(0, 2).map((t) => (
-                  <RebateTypeBadge key={t} type={t} />
-                ))}
-                {group.rebateTypes.length > 2 && (
-                  <span className={`px-1 py-0.5 rounded text-[9px] font-semibold border ${
-                    isDark ? "bg-gray-700 text-gray-400 border-gray-600" : "bg-gray-100 text-gray-500 border-gray-200"
-                  }`}>+{group.rebateTypes.length - 2}</span>
-                )}
-              </div>
-            ) : <span className={textMutedClasses}>—</span>}
-          </div>
-
-          {/* Quarterly summary columns (spacers when multi-rebate) */}
-          {hasAnyQuarterly && (
-            <>
-              <div className="min-w-[95px]">
-                {group.quarterlyRow && group.rebateCount === 1 ? (() => {
-                  const pct = calculateProgressPercentage(group.quarterlyRow);
-                  const barColor = getProgressBarColor(group.quarterlyRow, pct);
-                  const textColor = getProgressTextColor(group.quarterlyRow, pct);
-                  const statusText = getProgressStatusText(group.quarterlyRow, pct);
-                  return (
-                    <div className="space-y-1">
-                      <div className={`h-1.5 w-full rounded-full overflow-hidden ${isDark ? "bg-gray-700" : "bg-gray-200"}`}>
-                        <div className={`h-full rounded-full transition-all duration-500 ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
-                      </div>
-                      <div className="flex items-center justify-between gap-2">
-                        <div className={`text-[10px] font-medium capitalize truncate ${textColor}`}>
-                          {statusText.length > 8 ? statusText.substring(0, 8) + "…" : statusText}
-                        </div>
-                        <span className={`text-[10px] font-bold px-1 py-0.5 rounded whitespace-nowrap min-w-[35px] text-center ${isDark ? "text-gray-300 bg-gray-700/50" : "text-gray-700 bg-gray-100"}`}>
-                          {pct}%
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })() : group.rebateCount > 1 && group.quarterlyRow ? (
-                  <span className={`text-[10px] italic ${textMutedClasses}`}>See rows ↓</span>
-                ) : <div />}
-              </div>
-              <div className="flex justify-center">
-                {group.quarterlyRow && group.rebateCount === 1 ? (() => {
-                  const pct = calculateProgressPercentage(group.quarterlyRow);
-                  const eligibility = getEligibilityStatus(group.quarterlyRow, pct);
-                  return (
-                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap border ${
-                      eligibility === "Eligible"
-                        ? isDark ? "bg-green-900/20 text-green-300 border-green-700/30"   : "bg-green-100 text-green-700 border-green-200"
-                        : eligibility === "Pending"
-                        ? isDark ? "bg-yellow-900/20 text-yellow-300 border-yellow-700/30" : "bg-yellow-100 text-yellow-700 border-yellow-200"
-                        : isDark ? "bg-gray-700 text-gray-400 border-gray-600" : "bg-gray-100 text-gray-600 border-gray-200"
-                    }`}>
-                      {eligibility === "Eligible"
-                        ? <><CheckCircle size={9} /><span>Eligible</span></>
-                        : eligibility === "Pending"
-                        ? <><Activity size={9} /><span>Pending</span></>
-                        : <><XCircle size={9} /><span>Not</span></>}
-                    </span>
-                  );
-                })() : <div />}
-              </div>
-            </>
-          )}
-
-          {/* Aggregated Amount */}
-          <div className="min-w-[80px] text-center">
-            <span className={`font-bold text-xs whitespace-nowrap truncate block px-1 transition-colors duration-300 ${textPrimaryClasses}`}>
-              ₱{group.totalRebateAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-            {group.rebateCount > 1 && (
-              <div className={`text-[9px] ${textMutedClasses}`}>combined</div>
-            )}
-          </div>
-
-          {/* Aggregated Released */}
-          <div className="min-w-[75px] text-center">
-            <span className={`font-bold text-xs whitespace-nowrap truncate block px-1 transition-colors duration-300 ${isDark ? "text-white" : "text-black"}`}>
-              ₱{group.totalPaidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-          </div>
-
-          {/* Aggregated Balance */}
-          <div className="min-w-[75px] text-center">
-            <span className={`font-bold text-xs whitespace-nowrap truncate block px-1 transition-colors duration-300 ${isDark ? "text-white" : "text-black"}`}>
-              ₱{group.totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-          </div>
-        </div>
-
-        {/* ── Expanded child rows ── */}
-        {isExpanded && isExpandable && (
-          <div className={`${isDark ? "bg-gray-800/60" : "bg-gray-50/40"}`}>
-            {group.rows.map((row, i) => (
-              <RebateChildRow
-                key={`${row.code}-${row.rebateCode}-${i}`}
-                row={row}
-                isLast={i === group.rows.length - 1}
-              />
+            {[...Array(numCols - 1)].map((__, j) => (
+              <div key={j} className={`h-4 w-14 rounded mx-auto ${isDark ? "bg-slate-700" : "bg-slate-200"}`} />
             ))}
           </div>
-        )}
-      </>
+        ))}
+      </div>
     );
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
-  return (
-    <div className={containerClasses} style={{ overflowX: 'auto' }}>
-      {/* ── Header ── */}
-      <div className={headerClasses}>
-        <div className="flex items-center gap-3">
-          <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${
-            isDark
-              ? "bg-gradient-to-br from-green-900/40 to-emerald-900/40 border border-green-800/30"
-              : "bg-gradient-to-br from-green-100 to-emerald-100 border border-green-200"
-          }`}>
-            <Activity size={18} className={isDark ? "text-green-300" : "text-green-600"} />
+  // Get the latest rebate row for a group (by rowTs) and compute its status
+  const getLatestStatusForGroup = (group) => {
+    if (!group.rows || group.rows.length === 0) return null;
+    const latestRow = group.rows.reduce((prev, curr) => {
+      return rowTs(curr) > rowTs(prev) ? curr : prev;
+    }, group.rows[0]);
+    if (!latestRow) return null;
+    return getSimplifiedStatus(latestRow);
+  };
+
+  // ── Group row (summary, no expand) ────────────────────────────────────
+  const CustomerGroupRow = ({ group }) => {
+    const latestStatus = getLatestStatusForGroup(group);
+    return (
+      <div
+        style={rowStyle}
+        className={`px-4 py-3 text-xs transition-all duration-150 border-b cursor-pointer ${T.row} ${isDark ? "border-slate-700" : "border-slate-100"}`}
+        onClick={() => handleCustomerClick(group)}
+      >
+        {/* Customer */}
+        <div className="flex items-center gap-2 min-w-0">
+          <div
+            className={`w-7 h-7 rounded-md flex items-center justify-center font-bold text-[11px] shadow-sm flex-shrink-0 ${
+              isDark ? "bg-blue-900/40 text-blue-300" : "bg-blue-500 text-white"
+            }`}
+            style={!isDark && group.color ? { backgroundColor: group.color, color: "white" } : {}}
+          >
+            {group.customer?.charAt(0).toUpperCase() || "?"}
           </div>
-          <div>
-            <h2 className={`text-lg font-semibold ${textPrimaryClasses}`}>Status Summary</h2>
-            <div className="flex items-center gap-2 mt-0.5">
-              <p className={`text-xs ${textSecondaryClasses}`}>
-                Rebate eligibility and status
-                {customerGroups.length > 0 && (
-                  <span className={`ml-2 font-medium ${isDark ? "text-blue-400" : "text-blue-600"}`}>
-                    · {customerGroups.length} customer{customerGroups.length !== 1 ? "s" : ""}
+          <div className="min-w-0 flex-1">
+            <div className={`font-semibold truncate text-xs leading-tight ${T.textPrimary}`} title={group.customer || "Unknown Customer"}>
+              {group.customer || "Unknown Customer"}
+            </div>
+            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+              <span className={`text-[10px] truncate ${T.textSecondary}`}>{group.code || "No Code"}</span>
+              {group.rebateCount > 1 && (
+                <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-semibold border flex-shrink-0 ${
+                  isDark ? "bg-slate-700 text-slate-300 border-slate-600" : "bg-slate-100 text-slate-600 border-slate-200"
+                }`}><Layers size={8}/>{group.rebateCount}</span>
+              )}
+              {(() => {
+                const hasActive = group.rows.some(r => r.isActive === true);
+                const hasInactive = group.rows.some(r => r.isActive === false);
+                let status = 'Unknown';
+                let colorClass = '';
+
+                if (hasActive && !hasInactive) {
+                  status = 'Active';
+                  colorClass = isDark
+                    ? 'bg-emerald-900/30 text-emerald-400 border-emerald-700/40'
+                    : 'bg-emerald-50 text-emerald-700 border-emerald-200';
+                } else if (!hasActive && hasInactive) {
+                  status = 'Inactive';
+                  colorClass = isDark
+                    ? 'bg-slate-700 text-slate-400 border-slate-600'
+                    : 'bg-slate-100 text-slate-500 border-slate-200';
+                } else if (hasActive && hasInactive) {
+                  status = 'Mixed';
+                  colorClass = isDark
+                    ? 'bg-amber-900/30 text-amber-400 border-amber-700/40'
+                    : 'bg-amber-50 text-amber-700 border-amber-200';
+                } else {
+                  status = 'Inactive';
+                  colorClass = isDark
+                    ? 'bg-slate-700 text-slate-400 border-slate-600'
+                    : 'bg-slate-100 text-slate-500 border-slate-200';
+                }
+
+                return (
+                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-semibold border ${colorClass}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                      status === 'Active' ? 'bg-emerald-500' : status === 'Inactive' ? 'bg-slate-400' : 'bg-amber-500'
+                    }`} />
+                    {status}
                   </span>
-                )}
-              </p>
+                );
+              })()}
             </div>
           </div>
         </div>
+        {/* Agent */}
+        <div className="flex items-center gap-2 min-w-0">
+          <div className={`w-6 h-6 rounded-md flex items-center justify-center font-bold text-[11px] flex-shrink-0 ${
+            isDark ? "bg-gradient-to-br from-blue-900/40 to-indigo-900/40 border border-blue-800/30 text-blue-300"
+            : "bg-gradient-to-br from-orange-400 to-red-500 text-white"
+          }`}>
+            {group.agentInitial?.charAt(0).toUpperCase() || "?"}
+          </div>
+          <span className={`font-medium truncate text-xs ${T.textPrimary}`} title={group.agentDisplay}>{group.agentDisplay}</span>
+        </div>
+        {/* Type */}
+        <div className="flex justify-center">
+          {group.rebateTypes.length === 1 ? (
+            <RebateTypeBadge type={group.rebateTypes[0]} />
+          ) : group.rebateTypes.length > 1 ? (
+            <div className="flex flex-wrap gap-0.5 justify-center">
+              {group.rebateTypes.slice(0, 2).map(t => <RebateTypeBadge key={t} type={t} />)}
+              {group.rebateTypes.length > 2 && (
+                <span className={`px-1 py-0.5 rounded text-[9px] font-semibold border ${isDark ? "bg-slate-700 text-slate-400 border-slate-600" : "bg-slate-100 text-slate-500 border-slate-200"}`}>
+                  +{group.rebateTypes.length - 2}
+                </span>
+              )}
+            </div>
+          ) : <span className={T.textMuted}>—</span>}
+        </div>
+        {/* Status column - only if showStatus is true */}
+        {showStatus && (
+          <div className="flex justify-center">
+            {latestStatus ? <StatusBadge status={latestStatus} /> : <span className={T.textMuted}>—</span>}
+          </div>
+        )}
+        {/* Amount */}
+        <div className="text-center overflow-hidden">
+          <span className={`font-bold text-xs block truncate px-1 ${T.textPrimary}`}>{fmt(group.totalRebateAmount)}</span>
+        </div>
+        {/* Released */}
+        <div className="text-center overflow-hidden">
+          <span className={`font-bold text-xs block truncate px-1 ${T.textPrimary}`}>{fmt(group.totalPaidAmount)}</span>
+        </div>
+        {/* Balance */}
+        <div className="text-center overflow-hidden">
+          <span className={`font-bold text-xs block truncate px-1 ${
+            group.totalBalance < 0
+              ? isDark ? 'text-red-400' : 'text-red-600'
+              : T.textPrimary
+          }`}>
+            {fmt(group.totalBalance)}
+          </span>
+        </div>
+      </div>
+    );
+  };
 
-        <div className="flex gap-2 items-center">
-          {/* Search */}
+  // ─── Render ────────────────────────────────────────────────────────────────
+  return (
+    <div
+      className={`rounded-xl border shadow-sm overflow-visible font-sans mb-6 ${T.root}`}
+      style={{ minWidth: 0, width: "100%" }}
+    >
+      {/* Toolbar */}
+      <div className={`flex flex-wrap gap-2 items-center justify-between px-4 py-3 border-b rounded-t-xl ${T.headerBg}`}>
+        <div className="flex items-center gap-2.5">
+          <div className={`w-8 h-8 rounded-lg flex items-center justify-center shadow ${
+            isDark
+              ? "bg-gradient-to-br from-emerald-900/60 to-teal-900/60 border border-emerald-800/40"
+              : "bg-gradient-to-br from-emerald-500 to-teal-600"
+          }`}>
+            <Activity size={15} className="text-white" />
+          </div>
+          <div>
+            <h1 className={`text-sm font-bold leading-none ${T.textPrimary}`}>Status Summary</h1>
+            <p className={`text-[10px] mt-0.5 ${T.textSecondary}`}>
+              {filteredGroups.length} customer{filteredGroups.length !== 1 ? "s" : ""} · {sortedRows.length} rebate{sortedRows.length !== 1 ? "s" : ""}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
           <div className="relative">
-            <Search size={12} className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${textMutedClasses}`} />
+            <Search size={13} className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${T.textMuted}`} />
             <input
               type="text"
-              placeholder="Search customers..."
+              placeholder="Search customers…"
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className={searchInputClasses}
+              onChange={e => { setSearchTerm(e.target.value); setCurrentCustomerPage(1); }}
+              className={`pl-8 pr-7 py-1.5 text-xs border rounded-lg outline-none transition-all focus:ring-2 w-52 ${T.input}`}
             />
-          </div>
-
-          {/* Filter button */}
-          <div className="relative">
-            <button ref={filterButtonRef} onClick={() => setShowFilters(!showFilters)} className={filterButtonClasses}>
-              <Filter size={12} /> Filters
-            </button>
-            {showFilters && (
-              <div ref={filterRef} className={filterPopupClasses}>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className={`text-xs font-semibold ${textPrimaryClasses}`}>Filter Customers</h3>
-                  <button onClick={() => setShowFilters(false)} className={`p-0.5 rounded transition-colors ${isDark ? "hover:bg-gray-700" : "hover:bg-gray-100"}`}>
-                    <X size={14} className={textSecondaryClasses} />
-                  </button>
-                </div>
-                <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                  <div>
-                    <label className={`text-xs font-medium ${textSecondaryClasses} mb-1 block uppercase tracking-wider`}>Sales Agent</label>
-                    <select value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)} className={filterSelectClasses}>
-                      <option value="All">All Sales Agents</option>
-                      {agents.map((a) => <option key={a} value={a}>{a}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={`text-xs font-medium ${textSecondaryClasses} mb-1 block uppercase tracking-wider`}>Rebate Type</label>
-                    <select value={selectedRebateType} onChange={(e) => setSelectedRebateType(e.target.value)} className={filterSelectClasses}>
-                      <option value="All">All Types</option>
-                      <option value="Fixed">Fixed Amount</option>
-                      <option value="Incremental">Incremental</option>
-                      <option value="Percentage">Percentage</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={`text-xs font-medium ${textSecondaryClasses} mb-1 block uppercase tracking-wider`}>Progress Status</label>
-                    <select value={selectedProgressStatus} onChange={(e) => setSelectedProgressStatus(e.target.value)} className={filterSelectClasses}>
-                      <option value="All">All Status</option>
-                      <option value="Starting">Starting</option>
-                      <option value="On Track">On Track</option>
-                      <option value="Met Quota">Met Quota</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={`text-xs font-medium ${textSecondaryClasses} mb-1 block uppercase tracking-wider`}>Rebate Amount Range</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className={`text-xs ${textSecondaryClasses} mb-1 block`}>Min</label>
-                        <div className="relative">
-                          <span className={`absolute left-2 top-1/2 -translate-y-1/2 text-xs ${textMutedClasses}`}>₱</span>
-                          <input type="number" placeholder="0" value={minRebateAmount} onChange={(e) => setMinRebateAmount(e.target.value)} className={filterInputClasses} />
-                        </div>
-                      </div>
-                      <div>
-                        <label className={`text-xs ${textSecondaryClasses} mb-1 block`}>Max</label>
-                        <div className="relative">
-                          <span className={`absolute left-2 top-1/2 -translate-y-1/2 text-xs ${textMutedClasses}`}>₱</span>
-                          <input type="number" placeholder="Any" value={maxRebateAmount} onChange={(e) => setMaxRebateAmount(e.target.value)} className={filterInputClasses} />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <label className={`text-xs font-medium ${textSecondaryClasses} mb-1 block uppercase tracking-wider`}>Period Range</label>
-                    <div className="space-y-1.5">
-                      <div>
-                        <label className={`text-xs ${textSecondaryClasses} mb-1 block`}>From</label>
-                        <input type="date" value={statusSummaryPeriodFrom} onChange={(e) => setStatusSummaryPeriodFrom(e.target.value)} className={`${filterInputClasses} pl-2`} />
-                      </div>
-                      <div>
-                        <label className={`text-xs ${textSecondaryClasses} mb-1 block`}>To</label>
-                        <input type="date" value={statusSummaryPeriodTo} onChange={(e) => setStatusSummaryPeriodTo(e.target.value)} className={`${filterInputClasses} pl-2`} />
-                      </div>
-                    </div>
-                  </div>
-                  <div className={`flex gap-1.5 pt-2 border-t ${isDark ? "border-gray-700" : "border-gray-200"}`}>
-                    <button onClick={onClearFilters} className={`flex-1 px-2.5 py-1.5 rounded transition-colors text-xs font-medium border ${isDark ? "bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600" : "bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200"}`}>
-                      Clear All
-                    </button>
-                    <button onClick={onApplyFilters} className={`flex-1 px-2.5 py-1.5 rounded transition-colors text-xs font-medium ${isDark ? "bg-blue-900/40 text-blue-300 border border-blue-700/30 hover:bg-blue-900/60" : "bg-blue-600 text-white hover:bg-blue-700"}`}>
-                      Apply Filters
-                    </button>
-                  </div>
-                </div>
-              </div>
+            {searchTerm && (
+              <button
+                onClick={() => { setSearchTerm(""); setCurrentCustomerPage(1); }}
+                className={`absolute right-2 top-1/2 -translate-y-1/2 ${T.textMuted} hover:text-red-500 transition-colors`}
+              >
+                <X size={11} />
+              </button>
             )}
           </div>
+          <button
+            ref={filterBtnRef}
+            onClick={() => setShowFilters(v => !v)}
+            className={`px-2.5 py-1.5 text-xs border rounded-lg flex items-center gap-1.5 font-medium transition-all ${
+              showFilters ? "bg-blue-50 border-blue-300 text-blue-700" : T.btn
+            }`}
+          >
+            <Filter size={12} />
+            Filters
+            {hasFilters && <span className="w-2 h-2 rounded-full bg-blue-500" />}
+          </button>
         </div>
       </div>
 
-      {/* ── Silent fetch error banner ── */}
+      {/* Filter panel portal */}
+      {showFilters && (
+        <FilterPanel
+          isDark={isDark} T={T}
+          agents={agents}
+          selectedAgent={selectedAgent} setSelectedAgent={setSelectedAgent}
+          selectedRebateType={selectedRebateType} setSelectedRebateType={setSelectedRebateType}
+          selectedProgressStatus={selectedProgressStatus} setSelectedProgressStatus={setSelectedProgressStatus}
+          minRebateAmount={minRebateAmount} setMinRebateAmount={setMinRebateAmount}
+          maxRebateAmount={maxRebateAmount} setMaxRebateAmount={setMaxRebateAmount}
+          statusSummaryPeriodFrom={statusSummaryPeriodFrom} setStatusSummaryPeriodFrom={setStatusSummaryPeriodFrom}
+          statusSummaryPeriodTo={statusSummaryPeriodTo} setStatusSummaryPeriodTo={setStatusSummaryPeriodTo}
+          onClearFilters={onClearFilters} onApplyFilters={onApplyFilters}
+          setCurrentCustomerPage={setCurrentCustomerPage}
+          onClose={() => setShowFilters(false)}
+          anchorRef={filterBtnRef}
+          selectedProgramStatus={selectedProgramStatus}
+          setSelectedProgramStatus={setSelectedProgramStatus}
+        />
+      )}
+
+      {/* Fetch error banner */}
       {fetchError && (
         <div className={`px-4 py-2 text-xs flex items-center gap-2 border-b ${
           isDark ? "bg-red-900/20 border-red-800/30 text-red-400" : "bg-red-50 border-red-200 text-red-600"
         }`}>
           <WifiOff size={12} />
-          <span>Auto-refresh failed: {fetchError}. Will retry in {countdown}s.</span>
+          <span>Auto-refresh failed: {fetchError}. Retry in {countdown}s.</span>
           <button onClick={manualRefresh} className="ml-auto underline font-medium">Retry now</button>
         </div>
       )}
 
-      {/* ── Progress Legend ── */}
-      {hasAnyQuarterly && (
-        <div className={`px-4 py-2.5 border-b ${isDark ? "border-gray-700 bg-gray-800" : "border-gray-100 bg-white"}`}>
-          <div className="flex items-center gap-3">
-            <span className={`text-xs font-medium ${textSecondaryClasses}`}>Progress:</span>
-            {[["bg-green-500", "Eligible"], ["bg-yellow-500", "Pending"], ["bg-red-500", "Not Eligible"]].map(([cls, label]) => (
-              <div key={label} className="flex items-center gap-1.5">
-                <div className={`w-2.5 h-2.5 rounded-full ${cls}`} />
-                <span className={`text-xs ${textSecondaryClasses}`}>{label}</span>
-              </div>
-            ))}
-            <div className={`ml-auto flex items-center gap-1 text-[10px] ${textMutedClasses}`}>
-              <ChevronRight size={10} />
-              <span>Click the arrow to expand multiple rebates per customer</span>
+      {/* Table header */}
+      <div
+        style={rowStyle}
+        className={`px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest border-b ${T.thead}`}
+      >
+        <div className="flex items-center gap-1.5 pl-0">
+          <User size={10} className={T.textMuted}/><span className={T.textSecondary}>Customer</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <UserCheck size={10} className={T.textMuted}/><span className={T.textSecondary}>Agent</span>
+        </div>
+        <div className="flex items-center gap-1.5 justify-center">
+          <Tag size={10} className={T.textMuted}/><span className={T.textSecondary}>Type</span>
+        </div>
+        {showStatus && (
+          <div className="flex items-center gap-1.5 justify-center">
+            <TrendingUp size={10} className={T.textMuted}/><span className={T.textSecondary}>Status</span>
+          </div>
+        )}
+        <div className="flex items-center gap-1.5 justify-center">
+          <PhilippinePeso size={10} className={T.textMuted}/><span className={T.textSecondary}>Amount</span>
+        </div>
+        <div className="flex items-center gap-1.5 justify-center">
+          <CreditCard size={10} className={T.textMuted}/><span className={T.textSecondary}>Released</span>
+        </div>
+        <div className="flex items-center gap-1.5 justify-center">
+          <Wallet size={10} className={T.textMuted}/><span className={T.textSecondary}>Balance</span>
+        </div>
+        <div className="w-5" />
+      </div>
+
+      {/* Table body */}
+      <div
+        className={`divide-y ${T.divider} transition-opacity duration-150 ${pageLoading ? "opacity-50" : "opacity-100"}`}
+        style={{ overflowX: "auto", minWidth: 0 }}
+      >
+        {isLoading && paginatedGroups.length === 0 ? (
+          <LoadingSkeleton />
+        ) : paginatedGroups.length > 0 ? (
+          paginatedGroups.map(group => <CustomerGroupRow key={group.key} group={group} />)
+        ) : (
+          <div className={`py-16 px-4 text-center ${T.tableBg}`}>
+            <div className={`w-14 h-14 mx-auto rounded-xl flex items-center justify-center mb-4 ${isDark ? "bg-slate-800" : "bg-slate-100"}`}>
+              <Users size={22} className={T.textMuted} />
             </div>
+            <h3 className={`text-sm font-bold mb-1 ${T.textPrimary}`}>No Customers Found</h3>
+            <p className={`text-xs max-w-xs mx-auto ${T.textSecondary}`}>
+              No customers match your current search criteria.
+            </p>
+            {hasFilters && (
+              <button
+                onClick={() => { onClearFilters(); setCurrentCustomerPage(1); }}
+                className="mt-3 px-4 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Clear Filters
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Pagination */}
+      {customerGroups.length > 0 && (
+        <div className={`flex flex-wrap gap-2 items-center justify-between px-4 py-2.5 border-t rounded-b-xl ${T.headerBg}`}>
+          <p className={`text-[11px] ${T.textSecondary}`}>
+            Showing{" "}
+            <span className={`font-semibold ${T.textPrimary}`}>
+              {(currentCustomerPage - 1) * itemsPerCustomerPage + 1}–{Math.min(currentCustomerPage * itemsPerCustomerPage, filteredGroups.length)}
+            </span>{" "}
+            of{" "}
+            <span className={`font-semibold ${T.textPrimary}`}>{filteredGroups.length}</span>
+          </p>
+          <div className="flex items-center gap-1">
+            <PaginationButton
+              icon={ChevronsLeft}
+              onClick={() => handlePageChange(1)}
+              disabled={currentCustomerPage === 1 || pageLoading}
+              isDark={isDark}
+            />
+            <PaginationButton
+              icon={ChevronLeft}
+              onClick={() => handlePageChange(currentCustomerPage - 1)}
+              disabled={currentCustomerPage === 1 || pageLoading}
+              isDark={isDark}
+            />
+            {getPageNums(currentCustomerPage, totalPages).map((p, i) =>
+              p === "..." ? (
+                <span key={`e${i}`} className={`w-7 text-center text-xs ${T.textMuted}`}>…</span>
+              ) : (
+                <button
+                  key={p}
+                  onClick={() => handlePageChange(p)}
+                  disabled={pageLoading}
+                  className={`w-7 h-7 rounded text-xs font-medium transition-all ${
+                    currentCustomerPage === p
+                      ? "bg-blue-600 text-white shadow"
+                      : isDark ? "text-slate-300 hover:bg-slate-700" : "text-slate-600 hover:bg-slate-100"
+                  } ${pageLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+                >
+                  {p}
+                </button>
+              )
+            )}
+            <PaginationButton
+              icon={ChevronRight}
+              onClick={() => handlePageChange(currentCustomerPage + 1)}
+              disabled={currentCustomerPage === totalPages || pageLoading}
+              isDark={isDark}
+            />
+            <PaginationButton
+              icon={ChevronsRight}
+              onClick={() => handlePageChange(totalPages)}
+              disabled={currentCustomerPage === totalPages || pageLoading}
+              isDark={isDark}
+            />
           </div>
         </div>
       )}
 
-      {/* ── Table Header ── */}
-      <div className={tableHeaderClasses}>
-        <div className="col-span-2 min-w-[160px] flex items-center gap-1 pl-5">
-          <User size={10} className={textMutedClasses} /><span>Customer</span>
-        </div>
-        <div className="min-w-[85px] flex items-center gap-1">
-          <UserCheck size={10} className={textMutedClasses} /><span>Agent</span>
-        </div>
-        <div className="min-w-[70px] flex items-center gap-0.5 justify-center">
-          <Tag size={10} className={textMutedClasses} /><span>Type</span>
-        </div>
-        {hasAnyQuarterly && (
-          <>
-            <div className="min-w-[95px] flex items-center gap-1">
-              <TrendingUp size={10} className={textMutedClasses} /><span>Progress</span>
-            </div>
-            <div className="min-w-[65px] flex items-center gap-1 justify-center">
-              <Activity size={10} className={textMutedClasses} /><span>Status</span>
-            </div>
-          </>
-        )}
-        <div className="min-w-[80px] flex items-center gap-1 justify-center">
-          <PhilippinePeso size={10} className={textMutedClasses} /><span>Amount</span>
-        </div>
-        <div className="min-w-[75px] flex items-center gap-1 justify-center">
-          <CreditCard size={10} className={textMutedClasses} /><span>Released</span>
-        </div>
-        <div className="min-w-[75px] flex items-center gap-1 justify-center">
-          <Wallet size={10} className={textMutedClasses} /><span>Balance</span>
-        </div>
-      </div>
-
-      {/* ── Table Body ── */}
-      <div className={`divide-y ${isDark ? "divide-gray-700" : "divide-gray-100"} transition-opacity duration-150 ${pageLoading ? "opacity-50" : "opacity-100"}`}>
-        {isLoading && paginatedGroups.length === 0 ? (
-          <LoadingSkeleton />
-        ) : paginatedGroups.length > 0 ? (
-          paginatedGroups.map((group) => (
-            <CustomerGroupRow key={group.key} group={group} />
-          ))
-        ) : (
-          <div className={`py-12 px-4 text-center ${isDark ? "bg-gray-800" : "bg-white"}`}>
-            <div className={`w-16 h-16 mx-auto rounded-lg flex items-center justify-center mb-4 ${isDark ? "bg-gray-700" : "bg-gray-100"}`}>
-              <Users size={24} className={textMutedClasses} />
-            </div>
-            <h3 className={`text-sm font-semibold mb-1 ${textPrimaryClasses}`}>No Customers Found</h3>
-            <p className={`text-xs max-w-xs mx-auto ${textSecondaryClasses}`}>No customers match your current search criteria.</p>
-          </div>
-        )}
-      </div>
-
-      {/* ── Pagination ── */}
-      {customerGroups.length > 0 && (
-        <div className={`px-4 py-3 border-t rounded-b-lg flex justify-between items-center ${isDark ? "border-gray-700 bg-gray-800" : "border-gray-200 bg-white"}`}>
-          <div className={`text-xs ${textSecondaryClasses}`}>
-            Showing {(currentCustomerPage - 1) * itemsPerCustomerPage + 1} to{" "}
-            {Math.min(currentCustomerPage * itemsPerCustomerPage, customerGroups.length)} of{" "}
-            {customerGroups.length} customers
-            <span className={`ml-1.5 ${textMutedClasses}`}>
-              ({sortedRows.length} rebate{sortedRows.length !== 1 ? "s" : ""} total)
-            </span>
-          </div>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => handlePageChange(currentCustomerPage - 1)}
-              disabled={currentCustomerPage === 1 || pageLoading}
-              className={`px-2 py-1 rounded border text-xs font-medium transition-colors ${
-                currentCustomerPage === 1 || pageLoading
-                  ? isDark ? "text-gray-600 border-gray-700 cursor-not-allowed" : "text-gray-400 border-gray-200 cursor-not-allowed"
-                  : isDark ? "text-gray-300 border-gray-600 hover:bg-gray-700 hover:border-gray-500" : "text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400"
-              }`}
-            >Prev</button>
-            <div className="flex items-center gap-0.5">
-              {Array.from({ length: totalPages }, (_, i) => i + 1)
-                .filter(p => p === 1 || p === totalPages || (p >= currentCustomerPage - 1 && p <= currentCustomerPage + 1))
-                .map((page, idx, arr) => {
-                  if (idx > 0 && page - arr[idx - 1] > 1) {
-                    return <span key={`e-${page}`} className={`px-1.5 py-1 text-xs ${textMutedClasses}`}>…</span>;
-                  }
-                  return (
-                    <button
-                      key={page}
-                      onClick={() => handlePageChange(page)}
-                      disabled={pageLoading}
-                      className={`w-6 h-6 rounded text-xs font-medium transition-colors ${
-                        currentCustomerPage === page
-                          ? isDark ? "bg-blue-900/40 text-blue-300 border border-blue-700/30" : "bg-blue-600 text-white"
-                          : isDark ? "text-gray-300 hover:bg-gray-700" : "text-gray-700 hover:bg-gray-100"
-                      } ${pageLoading ? "opacity-50 cursor-not-allowed" : ""}`}
-                    >{page}</button>
-                  );
-                })}
-            </div>
-            <button
-              onClick={() => handlePageChange(currentCustomerPage + 1)}
-              disabled={currentCustomerPage === totalPages || pageLoading}
-              className={`px-2 py-1 rounded border text-xs font-medium transition-colors ${
-                currentCustomerPage === totalPages || pageLoading
-                  ? isDark ? "text-gray-600 border-gray-700 cursor-not-allowed" : "text-gray-400 border-gray-200 cursor-not-allowed"
-                  : isDark ? "text-gray-300 border-gray-600 hover:bg-gray-700 hover:border-gray-500" : "text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400"
-              }`}
-            >Next</button>
-          </div>
-        </div>
+      {/* Modal for rebate selection */}
+      {selectedGroupForModal && (
+        <RebateSelectionModal
+          isDark={isDark}
+          group={selectedGroupForModal}
+          onClose={() => setSelectedGroupForModal(null)}
+          onSelectRebate={handleSelectRebate}
+        />
       )}
     </div>
   );

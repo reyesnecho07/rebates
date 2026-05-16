@@ -14,6 +14,7 @@ import syncRoutes from './routes/syncRoutes.js';
 import vanrebateRoutes from './routes/Van_rebateRoutes.js';
 import vandashboardRoutes from './routes/Van_dashboardRoutes.js';
 import vanpayoutRoutes from './routes/Van_payoutRoutes.js';
+import vanReportRoutes from './routes/Van_reportRoutes.js';
 
 // NEXCHEM routes
 import nexchemrebateRoutes from './routes/Nexchem_rebateRoutes.js';
@@ -44,6 +45,10 @@ import navItemsGroupRoutes from './routes/navItemsGroupRoutes.js';
 
 import accessControlRoutes from './routes/accessControlRoutes.js';
 
+
+import vcpReportRoutes from './routes/Vcp_reportRoutes.js';
+
+
 // Import services and config
 import { initializePools } from './services/databaseService.js';
 import { initializeUserDb, testUserDbConnection } from './services/userService.js';
@@ -57,9 +62,9 @@ const app = express();
 
 app.use(cors({
   origin: [
-    'http://192.168.100.193:3007',
-    'http://localhost:3007',
-    'http://127.0.0.1:3007',
+    'http://192.168.100.193:3008',
+    'http://localhost:3008',
+    'http://127.0.0.1:3008',
   ],
   credentials: false,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -93,11 +98,13 @@ app.use('/api/van', vanRoutes);
 app.use('/api/vcp', vcpRoutes);
 app.use('/api', debugRoutes);
 app.use('/api/sync', syncRoutes);
+app.use('/api/vcp/report', vcpReportRoutes);
 
 // VAN endpoints
 app.use('/api', vanrebateRoutes);
 app.use('/api/van/dashboard', vandashboardRoutes);
 app.use('/api/van/payouts', vanpayoutRoutes);
+app.use('/api/van/report', vanReportRoutes);
 
 // NEXCHEM endpoints
 app.use('/api', nexchemrebateRoutes);

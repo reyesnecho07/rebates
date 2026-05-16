@@ -1,10 +1,8 @@
-// VcpTransactionRecords.jsx - Simplified version
+// VcpTransactionRecords.jsx
+import React, { useEffect } from 'react';
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FileText, ClipboardList } from 'lucide-react';
 
-import React from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useEffect, useState } from 'react';
-
-const VcpTransactionRecords = ({ 
+const VcpTransactionRecords = ({
   theme = 'light',
   customerModalTab,
   modalCustomer,
@@ -19,323 +17,223 @@ const VcpTransactionRecords = ({
   setPeriodFrom,
   setPeriodTo,
   loadDetailedTransactionsData,
-  isAutoLoading = false
+  isAutoLoading = false,
 }) => {
   const isDark = theme === 'dark';
 
-  // Helper function to check if Treetype is 'I' (Invoice)
-  const isInvoiceTransaction = (transaction) => {
-    // Check for Treetype in various possible property names
-    const treetype = transaction.Treetype || 
-                     transaction.treetype || 
-                     transaction.type;
-    
-    // If it's exactly 'I', it's an invoice transaction and should be italicized
-    return treetype === 'I';
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const isInvoice = (t) => {
+    const tt = t.Treetype || t.treetype || t.type;
+    return tt === 'I';
   };
 
-  // Sorting function to order transactions by date (earliest first)
-  const sortTransactionsByDate = (transactions) => {
-    if (!transactions || !Array.isArray(transactions)) return [];
-    
-    return [...transactions].sort((a, b) => {
-      const dateA = new Date(a.Date || a.transactionDate || a.date);
-      const dateB = new Date(b.Date || b.transactionDate || b.date);
-      
-      if (isNaN(dateA.getTime())) return 1;
-      if (isNaN(dateB.getTime())) return -1;
-      
-      return dateA - dateB;
+  const sortByDate = (arr) => {
+    if (!Array.isArray(arr)) return [];
+    return [...arr].sort((a, b) => {
+      const da = new Date(a.Date || a.transactionDate || a.date);
+      const db = new Date(b.Date || b.transactionDate || b.date);
+      if (isNaN(da)) return 1;
+      if (isNaN(db)) return -1;
+      return da - db;
     });
   };
 
-  // Create sorted transactions for display
-  const sortedTransactions = sortTransactionsByDate(filteredTransactions);
+  const fmtNum = (n) =>
+    (parseFloat(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
+  const fmtDate = (s) => {
+    if (!s) return '—';
+    try {
+      return new Date(s).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+    } catch { return s; }
+  };
+
+  // ── Auto-load dates ──────────────────────────────────────────────────────
   useEffect(() => {
     if (customerModalTab === 'transaction' && modalCustomer && !periodFrom) {
-      console.log('📅 Transaction tab activated - auto-loading dates...');
-      
       loadDetailedTransactionsData(true);
-      
-      const dateFrom = modalCustomer.details?.rebateDetails?.dateFrom || 
-                      modalCustomer.dateFrom || 
-                      modalCustomer.details?.dateRange?.periodFrom;
-      
-      const dateTo = modalCustomer.details?.rebateDetails?.dateTo || 
-                    modalCustomer.dateTo || 
-                    modalCustomer.details?.dateRange?.periodTo;
-      
-      if (dateFrom && dateTo) {
-        console.log('📅 Setting auto-loaded dates:', { dateFrom, dateTo });
-        setPeriodFrom(dateFrom);
-        setPeriodTo(dateTo);
+      const from = modalCustomer.details?.rebateDetails?.dateFrom || modalCustomer.dateFrom || modalCustomer.details?.dateRange?.periodFrom;
+      const to   = modalCustomer.details?.rebateDetails?.dateTo   || modalCustomer.dateTo   || modalCustomer.details?.dateRange?.periodTo;
+      if (from && to) {
+        setPeriodFrom(from);
+        setPeriodTo(to);
       } else {
-        const today = new Date();
-        const currentYear = today.getFullYear();
-        const currentMonth = today.getMonth();
-        
-        const quarterStartMonth = Math.floor(currentMonth / 3) * 3;
-        const quarterEndMonth = quarterStartMonth + 2;
-        
-        const quarterStartDate = new Date(currentYear, quarterStartMonth, 1);
-        const quarterEndDate = new Date(currentYear, quarterEndMonth + 1, 0);
-        
-        setPeriodFrom(quarterStartDate.toISOString().split('T')[0]);
-        setPeriodTo(quarterEndDate.toISOString().split('T')[0]);
-        
-        console.log('📅 Using default quarter dates:', {
-          from: quarterStartDate.toISOString().split('T')[0],
-          to: quarterEndDate.toISOString().split('T')[0]
-        });
+        const today  = new Date();
+        const qStart = Math.floor(today.getMonth() / 3) * 3;
+        const qEnd   = qStart + 2;
+        setPeriodFrom(new Date(today.getFullYear(), qStart, 1).toISOString().split('T')[0]);
+        setPeriodTo(new Date(today.getFullYear(), qEnd + 1, 0).toISOString().split('T')[0]);
       }
     }
   }, [customerModalTab, modalCustomer]);
-  
+
   if (customerModalTab !== 'transaction') return null;
-  
-  // Helper function to format decimal numbers
-  const formatDecimal = (num) => {
-    const number = parseFloat(num) || 0;
-    return number.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+  // ── Data ───────────────────────────────────────────────────────────────────
+  const sorted     = sortByDate(filteredTransactions);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / transactionRowsPerPage));
+  const safePage   = Math.min(transactionCurrentPage, totalPages);
+  const paginated  = sorted.slice((safePage - 1) * transactionRowsPerPage, safePage * transactionRowsPerPage);
+
+  const getPageNums = () => {
+    const total = totalPages, cur = safePage;
+    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+    if (cur <= 4)        return [1, 2, 3, 4, 5, '...', total];
+    if (cur >= total - 3) return [1, '...', total - 4, total - 3, total - 2, total - 1, total];
+    return [1, '...', cur - 1, cur, cur + 1, '...', total];
   };
 
-  // Helper function to format date
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: '2-digit',
-        year: 'numeric'
-      });
-    } catch (e) {
-      return dateString;
-    }
+  // ── Theme tokens ───────────────────────────────────────────────────────────
+  const T = {
+    bg:      isDark ? 'bg-slate-900'                     : 'bg-white',
+    header:  isDark ? 'bg-slate-800/80 border-slate-700' : 'bg-slate-50 border-slate-200',
+    thead:   isDark ? 'bg-slate-800/80 border-slate-700' : 'bg-slate-50 border-slate-200',
+    row:     isDark ? 'hover:bg-slate-800/60 border-slate-700/50' : 'hover:bg-slate-50 border-slate-100',
+    divider: isDark ? 'divide-slate-700'  : 'divide-slate-100',
+    footer:  isDark ? 'bg-slate-800 border-slate-700'    : 'bg-white border-slate-200',
+    select:  isDark ? 'bg-slate-700 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-700',
+    tp:      isDark ? 'text-slate-100'  : 'text-slate-800',
+    ts:      isDark ? 'text-slate-400'  : 'text-slate-500',
+    tm:      isDark ? 'text-slate-500'  : 'text-slate-400',
   };
 
-  // Styling classes
-  const headerClasses = `px-6 py-3 border-b ${
-    isDark ? 'border-gray-700' : 'border-gray-200'
-  } ${isDark ? 'bg-gradient-to-r from-gray-800 to-gray-900' : 'bg-gray-50'}`;
-
-  const titleClasses = `text-base font-bold ${
-    isDark ? 'text-gray-100' : 'text-gray-900'
-  }`;
-
-  const subtitleClasses = `text-xs ${
-    isDark ? 'text-gray-400' : 'text-gray-600'
-  }`;
-
-  const contentAreaClasses = `flex-1 overflow-auto ${
-    isDark ? 'bg-gray-800' : 'bg-white'
-  }`;
-
-  const footerClasses = `px-6 py-2 border-t ${
-    isDark ? 'border-gray-700 bg-gradient-to-r from-gray-800 to-gray-900' : 'border-gray-200 bg-gray-50'
-  }`;
-
-  const footerTextClasses = `text-xs ${
-    isDark ? 'text-gray-400' : 'text-gray-600'
-  }`;
-
-  const selectClasses = `border rounded px-2 py-1 text-xs ${
-    isDark 
-      ? 'bg-gray-700 border-gray-600 text-gray-100' 
-      : 'border-gray-300 text-gray-700'
-  }`;
-
-  const paginationButtonClasses = (isActive, isDisabled = false) => {
-    if (isDisabled) {
-      return `p-1 rounded transition-colors ${
-        isDark ? 'text-gray-600 cursor-not-allowed' : 'text-gray-400 cursor-not-allowed'
-      }`;
-    }
-    
-    if (isActive) {
-      return `px-2 py-0.5 text-xs rounded ${
-        isDark 
-          ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white' 
-          : 'bg-gradient-to-r from-blue-500 to-blue-600 text-white'
-      }`;
-    }
-    
-    return `px-2 py-0.5 text-xs rounded transition-colors ${
-      isDark 
-        ? 'text-gray-300 hover:bg-gray-700' 
-        : 'text-gray-700 hover:bg-gray-100'
-    }`;
-  };
-
-  const navButtonClasses = (isDisabled = false) => {
-    if (isDisabled) {
-      return `p-1 rounded transition-colors ${
-        isDark ? 'text-gray-600 cursor-not-allowed' : 'text-gray-400 cursor-not-allowed'
-      }`;
-    }
-    
-    return `p-1 rounded transition-colors ${
-      isDark 
-        ? 'text-gray-300 hover:bg-gray-700' 
-        : 'text-gray-700 hover:bg-gray-200'
-    }`;
-  };
-
-  const ellipsisClasses = `text-gray-400 mx-1`;
-
-  // Calculate pagination
-  const totalPages = Math.ceil(sortedTransactions.length / transactionRowsPerPage);
-  const paginatedTransactions = sortedTransactions.slice(
-    (transactionCurrentPage - 1) * transactionRowsPerPage,
-    transactionCurrentPage * transactionRowsPerPage
+  const PaginationBtn = ({ icon: Icon, onClick, disabled }) => (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`w-7 h-7 rounded flex items-center justify-center transition-all ${
+        disabled
+          ? isDark ? 'text-slate-600 cursor-not-allowed' : 'text-slate-300 cursor-not-allowed'
+          : isDark ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100'
+      }`}
+    >
+      <Icon size={14} />
+    </button>
   );
 
-  const getPaginationRange = () => {
-    const pages = [];
-    const maxVisiblePages = 5;
-    
-    if (totalPages <= maxVisiblePages) {
-      for (let i = 1; i <= totalPages; i++) {
-        pages.push(i);
-      }
-    } else {
-      if (transactionCurrentPage <= 3) {
-        pages.push(1, 2, 3, 4, '...', totalPages);
-      } else if (transactionCurrentPage >= totalPages - 2) {
-        pages.push(1, '...', totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
-      } else {
-        pages.push(1, '...', transactionCurrentPage - 1, transactionCurrentPage, transactionCurrentPage + 1, '...', totalPages);
-      }
-    }
-    
-    return pages;
-  };
-
-  // Render loading state
+  // ── Loading state ──────────────────────────────────────────────────────────
   if (isLoading) {
     return (
-      <div className="h-full flex flex-col">
-        <div className={headerClasses}>
-          <h4 className={titleClasses}>Transaction Records</h4>
-          <p className={subtitleClasses}>Loading transaction data from SAP...</p>
+      <div className={`h-full flex flex-col ${T.bg}`}>
+        <div className={`flex-shrink-0 px-5 py-3 border-b ${T.header}`}>
+          <h4 className={`text-xs font-bold uppercase tracking-widest ${T.tp}`}>Transaction Records</h4>
+          <p className={`text-[11px] mt-0.5 ${T.ts}`}>Loading transaction data from SAP…</p>
         </div>
-        <div className={`flex-1 flex items-center justify-center ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
-          <div className={`text-center ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-            <p>Fetching transaction data from SAP database...</p>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3">
+            <div className={`w-8 h-8 rounded-full border-4 border-t-transparent animate-spin ${isDark ? 'border-blue-400' : 'border-blue-500'}`} />
+            <p className={`text-xs ${T.ts}`}>Fetching from SAP database…</p>
           </div>
         </div>
       </div>
     );
   }
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className={headerClasses}>
-        <div className="flex items-center justify-between">
-          <div>
-            <h4 className={titleClasses}>Transaction Records</h4>
-            <p className={subtitleClasses}>
-              {modalCustomer?.rebateType === 'Fixed'
-                ? `SAP transactions for fixed rebate program`
-                : modalCustomer?.rebateType === 'Percentage'
-                ? `SAP transactions for percentage rebate program`
-                : `SAP transactions for incremental rebate program`}
-            </p>
-          </div>
+    <div className={`h-full flex flex-col ${T.bg}`}>
+
+      {/* ── Section header ──────────────────────────────────────────────── */}
+      <div className={`flex-shrink-0 px-5 py-3 border-b flex items-center justify-between ${T.header}`}>
+        <div>
+          <h4 className={`text-xs font-bold uppercase tracking-widest ${T.tp}`}>Transaction Records</h4>
+          <p className={`text-[11px] mt-0.5 ${T.ts}`}>
+            {modalCustomer?.rebateType === 'Fixed'
+              ? 'SAP transactions — fixed rebate program'
+              : modalCustomer?.rebateType === 'Percentage'
+              ? 'SAP transactions — percentage rebate program'
+              : 'SAP transactions — incremental rebate program'}
+          </p>
         </div>
+        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
+          isDark ? 'bg-slate-700 border-slate-600 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-600'
+        }`}>
+          {sorted.length} record{sorted.length !== 1 ? 's' : ''}
+        </span>
       </div>
-      
-      {/* Table Content */}
-      <div className={contentAreaClasses}>
-        {paginatedTransactions.length > 0 ? (
-          <table className="w-full text-xs">
-            <thead className={`sticky top-0 ${
-              isDark 
-                ? 'bg-gradient-to-r from-gray-800 to-gray-900' 
-                : 'bg-gray-50'
-            }`}>
-              <tr className={`font-semibold uppercase tracking-wider border-b ${
-                isDark 
-                  ? 'border-gray-700 text-gray-300' 
-                  : 'border-gray-200 text-gray-600'
-              }`}>
-                <th className="px-4 py-2 text-left">Date</th>
-                <th className="px-4 py-2 text-left">Item</th>
-                <th className="px-4 py-2 text-center">Act. Sales</th>
+
+      {/* ── Table ───────────────────────────────────────────────────────── */}
+      <div className="flex-1 overflow-auto">
+        {paginated.length > 0 ? (
+          <table className="w-full text-xs table-fixed">
+            <thead className={`sticky top-0 border-b ${T.thead}`}>
+              <tr>
+                <th className={`px-4 pl-6 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest whitespace-nowrap w-[80px] ${T.ts}`}>
+                  Date
+                </th>
+                <th className={`px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest w-[300px] ${T.ts}`}>
+                  Item
+                </th>
+                <th className={`px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest w-[80px] ${T.ts}`}>
+                  Qty
+                </th>
+                <th className={`px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest w-[80px] ${T.ts}`}>
+                  P. Value
+                </th>
               </tr>
             </thead>
-            <tbody className={`divide-y ${isDark ? 'divide-gray-700' : 'divide-gray-100'}`}>
-              {paginatedTransactions.map((transaction, index) => {
-                const globalIndex = (transactionCurrentPage - 1) * transactionRowsPerPage + index;
-                const itemName = transaction.Item || transaction.ItemName || 'N/A';
-                const itemCode = transaction.ItemCode || transaction.ItemCodeSAP || 'N/A';
-                const is25kgItem = transaction.Is25kgItem || itemName.toLowerCase().includes('25kg');
-                const displayItemName = is25kgItem ? `${itemName} (25kg)` : itemName;
-                
-                // Check if this is an invoice transaction (Treetype = 'I')
-                const isInvoice = isInvoiceTransaction(transaction);
-                
-                // Get Treetype for display
-                const treetype = transaction.Treetype || 
-                                transaction.treetype || 
-                                transaction.type || 
-                                'N/A';
-                
+            <tbody className={`divide-y ${T.divider}`}>
+              {paginated.map((t, i) => {
+                const inv         = isInvoice(t);
+                const itemName    = t.Item || t.ItemName || '—';
+                const itemCode    = t.ItemCode || t.ItemCodeSAP || '—';
+                const is25kg      = t.Is25kgItem || itemName.toLowerCase().includes('25kg');
+                const displayName = is25kg ? `${itemName} (25kg)` : itemName;
                 return (
-                  <tr 
-                    key={index} 
-                    className={`
-                      ${isDark ? 'hover:bg-gray-700/50' : 'hover:bg-gray-50'}
-                      ${isInvoice ? (
-                        isDark 
-                          ? 'italic text-gray-400' 
-                          : 'italic text-gray-500'
-                      ) : ''}
-                    `}
+                  <tr
+                    key={i}
+                    className={`transition-colors duration-100 border-b ${T.row} ${
+                      inv ? 'opacity-60 italic' : ''
+                    }`}
                   >
-                    {/* Date Column */}
-                    <td className="px-4 py-2">
-                      <div className={`font-medium ${
-                        isInvoice ? '' : (isDark ? 'text-gray-100' : 'text-gray-900')
+                    {/* Date */}
+                    <td className="px-4 pl-6 py-2.5 w-[120px] text-left">
+                      <span className={`font-medium tabular-nums whitespace-nowrap ${T.tp}`}>
+                        {fmtDate(t.Date)}
+                      </span>
+                    </td>
+                    {/* Item */}
+                    <td className="px-4 py-2.5 w-[160px] text-left">
+                      <div
+                        className={`font-medium ${T.tp}`}
+                        style={{
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                          wordBreak: 'break-word',
+                        }}
+                        title={displayName}
+                      >
+                        {displayName}
+                      </div>
+                      <div className={`text-[10px] font-mono mt-0.5 ${T.tm}`}>
+                        {itemCode}
+                      </div>
+                    </td>
+                    {/* Qty */}
+                    <td className="px-4 py-2.5 text-left w-[70px]">
+                      <span className={`inline-block px-2 py-0.5 rounded border font-semibold tabular-nums ${
+                        inv
+                          ? isDark
+                            ? 'bg-slate-800 text-slate-500 border-slate-700'
+                            : 'bg-slate-100 text-slate-400 border-slate-200'
+                          : isDark
+                            ? 'bg-blue-900/30 text-blue-300 border-blue-700/40'
+                            : 'bg-blue-50 text-blue-700 border-blue-200'
                       }`}>
-                        {formatDate(transaction.Date)}
-                      </div>
+                        {fmtNum(t.ActualSales)}
+                      </span>
                     </td>
-                    
-                    {/* Item Column (with Item Code and Treetype below) */}
-                    <td className="px-4 py-2">
-                      <div className="flex flex-col">
-                        <div className={`font-medium truncate ${
-                          isInvoice ? '' : (isDark ? 'text-gray-100' : 'text-gray-900')
-                        }`}>
-                          {displayItemName}
-                        </div>
-                        <div className={`text-[10px] font-mono flex items-center gap-1 ${
-                          isInvoice ? '' : (isDark ? 'text-gray-400' : 'text-gray-500')
-                        }`}>
-                          <span>{itemCode}</span>
-                        </div>
-                      </div>
-                    </td>
-                    
-                    {/* Actual Sales Column */}
-                    <td className="px-4 py-2 text-center">
-                      <div className="flex flex-col items-center">
-                        <span className={`inline-block px-2 py-0.5 font-medium rounded border ${
-                          isDark
-                            ? (isInvoice 
-                                ? 'bg-gray-800 text-gray-400 border-gray-700' 
-                                : 'bg-blue-900/30 text-blue-300 border-blue-700')
-                            : (isInvoice
-                                ? 'bg-gray-100 text-gray-500 border-gray-200'
-                                : 'bg-blue-50 text-blue-700 border-blue-100')
-                        }`}>
-                          {formatDecimal(transaction.ActualSales)}
-                        </span>
-                      </div>
+                    {/* P. Value */}
+                    <td className="px-4 py-2.5 text-left w-[100px]">
+                      <span className={`inline-block px-2 py-0.5 rounded border font-semibold tabular-nums ${
+                        isDark
+                          ? 'bg-slate-800 text-slate-300 border-slate-700'
+                          : 'bg-slate-50 text-slate-700 border-slate-200'
+                      }`}>
+                        {fmtNum(t.Gtotal)}
+                      </span>
                     </td>
                   </tr>
                 );
@@ -343,77 +241,71 @@ const VcpTransactionRecords = ({
             </tbody>
           </table>
         ) : (
-          <div className={`flex-1 flex items-center justify-center ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
-            <div className={`mt-7 text-center ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-              <svg className="w-16 h-16 mx-auto mb-4 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012-2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-              </svg>
-              <p className="text-lg font-medium">No transaction found</p>
+          <div className="h-full flex items-center justify-center py-16">
+            <div className="text-center">
+              <div className={`w-14 h-14 mx-auto rounded-xl flex items-center justify-center mb-4 ${
+                isDark ? 'bg-slate-800' : 'bg-slate-100'
+              }`}>
+                <ClipboardList size={22} className={T.tm} />
+              </div>
+              <h3 className={`text-sm font-bold mb-1 ${T.tp}`}>No Transactions Found</h3>
+              <p className={`text-xs ${T.ts}`}>No transaction records match the current period.</p>
             </div>
           </div>
         )}
       </div>
-      
-      {/* Pagination Footer */}
-      <div className={footerClasses}>
-        <div className="flex items-center justify-between">
-          <div className={footerTextClasses}>
-            Showing {Math.min((transactionCurrentPage - 1) * transactionRowsPerPage + 1, sortedTransactions.length)} to {Math.min(transactionCurrentPage * transactionRowsPerPage, sortedTransactions.length)} of <span className="font-bold">{sortedTransactions.length}</span> transactions
-          </div>
+
+      {/* ── Pagination footer ────────────────────────────────────────────── */}
+      {sorted.length > 0 && (
+        <div className={`flex-shrink-0 flex flex-wrap gap-2 items-center justify-between px-5 py-2.5 border-t ${T.footer}`}>
+          {/* Left: count + rows per page */}
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className={`text-xs ${
-                isDark ? 'text-gray-400' : 'text-gray-600'
-              }`}>Rows per page</span>
-              <select 
+            <p className={`text-[11px] ${T.ts}`}>
+              Showing{' '}
+              <span className={`font-semibold ${T.tp}`}>
+                {(safePage - 1) * transactionRowsPerPage + 1}–{Math.min(safePage * transactionRowsPerPage, sorted.length)}
+              </span>{' '}
+              of{' '}
+              <span className={`font-semibold ${T.tp}`}>{sorted.length}</span>
+            </p>
+            <div className="flex items-center gap-1.5">
+              <span className={`text-[11px] ${T.ts}`}>Per page</span>
+              <select
                 value={transactionRowsPerPage}
-                onChange={(e) => {
-                  setTransactionRowsPerPage(Number(e.target.value));
-                  setTransactionCurrentPage(1);
-                }}
-                className={selectClasses}
+                onChange={(e) => { setTransactionRowsPerPage(Number(e.target.value)); setTransactionCurrentPage(1); }}
+                className={`text-xs border rounded-md px-1.5 py-0.5 outline-none ${T.select}`}
               >
-                <option value={10}>10</option>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
+                {[10, 25, 50].map(n => <option key={n} value={n}>{n}</option>)}
               </select>
             </div>
-            <div className="flex items-center gap-1">
-              <button 
-                onClick={() => setTransactionCurrentPage(prev => Math.max(prev - 1, 1))}
-                disabled={transactionCurrentPage === 1}
-                className={navButtonClasses(transactionCurrentPage === 1)}
-              >
-                <ChevronLeft size={14} />
-              </button>
-              
-              <div className="flex items-center gap-1">
-                {getPaginationRange().map((page, index) => (
-                  page === '...' ? (
-                    <span key={`ellipsis-${index}`} className={ellipsisClasses}>...</span>
-                  ) : (
-                    <button
-                      key={page}
-                      onClick={() => setTransactionCurrentPage(page)}
-                      className={paginationButtonClasses(transactionCurrentPage === page)}
-                    >
-                      {page}
-                    </button>
-                  )
-                ))}
-              </div>
-              
-              <button 
-                onClick={() => setTransactionCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                disabled={transactionCurrentPage >= totalPages}
-                className={navButtonClasses(transactionCurrentPage >= totalPages)}
-              >
-                <ChevronRight size={14} />
-              </button>
-            </div>
+          </div>
+
+          {/* Right: page buttons */}
+          <div className="flex items-center gap-1">
+            <PaginationBtn icon={ChevronsLeft}  onClick={() => setTransactionCurrentPage(1)}                              disabled={safePage === 1} />
+            <PaginationBtn icon={ChevronLeft}   onClick={() => setTransactionCurrentPage(p => Math.max(p - 1, 1))}       disabled={safePage === 1} />
+            {getPageNums().map((p, i) =>
+              p === '...' ? (
+                <span key={`e${i}`} className={`w-7 text-center text-xs ${T.tm}`}>…</span>
+              ) : (
+                <button
+                  key={p}
+                  onClick={() => setTransactionCurrentPage(p)}
+                  className={`w-7 h-7 rounded text-xs font-medium transition-all ${
+                    safePage === p
+                      ? 'bg-blue-600 text-white shadow'
+                      : isDark ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  {p}
+                </button>
+              )
+            )}
+            <PaginationBtn icon={ChevronRight}  onClick={() => setTransactionCurrentPage(p => Math.min(p + 1, totalPages))} disabled={safePage === totalPages} />
+            <PaginationBtn icon={ChevronsRight} onClick={() => setTransactionCurrentPage(totalPages)}                         disabled={safePage === totalPages} />
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

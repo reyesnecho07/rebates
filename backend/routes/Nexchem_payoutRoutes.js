@@ -120,7 +120,7 @@ router.get('/customer/:customerCode/payouts', async (req, res) => {
     let monthlyData = [];
     try {
       const transactionsResponse = await fetch(
-        `http://localhost:3006/api/nexchem/dashboard/customer/${customerCode}/transactions?` +
+        `http://localhost:3009/api/nexchem/dashboard/customer/${customerCode}/transactions?` +
         `db=${databaseToUse}&rebateCode=${rebateCode}&rebateType=${rebateType}&` +
         `periodFrom=${startDate}&periodTo=${endDate}&useRebatePeriod=${useRebatePeriod}`
       );
@@ -207,7 +207,7 @@ router.get('/customer/:customerCode/payouts', async (req, res) => {
     const mergedPayouts = mergePayoutData(monthlyData, existingPayouts, rebateType, frequency, sapData.entries);
     
     // Get previous balance from ANY rebate program for this customer and rebate type
-    const previousBalance = await getPreviousBalanceFromAnyRebateProgram(
+const previousBalanceResult = await getPreviousBalanceFromAnyRebateProgram(
       customerCode,
       rebateType,
       startDate,
@@ -215,7 +215,10 @@ router.get('/customer/:customerCode/payouts', async (req, res) => {
       rebateCode
     );
     
-    console.log(`💰 Previous balance found for ${customerCode} (${rebateType}): ₱${previousBalance.toFixed(2)}`);
+    const previousBalance = previousBalanceResult.amount;
+    const previousBalanceLastPeriod = previousBalanceResult.lastPeriod;
+    
+    console.log(`💰 Previous balance found for ${customerCode} (${rebateType}): ₱${previousBalance.toFixed(2)} (last period: ${previousBalanceLastPeriod})`);
     
     // Create beginning balance record if needed
     let beginningBalanceRecord = null;
@@ -224,7 +227,8 @@ router.get('/customer/:customerCode/payouts', async (req, res) => {
         customerCode,
         rebateCode,
         rebateType,
-        previousBalance
+        previousBalance,
+        previousBalanceLastPeriod  // ← pass actual last period
       );
     }
     
@@ -349,8 +353,7 @@ try {
   }
 });
 
-const createBeginningBalanceRecord = (customerCode, rebateCode, rebateType, previousBalance) => {
-  try {
+const createBeginningBalanceRecord = (customerCode, rebateCode, rebateType, previousBalance, lastPeriod = null) => {  try {
     console.log(`📝 Creating beginning balance record for ${customerCode}: ₱${previousBalance.toFixed(2)}`);
     
     const currentDate = new Date();
@@ -363,7 +366,7 @@ const createBeginningBalanceRecord = (customerCode, rebateCode, rebateType, prev
       RebateCode: rebateCode,
       RebateType: rebateType,
       Date: formattedDate,
-      Period: "Beginning Balance",
+      Period: lastPeriod ? `Balance of ${lastPeriod}` : "Beginning Balance",
       BaseAmount: 0,
       TotalAmount: 0,
       Amount: 0,
@@ -414,7 +417,7 @@ const getPreviousBalanceFromAnyRebateProgram = async (customerCode, rebateType, 
 
     if (otherRebatesResult.recordset.length === 0) {
       console.log(`📭 No other rebate codes found for ${customerCode} - ${rebateType}`);
-      return 0;
+      return { amount: 0, lastPeriod: null };
     }
 
 // Get the FIRST period of the CURRENT rebate to use as the cutoff
@@ -495,20 +498,18 @@ const getPreviousBalanceFromAnyRebateProgram = async (customerCode, rebateType, 
 
       const remaining = parseFloat(balResult.recordset[0]?.TotalRemaining) || 0;
 
-      if (remaining > 0) {
-        console.log(`💰 Found valid previous balance: ₱${remaining.toFixed(2)} from ${otherCode} (last period: ${otherLastPeriod})`);
-        return remaining;
-      }
-
-      console.log(`📭 ${otherCode} has no remaining balance`);
-    }
-
-    console.log(`📭 No previous balance found for ${customerCode} - ${rebateType}`);
-    return 0;
+    if (remaining > 0) {
+            console.log(`💰 Found valid previous balance: ₱${remaining.toFixed(2)} from ${otherCode} (last period: ${otherLastPeriod})`);
+            return { amount: remaining, lastPeriod: otherLastPeriod };
+          }
+          console.log(`📭 ${otherCode} has no remaining balance`);
+        }
+        console.log(`📭 No previous balance found for ${customerCode} - ${rebateType}`);
+        return { amount: 0, lastPeriod: null };
 
   } catch (error) {
     console.error('❌ Error getting previous balance:', error.message);
-    return 0;
+    return { amount: 0, lastPeriod: null };
   }
 };
 
@@ -597,7 +598,7 @@ const applyBalanceCarryOver = (payouts, frequency = 'Quarterly', startingBalance
     
     if (isQtrRebate) {
       const totalAmount = baseAmount;
-      const balance = Math.max(0, totalAmount - amountReleased);
+      let balance = totalAmount - amountReleased;   // Allow negative
       
       let status = payout.Status || 'Pending';
       if (amountReleased === 0) {
@@ -665,7 +666,7 @@ const applyBalanceCarryOver = (payouts, frequency = 'Quarterly', startingBalance
     } else {
       const previousBalanceForThisMonth = parseFloat(payout.PreviousBalance) || previousBalance;
       const totalAmount = baseAmount + previousBalanceForThisMonth;
-      const balance = Math.max(0, totalAmount - amountReleased);
+      const balance = totalAmount - amountReleased;
       
       let status = payout.Status || 'Pending';
       if (baseAmount === 0 && previousBalanceForThisMonth === 0) {
@@ -923,18 +924,20 @@ router.put('/payouts/:payoutId/status', async (req, res) => {
     newAmountReleased = Math.min(Math.max(newAmountReleased, 0), totalAmount);
     
     // Calculate new balance
-    const newBalance = Math.max(0, totalAmount - newAmountReleased);
+    const newBalance = totalAmount - newAmountReleased;   // Allow negative
     
     // Determine new status
     let newStatus = status || currentPayout.Status;
-    if (newAmountReleased === 0 && totalAmount > 0) {
+    if (newAmountReleased > totalAmount) {
+      newStatus = 'Over-Released';
+    } else if (newAmountReleased === 0 && totalAmount > 0) {
       newStatus = 'Pending';
     } else if (newAmountReleased >= totalAmount) {
       newStatus = 'Paid';
     } else if (newAmountReleased > 0) {
       newStatus = 'Partially Paid';
     }
-    
+        
     // Determine release date
     let releaseDate = currentPayout.ReleaseDate;
     if (newAmountReleased > 0 && (!releaseDate || releaseDate === null)) {
@@ -1125,7 +1128,7 @@ const applyBalanceCarryOverToPayouts = (payouts, frequency = 'Quarterly') => {
     if (isQtrRebate) {
       // QTR rebate is independent (only for Quarterly frequency)
       const totalAmount = baseAmount;
-      const balance = Math.max(0, totalAmount - amountReleased);
+      const balance = totalAmount - amountReleased;
       
       let status = payout.Status || 'Pending';
       if (amountReleased === 0) {
@@ -1192,7 +1195,7 @@ const applyBalanceCarryOverToPayouts = (payouts, frequency = 'Quarterly') => {
     } else {
       // ELIGIBLE MONTH or MONTHLY FREQUENCY: Calculate with carry-over
       const totalAmount = baseAmount + previousBalance;
-      const balance = Math.max(0, totalAmount - amountReleased);
+      const balance = totalAmount - amountReleased;
       
       // Determine status
       let status = payout.Status || 'Pending';
@@ -1796,7 +1799,7 @@ const calculateStatus = (existingStatus, isEligible, quotaMet = false, rebateTyp
 
 // Calculate balance
 const calculateBalance = (amount, amountReleased) => {
-  const balance = Math.max(0, amount - amountReleased);
+  const balance = amount - amountReleased;
   return parseFloat(balance.toFixed(2));
 };
 
@@ -2092,10 +2095,12 @@ router.put('/payouts/:payoutId/status', async (req, res) => {
     
     newAmountReleased = Math.min(Math.max(newAmountReleased, 0), totalAmount);
     
-    const newBalance = Math.max(0, totalAmount - newAmountReleased);
+    const newBalance = totalAmount - newAmountReleased;   // Allow negative
     
     let newStatus = status || currentPayout.Status;
-    if (newAmountReleased === 0 && totalAmount > 0) {
+    if (newAmountReleased > totalAmount) {
+      newStatus = 'Over-Released';
+    } else if (newAmountReleased === 0 && totalAmount > 0) {
       newStatus = 'Pending';
     } else if (newAmountReleased >= totalAmount) {
       newStatus = 'Paid';
@@ -2204,7 +2209,7 @@ const updateSubsequentPayouts = async (cardCode, rebateCode, pool) => {
       const totalAmount = baseAmount + previousBalance;
       
       // Calculate new balance
-      const balance = Math.max(0, totalAmount - amountReleased);
+      const balance = totalAmount - amountReleased;
       
       // Determine status
       let status = payout.Status;
@@ -2292,18 +2297,20 @@ router.put('/payouts/:payoutId/amount-released', async (req, res) => {
     const totalAmount = parseFloat(currentPayout.TotalAmount) || 0;
     
     const newAmountReleased = parseFloat(amountReleased) || 0;
-    const validatedAmountReleased = Math.min(Math.max(newAmountReleased, 0), totalAmount);
+    const validatedAmountReleased = Math.max(newAmountReleased, 0);
     
-    const newBalance = Math.max(0, totalAmount - validatedAmountReleased);
+    const newBalance = totalAmount - validatedAmountReleased;   // Allow negative
     
-    let newStatus = currentPayout.Status;
-    if (validatedAmountReleased === 0) {
-      newStatus = totalAmount > 0 ? 'Pending' : 'No Payout';
-    } else if (validatedAmountReleased >= totalAmount) {
-      newStatus = 'Paid';
-    } else if (validatedAmountReleased > 0) {
-      newStatus = 'Partially Paid';
-    }
+let newStatus = currentPayout.Status;
+if (validatedAmountReleased > totalAmount) {
+  newStatus = 'Over-Released';
+} else if (validatedAmountReleased === 0) {
+  newStatus = totalAmount > 0 ? 'Pending' : 'No Payout';
+} else if (validatedAmountReleased >= totalAmount) {
+  newStatus = 'Paid';
+} else if (validatedAmountReleased > 0) {
+  newStatus = 'Partially Paid';
+}
     
     let releaseDate = currentPayout.ReleaseDate;
     if (validatedAmountReleased > 0 && (!releaseDate || releaseDate === null)) {
@@ -2394,6 +2401,8 @@ router.post('/payouts/save', async (req, res) => {
       status = 'No Payout';
     } else if (amountReleased === 0) {
       status = 'Pending';
+    } else if (amountReleased > amount) {
+      status = 'Over-Released';
     } else if (amountReleased >= amount) {
       status = 'Paid';
     } else if (amountReleased > 0) {
@@ -2539,7 +2548,7 @@ router.get('/payouts/calculate/:customerCode/:rebateCode/:monthKey', async (req,
     // Get transactions for this month from the dashboard endpoint
     let transactions = [];
     try {
-      const transUrl = `http://localhost:3006/api/dashboard/customer/${customerCode}/transactions?` +
+      const transUrl = `http://localhost:3009/api/dashboard/customer/${customerCode}/transactions?` +
         `db=${databaseToUse}&rebateCode=${rebateCode}&rebateType=${rebateType}&` +
         `periodFrom=${startDate}&periodTo=${endDate}`;
       
@@ -2730,242 +2739,1468 @@ const calculatePayoutDetails = async (transactions, rebateType, customerCode, re
   return result;
 };
 
+
+/*===================================================================*/
+/*                      SAP JE + AR + AP  (fixed)                    */
+/*===================================================================*/
+
+const MONTH_NAMES = [
+  'January','February','March','April','May','June',
+  'July','August','September','October','November','December'
+];
+
+/*------------------------------------------------------------------
+ * HELPERS
+ *------------------------------------------------------------------*/
+
+/** Build a YYYY-MM period key and human-readable name from any Date */
+const toPeriodMeta = (date) => {
+  const d     = new Date(date);
+  const year  = d.getFullYear();
+  const month = d.getMonth() + 1;          // 1-based
+  return {
+    year,
+    month,
+    periodKey  : `${year}-${String(month).padStart(2, '0')}`,
+    periodName : `${MONTH_NAMES[month - 1]} ${year}`,
+  };
+};
+
+/** Return an empty period bucket */
+const makeBucket = ({ periodKey, periodName, year, month }) => ({
+  periodKey,
+  periodName,
+  year,
+  month,
+  totalAmount     : 0,
+  arcmDeduction   : 0,          // ← track ARCM separately for logging
+  entries         : [],
+  transactionIds  : new Set(),
+  sourceBreakdown : { JE: 0, AR: 0, AP: 0, ARCM: 0, APCM: 0 },
+});
+
+
+
 /*===================================================================*/
 /*                            SAP JE                                 */
 /*===================================================================*/
-
-// Function to fetch SAP Journal Entry data for a customer
 const fetchSAPJournalEntries = async (customerCode, periodFrom, periodTo, pool) => {
   try {
-    console.log(`📊 [SAP] Fetching journal entries for customer: ${customerCode}`);
-    
-    // Use SAP database pool - adjust the pool name as per your SAP database
-    const sapPool = getPool('NEXCHEM'); // Or whatever your SAP DB name is
-    
+    console.log(
+      `📊 [SAP] Fetching JE / AR / AP for customer: ${customerCode}  ` +
+      `period: ${periodFrom} → ${periodTo}`
+    );
+
+    const sapPool = getPool('NEXCHEM');
     if (!sapPool) {
       console.log('⚠️ [SAP] SAP database pool not available');
       return { success: false, entries: [] };
     }
 
-    // Parse period dates
-    const startDate = new Date(periodFrom);
-    const endDate = new Date(periodTo);
-    
-    // Build SAP query - Use RefDate to determine the month
-    const sapQuery = `
-      SELECT 
-        BP.ShortName AS CardCode,
+    const startDate      = new Date(periodFrom);
+    const programEndDate = new Date(periodTo);
+    const today          = new Date();
+
+    /*
+     * KEY FIX: always extend the fetch window to today.
+     * If the rebate program ended in February but an AR was posted in
+     * April, we still retrieve it.  syncSAPDataToPayouts will classify
+     * it as out-of-period and create the appropriate OOP row.
+     */
+    const endDate = today > programEndDate ? today : programEndDate;
+
+    console.log(
+      `📅 [SAP] Effective fetch window: ${startDate.toISOString().slice(0,10)} → ` +
+      `${endDate.toISOString().slice(0,10)}` +
+      (endDate > programEndDate ? '  ⚡ extended past program end to capture post-period entries' : '')
+    );
+
+    /* ----------------------------------------------------------------
+     * PART 1 — Journal Entries
+     * ----------------------------------------------------------------*/
+    const jeQuery = `
+      SELECT
+        'JE'               AS SourceType,
+        BP.ShortName       AS CardCode,
         OCRD.CardName,
-        T0.RefDate AS DocDate,
-        T0.TransId,
+        T0.RefDate         AS DocDate,
+        T0.TransId         AS DocNum,
+        NULL               AS BaseRef,
         T1.Account,
         T3.AcctName,
         T1.Debit,
         T1.Credit,
-        T0.RefDate,
         T0.Memo,
-        T1.LineMemo
+        T1.LineMemo,
+        T0.RefDate
       FROM OJDT T0
       INNER JOIN JDT1 T1 ON T0.TransId = T1.TransId
       INNER JOIN JDT1 BP ON T0.TransId = BP.TransId
         AND BP.ShortName IN (SELECT CardCode FROM OCRD)
-      LEFT JOIN OCRD ON BP.ShortName = OCRD.CardCode
-      LEFT JOIN OACT T3 ON T1.Account = T3.AcctCode
-      WHERE 
-        BP.ShortName = @customerCode
+      LEFT JOIN OCRD    ON BP.ShortName = OCRD.CardCode
+      LEFT JOIN OACT T3 ON T1.Account  = T3.AcctCode
+      WHERE
+        BP.ShortName   = @customerCode
         AND T3.AcctName LIKE '%Rebate%'
         AND T0.RefDate >= @periodFrom
-        AND T0.RefDate <= @periodTo
-      ORDER BY T0.RefDate DESC
+        AND T0.RefDate <= @endDate
     `;
 
-    const result = await sapPool.request()
-      .input('customerCode', sql.NVarChar(50), customerCode)
-      .input('periodFrom', sql.Date, startDate)
-      .input('periodTo', sql.Date, endDate)
-      .query(sapQuery);
+    /* ----------------------------------------------------------------
+     * PART 2 — AR Invoices
+     * Uses @endDate (today or later) so April entries are fetched even
+     * when the rebate program closed in February.
+     * ----------------------------------------------------------------*/
+    const arQuery = `
+      SELECT
+        'AR'                AS SourceType,
+        AR_INV.CardCode,
+        AR_INV.CardName,
+        AR_INV.DocDate,
+        AR_INV.DocNum,
+        AR_JDT.BaseRef,
+        AR_LN.Account,
+        AR_ACCT.AcctName,
+        AR_LN.Debit,
+        AR_LN.Credit,
+        AR_INV.Comments     AS Memo,
+        NULL                AS LineMemo,
+        AR_INV.DocDate      AS RefDate
+      FROM OINV AR_INV
+      LEFT JOIN OJDT AR_JDT
+             ON AR_JDT.BaseRef = CAST(AR_INV.DocNum AS NVARCHAR)
+      LEFT JOIN JDT1 AR_LN
+             ON AR_LN.TransId  = AR_JDT.TransId
+      LEFT JOIN OACT AR_ACCT
+             ON AR_ACCT.AcctCode = AR_LN.Account
+            AND AR_ACCT.AcctName LIKE '%Rebate%'
+      WHERE
+        AR_INV.CardCode   = @customerCode
+        AND AR_ACCT.AcctName IS NOT NULL
+        AND AR_INV.DocDate >= @periodFrom
+        AND AR_INV.DocDate <= @endDate
+    `;
 
-    console.log(`📊 [SAP] Found ${result.recordset.length} journal entries for ${customerCode}`);
+    /* ----------------------------------------------------------------
+     * PART 3 — AP Invoices
+     * ----------------------------------------------------------------*/
+    const apQuery = `
+      SELECT
+        'AP'            AS SourceType,
+        T0.U_BP_Code    AS CardCode,
+        T1.AcctCode,
+        T0.DocDate,
+        T1.LineTotal
+      FROM OPCH T0
+      LEFT JOIN PCH1 T1 ON T0.DocEntry = T1.DocEntry
+      WHERE
+        T1.AcctCode    = '611902'
+        AND T0.U_BP_Code = @customerCode
+        AND T0.DocDate  >= @periodFrom
+        AND T0.DocDate  <= @endDate
+    `;
 
-    // Process entries - group by the MONTH of the RefDate (document date)
+    /* ----------------------------------------------------------------
+     * PART 3b — AR Credit Memos
+     * ----------------------------------------------------------------*/
+    const arcmQuery = `
+      SELECT
+        'ARCM'        AS SourceType,
+        T0.CardCode,
+        T0.CardName,
+        T0.DocDate,
+        T0.DocNum,
+        T0.DocEntry,
+        T1.ItemCode,
+        T1.GTotal
+      FROM ORIN T0
+      INNER JOIN RIN1 T1 ON T0.DocEntry = T1.DocEntry
+      WHERE
+        T0.CardCode  = @customerCode
+        AND T1.ItemCode = 'NT-0018'
+        AND T0.DocDate >= @periodFrom
+        AND T0.DocDate <= @endDate
+    `;
+
+    /* ----------------------------------------------------------------
+     * PART 3c — AP Credit Memos
+     * ----------------------------------------------------------------*/
+    const apcmQuery = `
+      SELECT
+        'APCM'          AS SourceType,
+        T0.U_BP_Code    AS CardCode,
+        T0.DocDate,
+        T0.DocNum,
+        T0.DocEntry,
+        T1.GTotal
+      FROM ORPC T0
+      LEFT JOIN RPC1 T1 ON T0.DocEntry = T1.DocEntry
+      WHERE
+        T0.U_BP_Code  = @customerCode
+        AND T0.DocDate >= @periodFrom
+        AND T0.DocDate <= @endDate
+    `;
+
+    /* ----------------------------------------------------------------
+     * PART 4 — Execute all five in parallel
+     * All queries now use @endDate instead of @periodTo so post-period
+     * entries (e.g. April AR for a Jan-Feb rebate) are included.
+     * ----------------------------------------------------------------*/
+    const [jeResult, arResult, apResult, arcmResult, apcmResult] = await Promise.all([
+      sapPool.request()
+        .input('customerCode', sql.NVarChar(50), customerCode)
+        .input('periodFrom',   sql.Date,         startDate)
+        .input('endDate',      sql.Date,         endDate)
+        .query(jeQuery),
+      sapPool.request()
+        .input('customerCode', sql.NVarChar(50), customerCode)
+        .input('periodFrom',   sql.Date,         startDate)
+        .input('endDate',      sql.Date,         endDate)
+        .query(arQuery),
+      sapPool.request()
+        .input('customerCode', sql.NVarChar(50), customerCode)
+        .input('periodFrom',   sql.Date,         startDate)
+        .input('endDate',      sql.Date,         endDate)
+        .query(apQuery),
+      sapPool.request()
+        .input('customerCode', sql.NVarChar(50), customerCode)
+        .input('periodFrom',   sql.Date,         startDate)
+        .input('endDate',      sql.Date,         endDate)
+        .query(arcmQuery),
+      sapPool.request()
+        .input('customerCode', sql.NVarChar(50), customerCode)
+        .input('periodFrom',   sql.Date,         startDate)
+        .input('endDate',      sql.Date,         endDate)
+        .query(apcmQuery),
+    ]);
+
+    console.log(
+      `📊 [SAP] Raw rows — JE: ${jeResult.recordset.length} | ` +
+      `AR: ${arResult.recordset.length} | AP: ${apResult.recordset.length} | ` +
+      `ARCM: ${arcmResult.recordset.length} | APCM: ${apcmResult.recordset.length}`
+    );
+
+    /* ----------------------------------------------------------------
+     * PART 5 — Deduplicate and accumulate JE + AR rows
+     * ----------------------------------------------------------------*/
+    const MONTH_NAMES = [
+      'January','February','March','April','May','June',
+      'July','August','September','October','November','December'
+    ];
+
+    const toPeriodMeta = (date) => {
+      const d     = new Date(date);
+      const year  = d.getFullYear();
+      const month = d.getMonth() + 1;
+      return {
+        year,
+        month,
+        periodKey  : `${year}-${String(month).padStart(2, '0')}`,
+        periodName : `${MONTH_NAMES[month - 1]} ${year}`,
+      };
+    };
+
+    const makeBucket = ({ periodKey, periodName, year, month }) => ({
+      periodKey,
+      periodName,
+      year,
+      month,
+      totalAmount     : 0,
+      arcmDeduction   : 0,
+      entries         : [],
+      transactionIds  : new Set(),
+      sourceBreakdown : { JE: 0, AR: 0, AP: 0, ARCM: 0, APCM: 0 },
+    });
+
     const entriesByPeriod = {};
-    
-    result.recordset.forEach(entry => {
-      const docDate = new Date(entry.DocDate);
-      const year = docDate.getFullYear();
-      const month = docDate.getMonth() + 1; // JavaScript months are 0-based
-      
-      // Create period key using the document date's month/year
-      const periodKey = `${year}-${String(month).padStart(2, '0')}`;
-      
-      // Get month name for display
-      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
-                         'July', 'August', 'September', 'October', 'November', 'December'];
-      const periodName = `${monthNames[month-1]} ${year}`;
-      
-      // Calculate net amount: Debits increase amount, Credits decrease amount
-      const debit = parseFloat(entry.Debit) || 0;
-      const credit = parseFloat(entry.Credit) || 0;
-      const netAmount = debit - credit;
-      
-      if (!entriesByPeriod[periodKey]) {
-        entriesByPeriod[periodKey] = {
-          periodKey,
-          periodName,
-          year,
-          month,
-          totalAmount: 0,
-          entries: [],
-          transactionIds: new Set()
-        };
+    const getOrCreateBucket = (key, meta) => {
+      if (!entriesByPeriod[key]) entriesByPeriod[key] = makeBucket(meta);
+      return entriesByPeriod[key];
+    };
+
+    const jeArRows    = [...jeResult.recordset, ...arResult.recordset];
+    const lineDedupeMap = new Map();
+
+    jeArRows.forEach(row => {
+      const lineKey = row.SourceType === 'JE'
+        ? `JE-${row.DocNum}-${row.Account}`
+        : `AR-${row.DocNum}-${row.BaseRef ?? '0'}-${row.Account}`;
+
+      if (lineDedupeMap.has(lineKey)) {
+        console.log(`  🔄 Duplicate line skipped: ${lineKey}`);
+        return;
       }
-      
-      // Avoid duplicate entries by tracking transaction IDs
-      if (!entriesByPeriod[periodKey].transactionIds.has(entry.TransId)) {
-        entriesByPeriod[periodKey].totalAmount += netAmount;
-        entriesByPeriod[periodKey].transactionIds.add(entry.TransId);
-        entriesByPeriod[periodKey].entries.push({
-          transId: entry.TransId,
-          docDate: entry.DocDate,
-          account: entry.Account,
-          acctName: entry.AcctName,
-          debit: debit,
-          credit: credit,
-          netAmount: netAmount,
-          memo: entry.Memo || entry.LineMemo
+      lineDedupeMap.set(lineKey, true);
+
+      const meta    = toPeriodMeta(row.DocDate);
+      const bucket  = getOrCreateBucket(meta.periodKey, meta);
+      const debit     = parseFloat(row.Debit)  || 0;
+      const credit    = parseFloat(row.Credit) || 0;
+      const netAmount = debit - credit;
+
+      const txId = row.SourceType === 'JE'
+        ? `JE-${row.DocNum}`
+        : `AR-${row.DocNum}-${row.BaseRef ?? '0'}`;
+
+      if (!bucket.transactionIds.has(txId)) {
+        bucket.transactionIds.add(txId);
+        bucket.totalAmount                    += netAmount;
+        bucket.sourceBreakdown[row.SourceType] += netAmount;
+      }
+
+      bucket.entries.push({
+        sourceType : row.SourceType,
+        docNum     : row.DocNum,
+        baseRef    : row.BaseRef    ?? null,
+        docDate    : row.DocDate,
+        account    : row.Account,
+        acctName   : row.AcctName,
+        debit,
+        credit,
+        netAmount,
+        memo       : row.Memo || row.LineMemo || '',
+        cardCode   : row.CardCode,
+        cardName   : row.CardName,
+      });
+    });
+
+    console.log(
+      `📊 [SAP] After JE/AR dedup: ${Object.keys(entriesByPeriod).length} period(s), ` +
+      `${lineDedupeMap.size} unique lines`
+    );
+
+    /* ----------------------------------------------------------------
+     * PART 6 — AP
+     * ----------------------------------------------------------------*/
+    apResult.recordset.forEach(row => {
+      const meta      = toPeriodMeta(row.DocDate);
+      const bucket    = getOrCreateBucket(meta.periodKey, meta);
+      const lineTotal = parseFloat(row.LineTotal) || 0;
+
+      bucket.u_bp_code          = row.CardCode;
+      bucket.totalAmount        += lineTotal;
+      bucket.sourceBreakdown.AP += lineTotal;
+
+      bucket.entries.push({
+        sourceType : 'AP',
+        docDate    : row.DocDate,
+        acctCode   : row.AcctCode,
+        lineTotal,
+        netAmount  : lineTotal,
+        cardCode   : row.CardCode,
+        matchedBy  : 'U_BP_Code',
+      });
+
+      console.log(
+        `  📄 [AP] ${meta.periodKey}: ₱${lineTotal.toFixed(2)} U_BP_Code=${row.CardCode}`
+      );
+    });
+
+    /* ----------------------------------------------------------------
+     * PART 6b — ARCM
+     * ----------------------------------------------------------------*/
+    arcmResult.recordset.forEach(row => {
+      const meta         = toPeriodMeta(row.DocDate);
+      const bucket       = getOrCreateBucket(meta.periodKey, meta);
+      const deductAmount = Math.abs(parseFloat(row.GTotal) || 0);
+
+      bucket.totalAmount          -= deductAmount;
+      bucket.arcmDeduction        += deductAmount;
+      bucket.sourceBreakdown.ARCM -= deductAmount;
+
+      bucket.entries.push({
+        sourceType  : 'ARCM',
+        docNum      : row.DocNum,
+        docEntry    : row.DocEntry,
+        docDate     : row.DocDate,
+        itemCode    : row.ItemCode,
+        gTotal      : parseFloat(row.GTotal) || 0,
+        netAmount   : -deductAmount,
+        cardCode    : row.CardCode,
+        cardName    : row.CardName,
+        isDeduction : true,
+      });
+
+      console.log(
+        `  📄 [ARCM] ${meta.periodKey}: −₱${deductAmount.toFixed(2)} ` +
+        `(DocNum: ${row.DocNum}, Item: ${row.ItemCode})`
+      );
+    });
+
+    /* ----------------------------------------------------------------
+     * PART 6c — APCM
+     * ----------------------------------------------------------------*/
+    apcmResult.recordset.forEach(row => {
+      const meta         = toPeriodMeta(row.DocDate);
+      const bucket       = getOrCreateBucket(meta.periodKey, meta);
+      const deductAmount = Math.abs(parseFloat(row.GTotal) || 0);
+
+      bucket.u_bp_code            = row.CardCode;
+      bucket.totalAmount          -= deductAmount;
+      bucket.arcmDeduction        += deductAmount;
+      bucket.sourceBreakdown.APCM -= deductAmount;
+
+      bucket.entries.push({
+        sourceType  : 'APCM',
+        docNum      : row.DocNum,
+        docEntry    : row.DocEntry,
+        docDate     : row.DocDate,
+        gTotal      : parseFloat(row.GTotal) || 0,
+        netAmount   : -deductAmount,
+        cardCode    : row.CardCode,
+        matchedBy   : 'U_BP_Code',
+        isDeduction : true,
+      });
+
+      console.log(
+        `  📄 [APCM] ${meta.periodKey}: −₱${deductAmount.toFixed(2)} ` +
+        `(DocNum: ${row.DocNum}, U_BP_Code: ${row.CardCode})`
+      );
+    });
+
+    /* ----------------------------------------------------------------
+     * PART 7 — Cross-customer JE lookup (triggered by AR results)
+     * ----------------------------------------------------------------*/
+    const relatedCustomerEntries = [];
+    if (arResult.recordset.length > 0) {
+      const arDocNums = [...new Set(arResult.recordset.map(r => r.DocNum))];
+      if (arDocNums.length > 0) {
+        const relatedJEQuery = `
+          SELECT
+            'JE'                AS SourceType,
+            RJ_BP.ShortName     AS CardCode,
+            RJ_CRD.CardName,
+            RJ_HDR.RefDate      AS DocDate,
+            RJ_HDR.TransId      AS DocNum,
+            RJ_LN.BaseRef,
+            RJ_LN.Account,
+            RJ_ACCT.AcctName,
+            RJ_LN.Debit,
+            RJ_LN.Credit,
+            RJ_HDR.Memo,
+            RJ_LN.LineMemo,
+            RJ_HDR.RefDate
+          FROM OJDT RJ_HDR
+          INNER JOIN JDT1 RJ_LN  ON RJ_LN.TransId   = RJ_HDR.TransId
+          INNER JOIN JDT1 RJ_BP  ON RJ_BP.TransId    = RJ_HDR.TransId
+                                AND RJ_BP.ShortName IN (SELECT CardCode FROM OCRD)
+          LEFT JOIN OCRD  RJ_CRD ON RJ_CRD.CardCode  = RJ_BP.ShortName
+          LEFT JOIN OACT  RJ_ACCT ON RJ_ACCT.AcctCode = RJ_LN.Account
+                                 AND RJ_ACCT.AcctName LIKE '%Rebate%'
+          WHERE
+            RJ_LN.BaseRef   IN (${arDocNums.map((_, i) => `@docNum${i}`).join(',')})
+            AND RJ_ACCT.AcctName IS NOT NULL
+            AND RJ_BP.ShortName  != @customerCode
+            AND RJ_HDR.RefDate   >= @periodFrom
+            AND RJ_HDR.RefDate   <= @endDate
+        `;
+
+        const relatedRequest = sapPool.request()
+          .input('customerCode', sql.NVarChar(50), customerCode)
+          .input('periodFrom',   sql.Date,         startDate)
+          .input('endDate',      sql.Date,         endDate);
+
+        arDocNums.forEach((docNum, i) =>
+          relatedRequest.input(`docNum${i}`, sql.NVarChar(50), String(docNum))
+        );
+
+        const relatedResult = await relatedRequest.query(relatedJEQuery);
+        console.log(`📊 [SAP] Related-customer JE rows: ${relatedResult.recordset.length}`);
+
+        relatedResult.recordset.forEach(row => {
+          relatedCustomerEntries.push(row);
+          const meta      = toPeriodMeta(row.DocDate);
+          const bucketKey = `${meta.periodKey}-${row.CardCode}`;
+
+          if (!entriesByPeriod[bucketKey]) {
+            entriesByPeriod[bucketKey] = {
+              ...makeBucket(meta),
+              periodName          : `${meta.periodName} (${row.CardCode})`,
+              cardCode            : row.CardCode,
+              cardName            : row.CardName,
+              isRelatedCustomer   : true,
+              originalCustomerCode: customerCode,
+              originalPeriodKey   : meta.periodKey,
+            };
+          }
+
+          const bucket    = entriesByPeriod[bucketKey];
+          const debit     = parseFloat(row.Debit)  || 0;
+          const credit    = parseFloat(row.Credit) || 0;
+          const netAmount = debit - credit;
+          const txId      = `JE-${row.DocNum}`;
+
+          if (!bucket.transactionIds.has(txId)) {
+            bucket.transactionIds.add(txId);
+            bucket.totalAmount        += netAmount;
+            bucket.sourceBreakdown.JE += netAmount;
+          }
+
+          bucket.entries.push({
+            sourceType    : 'JE',
+            docNum        : row.DocNum,
+            docDate       : row.DocDate,
+            account       : row.Account,
+            acctName      : row.AcctName,
+            debit,
+            credit,
+            netAmount,
+            memo          : row.Memo || row.LineMemo || '',
+            cardCode      : row.CardCode,
+            cardName      : row.CardName,
+            isRelatedToAR : true,
+            arDocNum      : row.BaseRef,
+          });
         });
       }
+    }
+
+    /* ----------------------------------------------------------------
+     * PART 8 — Serialise, sort, log summary
+     * ----------------------------------------------------------------*/
+    const resultArray = Object.values(entriesByPeriod)
+      .map(({ transactionIds, ...rest }) => rest)
+      .sort((a, b) =>
+        a.year !== b.year ? a.year - b.year : a.month - b.month
+      );
+
+    console.log(`📊 [SAP] Final: ${resultArray.length} period bucket(s):`);
+    resultArray.forEach(p => {
+      const sb          = p.sourceBreakdown;
+      const totalDeduct = Math.abs(sb.ARCM) + Math.abs(sb.APCM);
+      // Flag periods that are outside the original program range
+      const isPostPeriod = (p.year > programEndDate.getFullYear()) ||
+        (p.year === programEndDate.getFullYear() && p.month > programEndDate.getMonth() + 1);
+
+      console.log(
+        `  ${p.periodKey}${p.cardCode ? ` (${p.cardCode})` : ''}` +
+        `${isPostPeriod ? ' ⚡ POST-PERIOD' : ''}: ` +
+        `Net ₱${p.totalAmount.toFixed(2)}  ` +
+        `JE ₱${sb.JE.toFixed(2)}  AR ₱${sb.AR.toFixed(2)}  ` +
+        `AP ₱${sb.AP.toFixed(2)}  ` +
+        `ARCM −₱${Math.abs(sb.ARCM).toFixed(2)}  ` +
+        `APCM −₱${Math.abs(sb.APCM).toFixed(2)}` +
+        (totalDeduct > 0 ? `  ← ₱${totalDeduct.toFixed(2)} total reversed` : '')
+      );
     });
 
-    // Convert to array and remove transactionIds before returning
-    const resultArray = Object.values(entriesByPeriod).map(item => ({
-      periodKey: item.periodKey,
-      periodName: item.periodName,
-      year: item.year,
-      month: item.month,
-      totalAmount: item.totalAmount,
-      entries: item.entries
-    }));
-
-    console.log(`📊 [SAP] Grouped into ${resultArray.length} periods based on RefDate:`);
-    resultArray.forEach(period => {
-      console.log(`  ${period.periodKey} (${period.periodName}): Net Amount: ₱${period.totalAmount.toFixed(2)}`);
-    });
-    
     return {
-      success: true,
-      entries: resultArray,
-      rawEntries: result.recordset
+      success   : true,
+      entries   : resultArray,
+      rawEntries: {
+        je      : jeResult.recordset,
+        ar      : arResult.recordset,
+        ap      : apResult.recordset,
+        arcm    : arcmResult.recordset,
+        apcm    : apcmResult.recordset,
+        related : relatedCustomerEntries,
+      },
+      summary: {
+        totalJE      : jeResult.recordset.length,
+        totalAR      : arResult.recordset.length,
+        totalAP      : apResult.recordset.length,
+        totalARCM    : arcmResult.recordset.length,
+        totalAPCM    : apcmResult.recordset.length,
+        totalRelated : relatedCustomerEntries.length,
+        uniquePeriods: resultArray.length,
+        fetchWindow  : {
+          from          : startDate.toISOString().slice(0, 10),
+          to            : endDate.toISOString().slice(0, 10),
+          programEndDate: programEndDate.toISOString().slice(0, 10),
+          extended      : endDate > programEndDate,
+        },
+      },
     };
 
   } catch (error) {
-    console.error('❌ [SAP] Error fetching journal entries:', error);
-    return { 
-      success: false, 
-      entries: [],
-      error: error.message 
-    };
+    console.error('❌ [SAP] Error fetching JE / AR / AP:', error);
+    return { success: false, entries: [], error: error.message };
   }
 };
 
-// Auto-sync SAP data to payout records
+
+
+/*===================================================================*/
+/*  SYNC — write SAP totals back to PayoutHistory                    */
+/*===================================================================*/
 const syncSAPDataToPayouts = async (customerCode, rebateCode, sapEntries, pool) => {
   try {
-    console.log(`🔄 [SYNC] Syncing SAP data for ${customerCode} - ${rebateCode}`);
-    
-    let updatedCount = 0;
-    
+    console.log(`🔄 [SYNC] Syncing SAP data for ${customerCode} — ${rebateCode}`);
+
+    // ── 1. Rebate program dates ──────────────────────────────────────────────
+    const programResult = await pool.request()
+      .input('rebateCode', sql.NVarChar(50), rebateCode)
+      .query(`SELECT DateFrom, DateTo FROM RebateProgram WHERE RebateCode = @rebateCode`);
+
+    let programFrom = null, programTo = null;
+    if (programResult.recordset.length > 0) {
+      const rec = programResult.recordset[0];
+      if (rec.DateFrom) programFrom = new Date(rec.DateFrom);
+      if (rec.DateTo)   programTo   = new Date(rec.DateTo);
+    }
+    console.log(
+      `📅 [SYNC] Period: ${programFrom?.toISOString().split('T')[0] ?? 'n/a'} → ` +
+      `${programTo?.toISOString().split('T')[0] ?? 'n/a'}`
+    );
+
+    const isInPeriod = (year, month) => {
+      if (!programFrom || !programTo) return true;
+      const first = new Date(year, month - 1, 1);
+      const last  = new Date(year, month, 0);
+      return last >= programFrom && first <= programTo;
+    };
+
+    // ── 2. Is this the LATEST rebate code for this customer? ────────────────
+    //       "Latest" = no other rebate code with a NEWER DateFrom has
+    //       PayoutHistory rows for this same customer.
+    //       Only the latest rebate should absorb out-of-period SAP entries.
+    const latestCheckResult = await pool.request()
+      .input('cc', sql.NVarChar(50), customerCode)
+      .input('rc', sql.NVarChar(50), rebateCode)
+      .query(`
+        SELECT COUNT(*) AS NewerCount
+        FROM RebateProgram rp
+        INNER JOIN PayoutHistory ph
+          ON ph.RebateCode = rp.RebateCode
+         AND ph.CardCode   = @cc
+        WHERE rp.DateFrom > ISNULL(
+          (SELECT DateFrom FROM RebateProgram WHERE RebateCode = @rc),
+          '1900-01-01'
+        )
+      `);
+    const isLatestRebate =
+      (parseInt(latestCheckResult.recordset[0]?.NewerCount) || 0) === 0;
+    console.log(`📋 [SYNC] Is latest rebate for ${customerCode}: ${isLatestRebate}`);
+
+    // ── 3. Clean up stale SAP-OOP rows (from the old behaviour) ─────────────
+    await pool.request()
+      .input('cc', sql.NVarChar(50), customerCode)
+      .input('rc', sql.NVarChar(50), rebateCode)
+      .query(`
+        DELETE FROM PayoutHistory
+        WHERE CardCode   = @cc
+          AND RebateCode = @rc
+          AND PayoutId   LIKE 'SAP-%'
+      `);
+
+    // ── 4. Reset SapReleasedAmount + AmountReleased to 0 BEFORE syncing ─────
+    //       This is the key fix for the accumulation bug:
+    //       without resetting, every page load adds the OOP amount again.
+    await pool.request()
+      .input('cc', sql.NVarChar(50), customerCode)
+      .input('rc', sql.NVarChar(50), rebateCode)
+      .query(`
+        UPDATE PayoutHistory
+        SET SapReleasedAmount = 0,
+            AmountReleased    = 0,
+            SapLastSync       = NULL,
+            UpdatedDate       = GETDATE()
+        WHERE CardCode   = @cc
+          AND RebateCode = @rc
+          AND PayoutId   NOT LIKE 'SAP-%'
+      `);
+    console.log(`🔄 [SYNC] Reset SapReleasedAmount to 0 for a clean sync`);
+
+    // ── 5. Separate in-period vs out-of-period entries ───────────────────────
+    const inPeriodMap = {}; // periodKey → accumulated SAP amount
+    let totalOOP = 0;       // sum of all post-period (after programTo) entries
+
     for (const sapEntry of sapEntries) {
-      const { periodKey, totalAmount, year, month, periodName } = sapEntry;
-      
-      console.log(`  🔍 Looking for payout matching: ${periodName} (${periodKey})`);
-      
-      // Find matching payout records for this specific month/year
-      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
-                         'July', 'August', 'September', 'October', 'November', 'December'];
-      const monthName = monthNames[month-1];
-      
-      // Pattern 1: Exact month name + year (e.g., "February 2026")
-      const exactMonthPattern = `${monthName} ${year}`;
-      
-      // Pattern 2: Short month name + year (e.g., "Feb 2026")
-      const shortMonthName = monthName.substring(0, 3);
-      const shortMonthPattern = `${shortMonthName} ${year}`;
-      
-      // Pattern 3: MM.YY format in Date column (e.g., "2.28.26" for Feb 2026)
-      const twoDigitYear = year.toString().slice(-2);
-      const datePattern = `%.${twoDigitYear}`;
-      
-      // Query to find payouts for this specific month
-      const findPayoutQuery = `
-        SELECT Id, PayoutId, Period, PayoutDate, AmountReleased, SapReleasedAmount, Status, TotalAmount
-        FROM PayoutHistory
-        WHERE CardCode = @customerCode 
-          AND RebateCode = @rebateCode
-          AND (
-            Period = @exactPeriod
-            OR Period LIKE @shortPeriod
-            OR (
-              PayoutDate LIKE @datePattern 
-              AND PayoutDate LIKE @monthPattern
-            )
-          )
-      `;
-      
-      const monthNumberStr = String(month);
-      const monthPatternForDate = `${monthNumberStr}.%.${twoDigitYear}`;
-      
-      const result = await pool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('rebateCode', sql.NVarChar(50), rebateCode)
-        .input('exactPeriod', sql.NVarChar(100), exactMonthPattern)
-        .input('shortPeriod', sql.NVarChar(100), `%${shortMonthPattern}%`)
-        .input('datePattern', sql.NVarChar(20), `%${twoDigitYear}`)
-        .input('monthPattern', sql.NVarChar(20), monthPatternForDate)
-        .query(findPayoutQuery);
-      
-      if (result.recordset.length > 0) {
-        console.log(`  ✅ Found ${result.recordset.length} payout(s) for ${periodName}`);
-        
-        for (const payout of result.recordset) {
-          // Only update if SAP amount has changed
-          const currentSapAmount = parseFloat(payout.SapReleasedAmount) || 0;
-          const newSapAmount = parseFloat(totalAmount) || 0;
-          
-          if (Math.abs(currentSapAmount - newSapAmount) > 0.01) {
-            // Update ONLY AmountReleased and SapLastSync fields
-            const updateQuery = `
-              UPDATE PayoutHistory 
-              SET 
-                AmountReleased = @sapAmount,
-                SapReleasedAmount = @sapAmount,
-                SapLastSync = GETDATE(),
-                UpdatedDate = GETDATE()
-              WHERE Id = @id
-            `;
-            
-            await pool.request()
-              .input('sapAmount', sql.Decimal(18, 2), newSapAmount)
-              .input('id', sql.Int, payout.Id)
-              .query(updateQuery);
-            
-            updatedCount++;
-            console.log(`    ✅ Updated ${payout.Period || payout.PayoutId}: AmountReleased set to ₱${newSapAmount.toFixed(2)} (matches ${periodName})`);
-          } else {
-            console.log(`    ℹ️  No change for ${payout.Period || payout.PayoutId}: already ₱${currentSapAmount.toFixed(2)}`);
-          }
+      if (sapEntry.isRelatedCustomer) continue;
+      const { year, month, totalAmount, periodKey, periodName } = sapEntry;
+
+      if (isInPeriod(year, month)) {
+        // PATH A candidate — falls within the rebate date range
+        if (!inPeriodMap[periodKey]) inPeriodMap[periodKey] = 0;
+        inPeriodMap[periodKey] += totalAmount;
+        console.log(`  📅 In-period  ${periodName}: ₱${totalAmount.toFixed(2)}`);
+
+      } else if (isLatestRebate) {
+        // Only the LATEST rebate absorbs out-of-period entries.
+        // Entries dated BEFORE this rebate's start belong to an older
+        // rebate code — skip them to prevent double-counting.
+        const entryStart     = new Date(year, month - 1, 1);
+        const isBeforePeriod = programFrom && entryStart < programFrom;
+
+        if (!isBeforePeriod) {
+          totalOOP += totalAmount;
+          console.log(
+            `  ⚡ OOP (after period)  ${periodName}: ₱${totalAmount.toFixed(2)} → will fold into latest row`
+          );
+        } else {
+          console.log(
+            `  ⏭️  Pre-period ${periodName}: ₱${totalAmount.toFixed(2)} → skip (belongs to older rebate)`
+          );
         }
+
       } else {
-        console.log(`  ⚠️  No payout found for ${periodName}`);
+        // Not the latest rebate AND entry is out-of-period — ignore.
+        // The newer rebate's sync will handle it.
+        console.log(
+          `  ⏭️  OOP ${periodName}: ₱${totalAmount.toFixed(2)} → skip (not latest rebate, newer rebate exists)`
+        );
       }
     }
-    
-    console.log(`✅ [SYNC] Updated ${updatedCount} payout records with SAP data`);
-    
+
+    // ── 6. PATH A — update each in-period payout row ────────────────────────
+    const MN = [
+      'January','February','March','April','May','June',
+      'July','August','September','October','November','December'
+    ];
+    let updatedCount = 0;
+
+    for (const [periodKey, amount] of Object.entries(inPeriodMap)) {
+      const [yearStr, monthStr] = periodKey.split('-');
+      const year      = parseInt(yearStr);
+      const month     = parseInt(monthStr);
+      const monthName = MN[month - 1];
+      const twoDigit  = String(year).slice(-2);
+
+      const rows = await pool.request()
+        .input('cc',    sql.NVarChar(50),  customerCode)
+        .input('rc',    sql.NVarChar(50),  rebateCode)
+        .input('exact', sql.NVarChar(100), `${monthName} ${year}`)
+        .input('short', sql.NVarChar(100), `%${monthName.substring(0,3)} ${year}%`)
+        .input('mpat',  sql.NVarChar(20),  `${month}.%.${twoDigit}`)
+        .query(`
+          SELECT Id, Period
+          FROM PayoutHistory
+          WHERE CardCode   = @cc
+            AND RebateCode = @rc
+            AND PayoutId   NOT LIKE 'SAP-%'
+            AND (
+              Period      = @exact
+              OR Period   LIKE @short
+              OR PayoutDate LIKE @mpat
+            )
+        `);
+
+      for (const row of rows.recordset) {
+        await pool.request()
+          .input('sapAmount', sql.Decimal(18, 2), amount)
+          .input('id',        sql.Int,            row.Id)
+          .query(`
+            UPDATE PayoutHistory SET
+              AmountReleased    = @sapAmount,
+              SapReleasedAmount = @sapAmount,
+              SapLastSync       = GETDATE(),
+              UpdatedDate       = GETDATE()
+            WHERE Id = @id
+          `);
+        updatedCount++;
+        console.log(`    ✅ PATH A: ${row.Period} → ₱${amount.toFixed(2)}`);
+      }
+    }
+
+    // ── 7. PATH B — fold OOP into the latest existing payout row ────────────
+    //       Only runs when:
+    //         (a) there IS an out-of-period total, AND
+    //         (b) this IS the latest rebate code for the customer.
+    //       The latest row's SapReleasedAmount was already set by PATH A
+    //       (or is 0 if that row had no in-period SAP entries).
+    //       We add totalOOP on top — this is safe because we reset to 0
+    //       at step 4, so there is no stale value to accumulate on.
+    if (Math.abs(totalOOP) > 0.01 && isLatestRebate) {
+      const latestResult = await pool.request()
+        .input('cc', sql.NVarChar(50), customerCode)
+        .input('rc', sql.NVarChar(50), rebateCode)
+        .query(`
+          SELECT TOP 1 Id, Period, SapReleasedAmount
+          FROM PayoutHistory
+          WHERE CardCode   = @cc
+            AND RebateCode = @rc
+            AND PayoutId   NOT LIKE 'SAP-%'
+            AND Period     NOT LIKE 'Balance of %'
+            AND Period     IS NOT NULL
+            AND Period     != ''
+          ORDER BY Id DESC
+        `);
+
+      if (latestResult.recordset.length > 0) {
+        const latestRow   = latestResult.recordset[0];
+        // SapReleasedAmount here is the in-period SAP set by PATH A (or 0).
+        // Adding totalOOP gives the correct combined total.
+        const inPeriodSap = parseFloat(latestRow.SapReleasedAmount) || 0;
+        const combined    = inPeriodSap + totalOOP;
+
+        await pool.request()
+          .input('sapAmount', sql.Decimal(18, 2), combined)
+          .input('id',        sql.Int,            latestRow.Id)
+          .query(`
+            UPDATE PayoutHistory SET
+              AmountReleased    = @sapAmount,
+              SapReleasedAmount = @sapAmount,
+              SapLastSync       = GETDATE(),
+              UpdatedDate       = GETDATE()
+            WHERE Id = @id
+          `);
+        updatedCount++;
+        console.log(
+          `  ✅ PATH B: "${latestRow.Period}"` +
+          `  in-period ₱${inPeriodSap.toFixed(2)}` +
+          ` + OOP ₱${totalOOP.toFixed(2)}` +
+          ` = ₱${combined.toFixed(2)}`
+        );
+      } else {
+        console.log(`  ⚠️  PATH B: no existing payout row found — cannot anchor OOP amount`);
+      }
+    }
+
+    console.log(`\n✅ [SYNC] Done — ${updatedCount} record(s) updated`);
+
   } catch (error) {
     console.error('❌ [SYNC] Error syncing SAP data:', error);
   }
 };
+
+/* ──────────────────────────────────────────────────────────────────
+
+ *  1.  getAllRebateProgramsForCustomer
+ *      Returns all rebate programs that have PayoutHistory rows
+ *      for this customer AND belong to the same rebate type and
+ *      frequency as the currently-viewed program.
+ * ────────────────────────────────────────────────────────────────*/
+export const getAllRebateProgramsForCustomer = async (
+  customerCode,
+  currentRebateCode,
+  pool
+) => {
+  try {
+    // Get the frequency / type of the current rebate so we only
+    // look at sibling programs (same frequency = same "family").
+    const metaResult = await pool.request()
+      .input('rc', sql.NVarChar(50), currentRebateCode)
+      .query(`
+        SELECT RebateCode, RebateType, Frequency,
+               DateFrom, DateTo, IsActive
+        FROM RebateProgram
+        WHERE RebateCode = @rc
+      `);
+ 
+    if (metaResult.recordset.length === 0) return [];
+ 
+    const { RebateType, Frequency } = metaResult.recordset[0];
+ 
+    // Find all rebate codes for this customer that share
+    // the same type and frequency.
+    const siblingsResult = await pool.request()
+      .input('customerCode', sql.NVarChar(50), customerCode)
+      .input('rebateType',   sql.NVarChar(50), RebateType)
+      .input('frequency',    sql.NVarChar(50), Frequency)
+      .query(`
+        SELECT DISTINCT rp.RebateCode, rp.DateFrom, rp.DateTo,
+                        rp.IsActive,   rp.RebateType, rp.Frequency
+        FROM RebateProgram rp
+        WHERE rp.RebateType = @rebateType
+          AND rp.Frequency  = @frequency
+          AND EXISTS (
+            SELECT 1 FROM PayoutHistory ph
+            WHERE ph.CardCode   = @customerCode
+              AND ph.RebateCode = rp.RebateCode
+          )
+        ORDER BY rp.DateFrom ASC
+      `);
+ 
+    return siblingsResult.recordset;
+  } catch (err) {
+    console.error('❌ [RESOLVER] getAllRebateProgramsForCustomer:', err.message);
+    return [];
+  }
+};
+ 
+/* ──────────────────────────────────────────────────────────────────
+ *  2.  resolveDocDateToRebateProgram
+ *      Pure function — no DB calls.
+ *      Maps any DocDate to the best-fit rebate program from the
+ *      provided sorted list.
+ *
+ *      Priority rules
+ *      ──────────────
+ *      1. Exact match  : DocDate ∈ [DateFrom, DateTo]
+ *      2. Gap (between): assign to the program whose DateTo is
+ *                        immediately before the DocDate (the most
+ *                        recently-closed program).
+ *      3. Before first : assign to the earliest program.
+ *      4. After last   : assign to the latest program.
+ * ────────────────────────────────────────────────────────────────*/
+export const resolveDocDateToRebateProgram = (docDate, programs) => {
+  if (!programs || programs.length === 0) return null;
+ 
+  const date   = new Date(docDate);
+  date.setHours(12, 0, 0, 0); // normalise to noon to avoid TZ edge cases
+ 
+  // Sort ascending by DateFrom
+  const sorted = [...programs].sort(
+    (a, b) => new Date(a.DateFrom) - new Date(b.DateFrom)
+  );
+ 
+  // ── 1. Exact match ───────────────────────────────────────────
+  for (const prog of sorted) {
+    const from = new Date(prog.DateFrom);
+    const to   = new Date(prog.DateTo);
+    from.setHours(0,  0,  0,   0);
+    to.setHours(23, 59, 59, 999);
+    if (date >= from && date <= to) {
+      return { ...prog, matchType: 'exact' };
+    }
+  }
+ 
+  // ── 2. Before the first program ──────────────────────────────
+  const firstFrom = new Date(sorted[0].DateFrom);
+  firstFrom.setHours(0, 0, 0, 0);
+  if (date < firstFrom) {
+    return { ...sorted[0], matchType: 'before_first' };
+  }
+ 
+  // ── 3. After the last program ────────────────────────────────
+  const lastTo = new Date(sorted[sorted.length - 1].DateTo);
+  lastTo.setHours(23, 59, 59, 999);
+  if (date > lastTo) {
+    return { ...sorted[sorted.length - 1], matchType: 'after_last' };
+  }
+ 
+  // ── 4. Falls in a gap between two programs ───────────────────
+  //       Assign to the program that ended most recently.
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const curEnd   = new Date(sorted[i].DateTo);
+    const nextStart = new Date(sorted[i + 1].DateFrom);
+    curEnd.setHours(23, 59, 59, 999);
+    nextStart.setHours(0, 0, 0, 0);
+ 
+    if (date > curEnd && date < nextStart) {
+      // Prefer the previous program (just ended) unless the next
+      // program starts within 15 days — in that case prefer the
+      // upcoming one (the employee likely meant it for the new cycle).
+      const daysToNext = (nextStart - date) / (1000 * 60 * 60 * 24);
+      const resolved   = daysToNext <= 15 ? sorted[i + 1] : sorted[i];
+      return {
+        ...resolved,
+        matchType: daysToNext <= 15 ? 'gap_next' : 'gap_previous',
+      };
+    }
+  }
+ 
+  // Fallback
+  return { ...sorted[sorted.length - 1], matchType: 'fallback' };
+};
+ 
+/* ──────────────────────────────────────────────────────────────────
+ *  3.  fetchAllSAPTransactionsForCustomer
+ *      Like fetchSAPJournalEntries but with NO date restriction.
+ *      Returns raw rows grouped by source (je, ar, ap, arcm, apcm).
+ *      The caller is responsible for deciding which rebate program
+ *      each transaction belongs to.
+ * ────────────────────────────────────────────────────────────────*/
+export const fetchAllSAPTransactionsForCustomer = async (customerCode) => {
+  try {
+    const sapPool = getPool('NEXCHEM');
+    if (!sapPool) {
+      console.log('⚠️ [SAP-UNIVERSAL] SAP pool not available');
+      return { success: false, rows: [] };
+    }
+ 
+    // ── JE ────────────────────────────────────────────────────
+    const jeQuery = `
+      SELECT 'JE' AS SourceType,
+             BP.ShortName  AS CardCode, OCRD.CardName,
+             T0.RefDate    AS DocDate,
+             T0.TransId    AS DocNum,  NULL AS BaseRef,
+             T1.Account,  T3.AcctName,
+             T1.Debit,    T1.Credit,
+             T0.Memo,     T1.LineMemo,
+             T0.RefDate
+      FROM OJDT T0
+      INNER JOIN JDT1 T1 ON T0.TransId = T1.TransId
+      INNER JOIN JDT1 BP ON T0.TransId = BP.TransId
+        AND BP.ShortName IN (SELECT CardCode FROM OCRD)
+      LEFT JOIN OCRD    ON BP.ShortName = OCRD.CardCode
+      LEFT JOIN OACT T3 ON T1.Account  = T3.AcctCode
+      WHERE BP.ShortName   = @customerCode
+        AND T3.AcctName LIKE '%Rebate%'
+    `;
+ 
+    // ── AR ────────────────────────────────────────────────────
+    const arQuery = `
+      SELECT 'AR' AS SourceType,
+             AR_INV.CardCode, AR_INV.CardName,
+             AR_INV.DocDate,  AR_INV.DocNum,
+             AR_JDT.BaseRef,  AR_LN.Account,
+             AR_ACCT.AcctName,
+             AR_LN.Debit,     AR_LN.Credit,
+             AR_INV.Comments AS Memo, NULL AS LineMemo,
+             AR_INV.DocDate  AS RefDate
+      FROM OINV AR_INV
+      LEFT JOIN OJDT AR_JDT ON AR_JDT.BaseRef = CAST(AR_INV.DocNum AS NVARCHAR)
+      LEFT JOIN JDT1 AR_LN  ON AR_LN.TransId  = AR_JDT.TransId
+      LEFT JOIN OACT AR_ACCT ON AR_ACCT.AcctCode = AR_LN.Account
+                             AND AR_ACCT.AcctName LIKE '%Rebate%'
+      WHERE AR_INV.CardCode = @customerCode
+        AND AR_ACCT.AcctName IS NOT NULL
+    `;
+ 
+    // ── AP ────────────────────────────────────────────────────
+    const apQuery = `
+      SELECT 'AP' AS SourceType,
+             T0.U_BP_Code AS CardCode,
+             T1.AcctCode,
+             T0.DocDate,  T1.LineTotal
+      FROM OPCH T0
+      LEFT JOIN PCH1 T1 ON T0.DocEntry = T1.DocEntry
+      WHERE T1.AcctCode    = '611902'
+        AND T0.U_BP_Code   = @customerCode
+    `;
+ 
+    // ── ARCM ──────────────────────────────────────────────────
+    const arcmQuery = `
+      SELECT 'ARCM' AS SourceType,
+             T0.CardCode, T0.CardName,
+             T0.DocDate,  T0.DocNum, T0.DocEntry,
+             T1.ItemCode, T1.GTotal
+      FROM ORIN T0
+      INNER JOIN RIN1 T1 ON T0.DocEntry = T1.DocEntry
+      WHERE T0.CardCode = @customerCode
+        AND T1.ItemCode = 'NT-0018'
+    `;
+ 
+    // ── APCM ──────────────────────────────────────────────────
+    const apcmQuery = `
+      SELECT 'APCM' AS SourceType,
+             T0.U_BP_Code AS CardCode,
+             T0.DocDate,  T0.DocNum, T0.DocEntry,
+             T1.GTotal
+      FROM ORPC T0
+      LEFT JOIN RPC1 T1 ON T0.DocEntry = T1.DocEntry
+      WHERE T0.U_BP_Code = @customerCode
+    `;
+ 
+    const [jeR, arR, apR, arcmR, apcmR] = await Promise.all([
+      sapPool.request().input('customerCode', sql.NVarChar(50), customerCode).query(jeQuery),
+      sapPool.request().input('customerCode', sql.NVarChar(50), customerCode).query(arQuery),
+      sapPool.request().input('customerCode', sql.NVarChar(50), customerCode).query(apQuery),
+      sapPool.request().input('customerCode', sql.NVarChar(50), customerCode).query(arcmQuery),
+      sapPool.request().input('customerCode', sql.NVarChar(50), customerCode).query(apcmQuery),
+    ]);
+ 
+    console.log(
+      `📊 [SAP-UNIVERSAL] Raw rows — JE: ${jeR.recordset.length} | ` +
+      `AR: ${arR.recordset.length} | AP: ${apR.recordset.length} | ` +
+      `ARCM: ${arcmR.recordset.length} | APCM: ${apcmR.recordset.length}`
+    );
+ 
+    return {
+      success : true,
+      je      : jeR.recordset,
+      ar      : arR.recordset,
+      ap      : apR.recordset,
+      arcm    : arcmR.recordset,
+      apcm    : apcmR.recordset,
+    };
+  } catch (err) {
+    console.error('❌ [SAP-UNIVERSAL] fetchAllSAPTransactionsForCustomer:', err.message);
+    return { success: false, je: [], ar: [], ap: [], arcm: [], apcm: [] };
+  }
+};
+ 
+/* ──────────────────────────────────────────────────────────────────
+ *  4.  universalSyncSAPToAllRebates
+ *      The main orchestrator.
+ *
+ *      Steps
+ *      ─────
+ *      a) Fetch ALL SAP rows for customer (no date filter).
+ *      b) Get ALL rebate programs for customer (same type/freq).
+ *      c) For each SAP transaction, resolve → best rebate program.
+ *      d) Accumulate per-period totals for that rebate program.
+ *      e) For each resolved (rebateCode, periodKey) pair:
+ *         • If that rebateCode has a PayoutHistory row for the
+ *           period → UPDATE AmountReleased / SapReleasedAmount.
+ *         • If no row exists yet → create OOP row anchored to
+ *           the last known period of that rebate code.
+ *         • If an old OOP row (SAP-…) existed for a DIFFERENT
+ *           rebateCode but now the resolver says this transaction
+ *           belongs to currentRebateCode → delete the stale row.
+ *
+ *      Call this function INSTEAD OF (or just after) the regular
+ *      syncSAPDataToPayouts when you want fully automatic
+ *      cross-period / cross-rebate resolution.
+ * ────────────────────────────────────────────────────────────────*/
+export const universalSyncSAPToAllRebates = async (
+  customerCode,
+  currentRebateCode,
+  pool
+) => {
+  try {
+    console.log(
+      `\n🌐 [UNIVERSAL-SYNC] Starting for ${customerCode} / ${currentRebateCode}`
+    );
+ 
+    // ── a) Fetch ALL SAP transactions ────────────────────────
+    const allSAP = await fetchAllSAPTransactionsForCustomer(customerCode);
+    if (!allSAP.success) {
+      console.log('⚠️ [UNIVERSAL-SYNC] Could not fetch SAP transactions — aborting');
+      return;
+    }
+ 
+    // ── b) Get ALL rebate programs for this customer ─────────
+    const programs = await getAllRebateProgramsForCustomer(
+      customerCode,
+      currentRebateCode,
+      pool
+    );
+ 
+    if (programs.length === 0) {
+      console.log('⚠️ [UNIVERSAL-SYNC] No rebate programs found — aborting');
+      return;
+    }
+ 
+    console.log(
+      `📋 [UNIVERSAL-SYNC] ${programs.length} rebate program(s) in family:`,
+      programs.map(p => `${p.RebateCode} (${p.DateFrom?.toISOString?.()?.slice(0,10)} → ${p.DateTo?.toISOString?.()?.slice(0,10)})`).join(' | ')
+    );
+ 
+    // ── c) Accumulate per-(rebateCode, periodKey) ─────────────
+    // Structure: acc[rebateCode][periodKey] = { year, month, amount, deductions }
+    const acc = {};
+ 
+    const addToAcc = (rebateCode, docDate, netAmount) => {
+      if (!rebateCode) return;
+      const d     = new Date(docDate);
+      const year  = d.getFullYear();
+      const month = d.getMonth() + 1;
+      const key   = `${year}-${String(month).padStart(2, '0')}`;
+ 
+      if (!acc[rebateCode])       acc[rebateCode] = {};
+      if (!acc[rebateCode][key])  acc[rebateCode][key] = { year, month, amount: 0, rowCount: 0 };
+ 
+      acc[rebateCode][key].amount   += netAmount;
+      acc[rebateCode][key].rowCount += 1;
+    };
+ 
+    // Helper: resolve + accumulate
+    const resolveAndAdd = (docDate, netAmount) => {
+      if (!docDate) return;
+      const resolved = resolveDocDateToRebateProgram(docDate, programs);
+      if (!resolved) return;
+      console.log(
+        `  → DocDate ${new Date(docDate).toISOString().slice(0,10)} ` +
+        `(net ₱${netAmount.toFixed(2)}) → ${resolved.RebateCode} [${resolved.matchType}]`
+      );
+      addToAcc(resolved.RebateCode, docDate, netAmount);
+    };
+ 
+    // Line-level dedup (same logic as original)
+    const lineDedup = new Set();
+ 
+    // JE + AR
+    [...allSAP.je, ...allSAP.ar].forEach(row => {
+      const lineKey = row.SourceType === 'JE'
+        ? `JE-${row.DocNum}-${row.Account}`
+        : `AR-${row.DocNum}-${row.BaseRef ?? '0'}-${row.Account}`;
+      if (lineDedup.has(lineKey)) return;
+      lineDedup.add(lineKey);
+      const net = (parseFloat(row.Debit) || 0) - (parseFloat(row.Credit) || 0);
+      resolveAndAdd(row.DocDate, net);
+    });
+ 
+    // AP
+    allSAP.ap.forEach(row => {
+      resolveAndAdd(row.DocDate, parseFloat(row.LineTotal) || 0);
+    });
+ 
+    // ARCM — deductions (negative)
+    allSAP.arcm.forEach(row => {
+      resolveAndAdd(row.DocDate, -Math.abs(parseFloat(row.GTotal) || 0));
+    });
+ 
+    // APCM — deductions (negative)
+    allSAP.apcm.forEach(row => {
+      resolveAndAdd(row.DocDate, -Math.abs(parseFloat(row.GTotal) || 0));
+    });
+ 
+    console.log('\n📊 [UNIVERSAL-SYNC] Accumulated totals:');
+    Object.entries(acc).forEach(([rc, periods]) => {
+      Object.entries(periods).forEach(([pk, data]) => {
+        console.log(`  ${rc} / ${pk}: ₱${data.amount.toFixed(2)} (${data.rowCount} rows)`);
+      });
+    });
+ 
+    // ── d) Sync each (rebateCode, periodKey) into PayoutHistory ─
+    const MONTH_NAMES_U = [
+      'January','February','March','April','May','June',
+      'July','August','September','October','November','December'
+    ];
+ 
+    let updatedCount = 0;
+ 
+    for (const [rebateCode, periods] of Object.entries(acc)) {
+      for (const [periodKey, data] of Object.entries(periods)) {
+        const { year, month, amount } = data;
+        const monthName  = MONTH_NAMES_U[month - 1];
+        const twoDigit   = String(year).slice(-2);
+        const periodName = `${monthName} ${year}`;
+ 
+        // Look for an existing PayoutHistory row for this period
+        const findResult = await pool.request()
+          .input('cc',      sql.NVarChar(50),  customerCode)
+          .input('rc',      sql.NVarChar(50),  rebateCode)
+          .input('exact',   sql.NVarChar(100), periodName)
+          .input('short',   sql.NVarChar(100), `%${monthName.substring(0,3)} ${year}%`)
+          .input('mpat',    sql.NVarChar(20),  `${month}.%.${twoDigit}`)
+          .query(`
+            SELECT Id, PayoutId, Period, PayoutDate,
+                   AmountReleased, SapReleasedAmount, TotalAmount, Status
+            FROM PayoutHistory
+            WHERE CardCode   = @cc
+              AND RebateCode = @rc
+              AND PayoutId   NOT LIKE 'SAP-%'
+              AND Period     NOT LIKE 'Balance of %'
+              AND (
+                Period    = @exact
+                OR Period LIKE @short
+                OR PayoutDate LIKE @mpat
+              )
+          `);
+ 
+        if (findResult.recordset.length > 0) {
+          // ── Update existing row ────────────────────────────
+          for (const row of findResult.recordset) {
+            const prev = parseFloat(row.SapReleasedAmount) || 0;
+            if (Math.abs(prev - amount) <= 0.01) {
+              console.log(
+                `  ℹ️  [UNIVERSAL-SYNC] No change: ${rebateCode}/${periodKey} ₱${prev.toFixed(2)}`
+              );
+              continue;
+            }
+            await pool.request()
+              .input('sapAmt', sql.Decimal(18, 2), amount)
+              .input('id',     sql.Int,            row.Id)
+              .query(`
+                UPDATE PayoutHistory SET
+                  AmountReleased    = @sapAmt,
+                  SapReleasedAmount = @sapAmt,
+                  SapLastSync       = GETDATE(),
+                  UpdatedDate       = GETDATE()
+                WHERE Id = @id
+              `);
+            updatedCount++;
+            console.log(
+              `  ✅ [UNIVERSAL-SYNC] Updated ${rebateCode}/${row.Period}: ₱${amount.toFixed(2)}`
+            );
+          }
+ 
+          // ── Remove stale OOP rows for the same period that
+          //    belonged to a different rebate code ───────────
+          await cleanupStaleOOPRows(
+            customerCode, rebateCode, periodKey, year, month, pool
+          );
+ 
+        } else {
+          // ── No in-period row found — create / update OOP ──
+          await upsertOOPRow(
+            customerCode, rebateCode, periodKey,
+            year, month, monthName, twoDigit,
+            amount, pool
+          );
+          updatedCount++;
+        }
+      }
+    }
+ 
+    console.log(`\n✅ [UNIVERSAL-SYNC] Done — ${updatedCount} record(s) updated\n`);
+  } catch (err) {
+    console.error('❌ [UNIVERSAL-SYNC] universalSyncSAPToAllRebates:', err);
+  }
+};
+ 
+/* ──────────────────────────────────────────────────────────────────
+ *  5.  cleanupStaleOOPRows
+ *      When a transaction is now properly covered by a "real"
+ *      PayoutHistory row (because a new rebate program was created),
+ *      delete any SAP-… OOP rows for that same period in OTHER
+ *      rebate codes — they are now redundant and misleading.
+ * ────────────────────────────────────────────────────────────────*/
+const cleanupStaleOOPRows = async (
+  customerCode, resolvedRebateCode, periodKey, year, month, pool
+) => {
+  try {
+    // Find OOP rows (PayoutId LIKE 'SAP-%') for this customer + period
+    // that belong to a DIFFERENT rebate code than the resolved one.
+    const oopPattern = `SAP-${customerCode}-%-%${periodKey}%`;
+ 
+    const staleResult = await pool.request()
+      .input('cc',   sql.NVarChar(50),  customerCode)
+      .input('rc',   sql.NVarChar(50),  resolvedRebateCode)
+      .input('pat',  sql.NVarChar(200), oopPattern)
+      .query(`
+        SELECT Id, PayoutId, RebateCode, Period
+        FROM PayoutHistory
+        WHERE CardCode   = @cc
+          AND PayoutId   LIKE @pat
+          AND RebateCode != @rc
+      `);
+ 
+    if (staleResult.recordset.length === 0) return;
+ 
+    for (const row of staleResult.recordset) {
+      await pool.request()
+        .input('id', sql.Int, row.Id)
+        .query(`DELETE FROM PayoutHistory WHERE Id = @id`);
+      console.log(
+        `  🗑️  [CLEANUP] Removed stale OOP row ${row.PayoutId} ` +
+        `(rebate ${row.RebateCode} — now covered by ${resolvedRebateCode})`
+      );
+    }
+  } catch (err) {
+    console.error('❌ [CLEANUP] cleanupStaleOOPRows:', err.message);
+  }
+};
+ 
+/* ──────────────────────────────────────────────────────────────────
+ *  6.  upsertOOPRow
+ *      Insert or update a SAP-… OOP row when no proper
+ *      PayoutHistory period row exists yet for the resolved program.
+ *      The OOP row is anchored to the LAST known period of the
+ *      resolved rebate code (so it always shows up somewhere
+ *      visible in the UI).
+ * ────────────────────────────────────────────────────────────────*/
+const upsertOOPRow = async (
+  customerCode, rebateCode, periodKey,
+  year, month, monthName, twoDigit,
+  amount, pool
+) => {
+  try {
+    // Find the last known period of the resolved rebate code
+    const anchorResult = await pool.request()
+      .input('cc', sql.NVarChar(50), customerCode)
+      .input('rc', sql.NVarChar(50), rebateCode)
+      .query(`
+        SELECT TOP 1 Period, PayoutDate
+        FROM PayoutHistory
+        WHERE CardCode   = @cc
+          AND RebateCode = @rc
+          AND PayoutId   NOT LIKE 'SAP-%'
+          AND Period     NOT LIKE 'Balance of %'
+          AND Period     IS NOT NULL AND Period != ''
+        ORDER BY Id DESC
+      `);
+ 
+    const anchorPeriod  = anchorResult.recordset[0]?.Period    || `${monthName} ${year}`;
+    const anchorPayDate = anchorResult.recordset[0]?.PayoutDate || null;
+ 
+    const lastDay     = new Date(year, month, 0);
+    const fallbackDate = `${lastDay.getMonth()+1}.${lastDay.getDate()}.${twoDigit}`;
+    const displayDate  = anchorPayDate || fallbackDate;
+ 
+    const isDeduct = amount < 0;
+    const absAmt   = Math.abs(amount);
+    const suffix   = isDeduct ? 'NEG' : 'POS';
+    const oopId    = `SAP-${customerCode}-${rebateCode}-${periodKey}-${suffix}`;
+ 
+    const existCheck = await pool.request()
+      .input('PayoutId', sql.NVarChar(100), oopId)
+      .query(`SELECT Id, SapReleasedAmount FROM PayoutHistory WHERE PayoutId = @PayoutId`);
+ 
+    if (existCheck.recordset.length > 0) {
+      const prev = parseFloat(existCheck.recordset[0].SapReleasedAmount) || 0;
+      if (Math.abs(prev - amount) > 0.01) {
+        await pool.request()
+          .input('id',       sql.Int,            existCheck.recordset[0].Id)
+          .input('sapAmt',   sql.Decimal(18, 2), amount)
+          .input('released', sql.Decimal(18, 2), isDeduct ? 0 : absAmt)
+          .input('total',    sql.Decimal(18, 2), isDeduct ? 0 : absAmt)
+          .input('status',   sql.NVarChar(50),   isDeduct ? 'Deducted' : 'Paid')
+          .query(`
+            UPDATE PayoutHistory SET
+              TotalAmount       = @total,
+              AmountReleased    = @released,
+              SapReleasedAmount = @sapAmt,
+              Status            = @status,
+              SapLastSync       = GETDATE(),
+              UpdatedDate       = GETDATE()
+            WHERE Id = @id
+          `);
+        console.log(
+          `  ✅ [OOP-UPDATE] ${oopId}: ` +
+          `${isDeduct ? '−' : '+'}₱${absAmt.toFixed(2)} ← anchored to "${anchorPeriod}"`
+        );
+      }
+    } else {
+      await pool.request()
+        .input('PayoutId',   sql.NVarChar(100), oopId)
+        .input('CardCode',   sql.NVarChar(50),  customerCode)
+        .input('RebateCode', sql.NVarChar(50),  rebateCode)
+        .input('RebateType', sql.NVarChar(50),  'SAP-OOP')
+        .input('PayoutDate', sql.NVarChar(20),  displayDate)
+        .input('Period',     sql.NVarChar(100), anchorPeriod)
+        .input('BaseAmount', sql.Decimal(18, 2), 0)
+        .input('Total',      sql.Decimal(18, 2), isDeduct ? 0 : absAmt)
+        .input('Status',     sql.NVarChar(50),  isDeduct ? 'Deducted' : 'Paid')
+        .input('Released',   sql.Decimal(18, 2), isDeduct ? 0 : absAmt)
+        .input('SapAmt',     sql.Decimal(18, 2), amount)
+        .input('Balance',    sql.Decimal(18, 2), 0)
+        .query(`
+          INSERT INTO PayoutHistory (
+            PayoutId, CardCode, RebateCode, RebateType,
+            PayoutDate, Period,
+            BaseAmount, TotalAmount, Status,
+            AmountReleased, SapReleasedAmount, SapLastSync, RebateBalance
+          ) VALUES (
+            @PayoutId, @CardCode, @RebateCode, @RebateType,
+            @PayoutDate, @Period,
+            @BaseAmount, @Total, @Status,
+            @Released, @SapAmt, GETDATE(), @Balance
+          )
+        `);
+      console.log(
+        `  ✅ [OOP-INSERT] ${oopId}: ` +
+        `${isDeduct ? '−' : '+'}₱${absAmt.toFixed(2)} ← anchored to "${anchorPeriod}"`
+      );
+    }
+  } catch (err) {
+    console.error('❌ [OOP-UPSERT] upsertOOPRow:', err.message);
+  }
+};
+ 
+/* ──────────────────────────────────────────────────────────────────
+ *  7.  HOW TO WIRE THIS INTO YOUR EXISTING ROUTE
+ *
+ *  In your GET /customer/:customerCode/payouts route handler,
+ *  replace the existing syncSAPDataToPayouts call block with:
+ *
+ *    // SYNC: Resolve ALL SAP transactions across all rebate programs
+ *    await universalSyncSAPToAllRebates(
+ *      customerCode,
+ *      rebateCode,
+ *      ownPool
+ *    );
+ *
+ *  You can keep the existing syncSAPDataToPayouts call as a
+ *  supplementary fine-grained sync for the CURRENT period, but
+ *  universalSyncSAPToAllRebates handles the cross-period cases.
+ *
+ *  ── OPTIONAL: Add a dedicated sync endpoint ─────────────────────
+ *
+ *  router.post('/customer/:customerCode/sync-sap-universal', async (req, res) => {
+ *    const { customerCode } = req.params;
+ *    const { db, rebateCode } = req.body;
+ *    const pool = getPool(db || 'VCP_OWN');
+ *    await universalSyncSAPToAllRebates(customerCode, rebateCode, pool);
+ *    res.json({ success: true, message: 'Universal SAP sync complete' });
+ *  });
+ *
+ *  ── What happens when a new rebate program is created in April ──
+ *
+ *  1.  Employee runs a sync (or it auto-runs on page load) for
+ *      any rebate code in the family.
+ *  2.  getAllRebateProgramsForCustomer() now returns April program.
+ *  3.  resolveDocDateToRebateProgram() maps April DocDates to the
+ *      April program (exact match).
+ *  4.  cleanupStaleOOPRows() deletes the old OOP row that was
+ *      sitting inside January's PayoutHistory.
+ *  5.  upsertOOPRow() or a direct UPDATE places the amount inside
+ *      the April program's correct period row.
+ *  6.  January no longer shows any April transactions. ✅
+ * ────────────────────────────────────────────────────────────────*/
 
 // Function to ensure SAP columns exist in the payout table
 const ensureSAPColumnsExist = async (pool) => {

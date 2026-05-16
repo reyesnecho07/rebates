@@ -100,7 +100,7 @@ class ReportService {
     const { selectedCustomer, dateFrom, dateTo } = parameters;
     
     try {
-      const response = await fetch("http://192.168.100.193:3006/api/nexchem/invoice");
+      const response = await fetch("http://192.168.100.193:3009/api/nexchem/invoice");
       const invoiceData = await response.json();
 
       // Get customer name

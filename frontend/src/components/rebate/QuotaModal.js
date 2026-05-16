@@ -6,33 +6,41 @@ const QuotaModal = ({ isOpen, onClose, customer, onSave, quotaPeriods, importedQ
   const { theme } = useTheme();
   const [localQuotas, setLocalQuotas] = useState({});
 
-  useEffect(() => {
-    if (customer && customer.quotas) {
-      const initialQuotas = {};
-      
-      if (customer.quotas.length > 0) {
-        const monthlyPeriods = getMonthlyPeriodsFromQuotaPeriods();
-        monthlyPeriods.forEach((_, index) => {
-          initialQuotas[index] = customer.quotas[index] || "";
-        });
-      } else if (importedQuotas.length > 0) {
-        importedQuotas.forEach((quota, index) => {
-          if (index < quotaPeriods.length) {
-            initialQuotas[index] = quota || "";
-          }
-        });
-      }
-      
-      const monthlyPeriods = getMonthlyPeriodsFromQuotaPeriods();
-      monthlyPeriods.forEach((_, index) => {
-        if (initialQuotas[index] === undefined) {
-          initialQuotas[index] = "";
-        }
-      });
-      
-      setLocalQuotas(initialQuotas);
-    }
-  }, [customer, importedQuotas, quotaPeriods]);
+useEffect(() => {
+  if (!customer) return;
+  
+  const monthlyPeriods = getMonthlyPeriodsFromQuotaPeriods();
+  const initialQuotas = {};
+  
+  const totalSlots = Math.max(
+    monthlyPeriods.length,
+    customer.quotas?.length || 0,
+    importedQuotas?.length || 0
+  );
+  
+  if (totalSlots === 0) {
+    setLocalQuotas({});
+    return;
+  }
+
+  for (let i = 0; i < totalSlots; i++) {
+    // Priority: existing customer quota > imported quota > empty
+    const fromCustomer = customer.quotas?.[i];
+    const fromImported = Array.isArray(importedQuotas) 
+      ? (typeof importedQuotas[i] === 'object' 
+          ? importedQuotas[i]?.TargetQty 
+          : importedQuotas[i])
+      : undefined;
+    
+    initialQuotas[i] = (fromCustomer !== undefined && fromCustomer !== "")
+      ? fromCustomer
+      : (fromImported !== undefined && fromImported !== "")
+        ? String(fromImported)
+        : "";
+  }
+  
+  setLocalQuotas(initialQuotas);
+}, [customer, importedQuotas, quotaPeriods]);
 
   const getMonthlyPeriodsFromQuotaPeriods = () => {
     const monthlyPeriods = [];

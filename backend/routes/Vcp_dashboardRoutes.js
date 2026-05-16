@@ -483,6 +483,7 @@ const fixedItemsQuery = `
     T3.ItemCode as code,
     T3.ItemName as description,
     T3.UnitPerQty,
+    T3.UnitOfMeasure as uom,
     T3.RebatePerBag as rebate
   FROM RebateProgram T0
     INNER JOIN FixProdRebate T3 ON T0.RebateCode = T3.RebateCode
@@ -498,6 +499,7 @@ items = fixedItemsResult.recordset.map(item => ({
   code: item.code,
   description: item.description,
   unitPerQty: item.UnitPerQty || 1,
+  uom: item.uom || '',
   rebate: item.rebate || 0,
   type: 'fixed'
 }));
@@ -557,6 +559,7 @@ items = fixedItemsResult.recordset.map(item => ({
       T3.ItemCode as code,
       T3.ItemName as description,
       T3.UnitPerQty,
+      T3.UnitOfMeasure as uom,
       T4.RangeNo as itemRangeNo,
       T4.MinQty as itemMinQty,
       T4.MaxQty as itemMaxQty,
@@ -582,6 +585,7 @@ items = fixedItemsResult.recordset.map(item => ({
         code: row.code,
         description: row.description || 'Unknown Item',
         unitPerQty: row.UnitPerQty || 1,
+        uom: row.uom || '',
         ranges: [],
         type: 'incremental'
       });
@@ -675,6 +679,7 @@ customers = Array.from(customerMap.values()).map(customer => {
       T3.ItemCode as code,
       T3.ItemName as description,
       T3.UnitPerQty,
+      T3.UnitOfMeasure as uom,
       T3.PercentagePerBag as percentage
     FROM RebateProgram T0
       INNER JOIN PerProdRebate T3 ON T0.RebateCode = T3.RebateCode
@@ -690,6 +695,7 @@ customers = Array.from(customerMap.values()).map(customer => {
     code: item.code,
     description: item.description,
     unitPerQty: item.UnitPerQty || 1,
+    uom: item.uom || '',
     percentage: item.percentage || 0,
     type: 'percentage'
   }));
@@ -1123,6 +1129,7 @@ async function loadRebateDetails(rebateCode, database) {
           T3.ItemCode as code,
           T3.ItemName as description,
           T3.UnitPerQty,
+          T3.UnitOfMeasure as uom,
           T3.RebatePerBag as rebate
         FROM RebateProgram T0
           INNER JOIN FixProdRebate T3 ON T0.RebateCode = T3.RebateCode
@@ -1138,6 +1145,7 @@ async function loadRebateDetails(rebateCode, database) {
         code: item.code,
         description: item.description,
         unitPerQty: item.UnitPerQty || 1,
+        uom: item.uom || '',
         rebate: item.rebate || 0,
         type: 'fixed'
       }));
@@ -1190,6 +1198,7 @@ async function loadRebateDetails(rebateCode, database) {
           T3.ItemCode as code,
           T3.ItemName as description,
           T3.UnitPerQty,
+          T3.UnitOfMeasure as uom,
           T3.PercentagePerBag as percentage
         FROM RebateProgram T0
           INNER JOIN PerProdRebate T3 ON T0.RebateCode = T3.RebateCode
@@ -1205,6 +1214,7 @@ async function loadRebateDetails(rebateCode, database) {
         code: item.code,
         description: item.description,
         unitPerQty: item.UnitPerQty || 1,
+        uom: item.uom || '',
         percentage: item.percentage || 0,
         type: 'percentage'
       }));
@@ -1292,7 +1302,8 @@ router.put('/rebate/item', async (req, res) => {
         UPDATE FixProdRebate 
         SET ItemName = @description,
             UnitPerQty = @unitPerQty,
-            RebatePerBag = @rebate
+            RebatePerBag = @rebate,
+            UnitOfMeasure = @uom
         WHERE ItemCode = @itemCode AND RebateCode = @rebateCode
       `;
 
@@ -1302,6 +1313,7 @@ router.put('/rebate/item', async (req, res) => {
         .input('description', sql.NVarChar(255), description || '')
         .input('unitPerQty', sql.Int, parseInt(unitPerQty) || 1)
         .input('rebate', sql.Decimal(10, 2), parseFloat(rebate) || 0)
+        .input('uom', sql.NVarChar(50), req.body.uom || '')
         .input('itemCode', sql.NVarChar(50), itemCode)
         .input('rebateCode', sql.NVarChar(50), rebateCode)
         .query(updateQuery);
@@ -1333,11 +1345,12 @@ router.put('/rebate/item', async (req, res) => {
       await pool.request()
         .input('description', sql.NVarChar(255), description)
         .input('unitPerQty', sql.Decimal(10, 2), unitPerQty || 1)
+        .input('uom', sql.NVarChar(50), req.body.uom || '')
         .input('itemCode', sql.NVarChar(50), itemCode)
         .input('rebateCode', sql.NVarChar(50), rebateCode)
         .query(`
           UPDATE IncItemRebate 
-          SET ItemName = @description, UnitPerQty = @unitPerQty
+          SET ItemName = @description, UnitPerQty = @unitPerQty, UnitOfMeasure = @uom
           WHERE ItemCode = @itemCode AND RebateCode = @rebateCode
         `);
 
@@ -1373,7 +1386,8 @@ router.put('/rebate/item', async (req, res) => {
         UPDATE PerProdRebate 
         SET ItemName = @description, 
             UnitPerQty = @unitPerQty, 
-            PercentagePerBag = @rebate
+            PercentagePerBag = @rebate,
+            UnitOfMeasure = @uom
         WHERE ItemCode = @itemCode AND RebateCode = @rebateCode
       `;
 
@@ -1383,6 +1397,7 @@ router.put('/rebate/item', async (req, res) => {
         .input('description', sql.NVarChar(255), description || '')
         .input('unitPerQty', sql.Int, parseInt(unitPerQty) || 1)
         .input('rebate', sql.Int, parseInt(rebate) || 0)
+        .input('uom', sql.NVarChar(50), req.body.uom || '')
         .input('itemCode', sql.NVarChar(50), itemCode)
         .input('rebateCode', sql.NVarChar(50), rebateCode)
         .query(updateQuery);
@@ -1763,7 +1778,8 @@ res.json({
         T0.NumAtCard as CustomerReference,
         T0.CardName as CustomerName,
         T1.PriceAfVAT,
-        T1.Treetype 
+        T1.Treetype,
+        T1.Gtotal
       FROM
         OINV T0
         LEFT JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
@@ -1806,7 +1822,8 @@ let adjustedTransactions = sapResult.recordset.map(trans => ({
   InvoiceNumber: trans.InvoiceNumber,
   CustomerReference: trans.CustomerReference,
   PriceAfVAT: trans.PriceAfVAT,
-    Treetype: trans.Treetype 
+  Treetype: trans.Treetype,
+  Gtotal: trans.Gtotal || 0 
 }));
 
 try {
@@ -1974,6 +1991,7 @@ const processFixedTransactions = (sapTransactions, rebateItemMap, totalQuota, re
       QtyForReb: qtyForReb,
       Progress: progress.toFixed(1),
       QtyBal: qtyBal,
+      Gtotal: sapTrans.Gtotal || 0,
       EligibilityStatus: eligibilityStatus,
       CumulativeQtyForReb: currentCumulative,
       ItemCumulativeQty: currentCumulative,
@@ -2019,7 +2037,8 @@ const processFixedTransactions = (sapTransactions, rebateItemMap, totalQuota, re
       OriginalInvoiceNumber: returnTrans.OriginalInvoiceNumber,
       IsAdjustedForReturns: true,
       AdjustmentNotes: returnTrans.AdjustmentNotes,
-      RebateType: 'Fixed'
+      RebateType: 'Fixed',
+      Gtotal: sapTrans.Gtotal || 0,
     });
   });
 
@@ -2132,6 +2151,7 @@ const processIncrementalTransactions = (sapTransactions, rebateItemMap, customer
       RebateItemName: rebateItem.itemName,
       RebateType: 'Incremental',
       MonthKey: monthKey,
+      Gtotal: sapTrans.Gtotal || 0,
       MonthName: monthName,
       CurrentRange: currentRange?.rangeNo || null,
       RebatePerBag: rebatePerBag,
@@ -2222,6 +2242,7 @@ const processPercentageTransactions = (sapTransactions, rebateItemMap, rebateDet
       RebateItemName: rebateItem.itemName,
       IsEmptyData: false,
       IsMatchingItem: true,
+      Gtotal: sapTrans.Gtotal || 0,
       MonthQuota: monthlyQuota,
       CumulativeQtyForRebDisplay: currentCumulative,
       UnitPerQty: unitPerQty,
@@ -3390,8 +3411,6 @@ router.get('/rebates-summary', async (req, res) => {
         LEFT JOIN FixProdRebate T3 ON T0.RebateCode = T3.RebateCode
       WHERE
         T0.RebateType = 'Fixed'
-        AND T0.IsActive = 1
-        AND T1.CardCode IS NOT NULL
         AND LTRIM(RTRIM(T1.CardCode)) != ''
         AND T3.ItemCode IS NOT NULL
     `;
@@ -3424,7 +3443,6 @@ router.get('/rebates-summary', async (req, res) => {
         LEFT JOIN PerProdRebate T3 ON T0.RebateCode = T3.RebateCode
       WHERE
         T0.RebateType = 'Percentage'
-        AND T0.IsActive = 1
         AND T1.CardCode IS NOT NULL
         AND LTRIM(RTRIM(T1.CardCode)) != ''
         AND T3.ItemCode IS NOT NULL
@@ -3464,7 +3482,6 @@ router.get('/rebates-summary', async (req, res) => {
         LEFT JOIN IncItemRange T4 ON T3.Id = T4.ItemRebateId
       WHERE
         T0.RebateType = 'Incremental'
-        AND T0.IsActive = 1
         AND T1.CardCode IS NOT NULL
         AND LTRIM(RTRIM(T1.CardCode)) != ''
         AND T3.ItemCode IS NOT NULL
@@ -3530,7 +3547,7 @@ router.get('/rebates-summary', async (req, res) => {
           rebateCode: row.RebateCode,
           dateFrom: row.DateFrom,
           dateTo: row.DateTo,
-          isActive: row.IsActive === 1,
+          isActive: row.IsActive === '1' || row.IsActive === 1 || row.IsActive === true,
           frequency: row.Frequency || 'Quarterly',
           qtrRebate: row.QtrRebate || 0,
           // ADDED: Store the created date for sorting
@@ -3721,7 +3738,7 @@ if (hasPayoutHistory) {
         // Fetch transactions to calculate progress
         console.log(`Fetching transactions for ${customer.code} (${customer.rebateCode})...`);
         const transResponse = await fetch(
-          `http://192.168.100.193:3006/api/dashboard/customer/${customer.code}/transactions?` +
+          `http://192.168.100.193:3009/api/dashboard/customer/${customer.code}/transactions?` +
           `db=${databaseToUse}&rebateCode=${customer.rebateCode}&rebateType=${customer.rebateType}&` +
           `useRebatePeriod=true`
         );

@@ -12,7 +12,7 @@ class PermissionWebSocket {
   // ✅ NEW: Get WebSocket URL from environment
   getWebSocketUrl(token) {
     // Get base URL from environment or fallback to localhost
-    const wsBaseUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:3006';
+    const wsBaseUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:3009';
     
     // Remove any trailing slashes
     const cleanUrl = wsBaseUrl.replace(/\/$/, '');
