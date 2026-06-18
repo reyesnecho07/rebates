@@ -1,11 +1,11 @@
-// AuthPage.js — DB-synced theme toggle + persistent theme across logout + enhanced UI
+// AuthPage.js — Split-card · Image left panel · Clean right form
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import {
-  Eye, EyeOff, User, Lock, X, KeyRound,
+  Eye, EyeOff, Lock, X, KeyRound,
   AlertCircle, CheckCircle, Shield, ArrowRight,
-  Sun, Moon, Loader2,
+  Sun, Moon, Loader2, User, HelpCircle, LayoutDashboard, Users, BarChart3,
 } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import Rebate from "../assets/Rebate.png";
@@ -13,396 +13,520 @@ import Rebate from "../assets/Rebate.png";
 const API_BASE = "http://192.168.100.193:3009/api";
 const DB_NAME  = "USER";
 
-/* ── Injected keyframes ────────────────────────────────────────────────────── */
-const bgStyles = `
-  @keyframes spinRing   { from{transform:rotate(0deg)}  to{transform:rotate(360deg)} }
-  @keyframes spinRingRv { from{transform:rotate(360deg)} to{transform:rotate(0deg)}  }
-  @keyframes floatA { 0%,100%{transform:translateY(0) rotate(0deg)} 50%{transform:translateY(-22px) rotate(8deg)} }
-  @keyframes floatB { 0%,100%{transform:translateY(0) rotate(45deg)} 50%{transform:translateY(18px) rotate(52deg)} }
-  @keyframes pulseFade { 0%,100%{opacity:.06} 50%{opacity:.14} }
-  @keyframes dashScroll { to{stroke-dashoffset:-40} }
+/* ─── Global styles & keyframes ─────────────────────────────────────────────── */
+const GLOBAL_STYLES = `
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Sora:wght@300;400;500;600;700;800&display=swap');
+  *, *::before, *::after { box-sizing: border-box; }
+  @keyframes floatUp    { 0%,100%{transform:translateY(0)}      50%{transform:translateY(-14px)} }
+  @keyframes spinSlow   { from{transform:rotate(0deg)}          to{transform:rotate(360deg)} }
+  @keyframes pulse2     { 0%,100%{opacity:.5}                   50%{opacity:1} }
+  @keyframes slideIn    { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+  @keyframes floatBlob  {
+    0%,100% { transform: translate(0,0) scale(1); }
+    33%     { transform: translate(18px,-22px) scale(1.04); }
+    66%     { transform: translate(-14px,16px) scale(.97); }
+  }
+  @keyframes floatBlob2 {
+    0%,100% { transform: translate(0,0) scale(1); }
+    33%     { transform: translate(-20px,18px) scale(1.05); }
+    66%     { transform: translate(16px,-14px) scale(.96); }
+  }
+  @keyframes swirl {
+    0%   { transform: rotate(0deg)   scale(1);    opacity:.90; }
+    50%  { transform: rotate(180deg) scale(1.06); opacity:1;   }
+    100% { transform: rotate(360deg) scale(1);    opacity:.90; }
+  }
+  @keyframes swirlRv {
+    0%   { transform: rotate(0deg)   scale(1.05); }
+    100% { transform: rotate(-360deg) scale(1.05); }
+  }
+  @keyframes carouselFadeIn {
+    from { opacity:0; transform:translateY(18px); }
+    to   { opacity:1; transform:translateY(0); }
+  }
+  @keyframes carouselFadeOut {
+    from { opacity:1; transform:translateY(0); }
+    to   { opacity:0; transform:translateY(-14px); }
+  }
+
+  /* ── Tooltip ── */
+  .tooltip-hover {
+    position: relative;
+    display: inline-flex;
+    cursor: pointer;
+  }
+  .tooltip-hover .tooltip-text {
+    visibility: hidden;
+    opacity: 0;
+    width: 260px;
+    background-color: #0f172aee;
+    backdrop-filter: blur(14px);
+    color: #f1f5f9;
+    text-align: left;
+    border-radius: 14px;
+    padding: 12px 14px;
+    position: absolute;
+    z-index: 200;
+    /* open UPWARD from the bottom-right icon */
+    bottom: calc(100% + 10px);
+    right: 0;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.6;
+    transition: opacity 0.2s ease, visibility 0.2s;
+    pointer-events: none;
+    border: 1px solid rgba(255,255,255,0.12);
+    box-shadow: 0 12px 30px -4px rgba(0,0,0,0.35);
+    white-space: normal;
+    font-family: 'DM Sans', sans-serif;
+  }
+  .tooltip-hover:hover .tooltip-text {
+    visibility: visible;
+    opacity: 1;
+  }
+  /* arrow points downward toward the icon */
+  .tooltip-hover .tooltip-text::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    right: 10px;
+    border-width: 6px;
+    border-style: solid;
+    border-color: #0f172aee transparent transparent transparent;
+  }
+
+  @media (max-width: 639px) {
+    .tooltip-hover .tooltip-text {
+      width: 220px;
+      right: -8px;
+      font-size: 11px;
+    }
+  }
 `;
 
-/* ── Animated canvas: constellation particle network ───────────────────────── */
-function ParticleCanvas({ isDark }) {
-  const canvasRef = useRef(null);
-  const animRef   = useRef(null);
+/* ─── Carousel slides ────────────────────────────────────────────────────────── */
+const CAROUSEL_SLIDES = [
+  {
+    heading:     "Simplify Rebate\nManagement",
+    description: "Manage rebate centralized records with flexible configuration and full audit trails.",
+    accent:      "#60a5fa",
+    icon:        <LayoutDashboard size={22} strokeWidth={1.7} />,
+  },
+  {
+    heading:     "Track Customers\nEarned Rebates Instantly",
+    description: "Monitor customer earned rebates, payout progress, and rebate balances in real time.",
+    accent:      "#a78bfa",
+    icon:        <Users size={22} strokeWidth={1.7} />,
+  },
+  {
+    heading:     "View Customers\nReports",
+    description: "Access detailed customer rebate reports, summaries, and transaction insights easily.",
+    accent:      "#34d399",
+    icon:        <BarChart3 size={22} strokeWidth={1.7} />,
+  },
+];
+const SLIDE_DURATION = 4000;
+
+/* ─── Left decorative panel ──────────────────────────────────────────────────── */
+function BrandPanel({ isDark }) {
+  const [currentSlide, setCurrentSlide] = useState(0);
+  const [animatingOut, setAnimatingOut] = useState(false);
+  const [animatingIn,  setAnimatingIn]  = useState(false);
+  const timerRef = useRef(null);
+
+  const goToSlide = (next) => {
+    if (animatingOut || animatingIn) return;
+    setAnimatingOut(true);
+    setTimeout(() => {
+      setCurrentSlide(next);
+      setAnimatingOut(false);
+      setAnimatingIn(true);
+      setTimeout(() => setAnimatingIn(false), 420);
+    }, 320);
+  };
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const resize = () => {
-      canvas.width  = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
-    };
-    resize();
-    window.addEventListener("resize", resize);
-
-    const ctx   = canvas.getContext("2d");
-    const COUNT = 62;
-    const REACH = 145;
-    const dotRgb  = isDark ? "96,165,250" : "59,130,246";
-    const lineRgb = isDark ? "99,102,241" : "99,102,241";
-    const SHAPES  = ["circle","circle","circle","circle","square","triangle"];
-
-    const particles = Array.from({ length: COUNT }, () => ({
-      x:     Math.random() * canvas.width,
-      y:     Math.random() * canvas.height,
-      vx:    (Math.random() - 0.5) * 0.38,
-      vy:    (Math.random() - 0.5) * 0.38,
-      r:     Math.random() * 1.8 + 0.8,
-      shape: SHAPES[Math.floor(Math.random() * SHAPES.length)],
-      spin:  (Math.random() - 0.5) * 0.012,
-      angle: Math.random() * Math.PI * 2,
-    }));
-
-    let running = true;
-    function draw() {
-      if (!running) return;
-      const W = canvas.width, H = canvas.height;
-      ctx.clearRect(0, 0, W, H);
-
-      particles.forEach(p => {
-        p.x += p.vx; p.y += p.vy; p.angle += p.spin;
-        if (p.x < -10) p.x = W + 10;
-        if (p.x > W+10) p.x = -10;
-        if (p.y < -10) p.y = H + 10;
-        if (p.y > H+10) p.y = -10;
+    timerRef.current = setInterval(() => {
+      setCurrentSlide(prev => {
+        const next = (prev + 1) % CAROUSEL_SLIDES.length;
+        goToSlide(next);
+        return prev;
       });
+    }, SLIDE_DURATION);
+    return () => clearInterval(timerRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-      for (let i = 0; i < COUNT; i++) {
-        for (let j = i + 1; j < COUNT; j++) {
-          const dx = particles[i].x - particles[j].x;
-          const dy = particles[i].y - particles[j].y;
-          const d  = Math.sqrt(dx*dx + dy*dy);
-          if (d < REACH) {
-            const a = (1 - d/REACH) * (isDark ? 0.18 : 0.12);
-            ctx.beginPath();
-            ctx.strokeStyle = `rgba(${lineRgb},${a})`;
-            ctx.lineWidth   = 0.55;
-            ctx.moveTo(particles[i].x, particles[i].y);
-            ctx.lineTo(particles[j].x, particles[j].y);
-            ctx.stroke();
-          }
-        }
-      }
-
-      particles.forEach(p => {
-        ctx.fillStyle = `rgba(${dotRgb},${isDark ? 0.40 : 0.28})`;
-        ctx.save();
-        ctx.translate(p.x, p.y);
-        if (p.shape === "square") {
-          ctx.rotate(p.angle);
-          const s = p.r * 2.2;
-          ctx.fillRect(-s, -s, s*2, s*2);
-        } else if (p.shape === "triangle") {
-          ctx.rotate(p.angle);
-          const h = p.r * 2.8;
-          ctx.beginPath();
-          ctx.moveTo(0, -h);
-          ctx.lineTo(h*0.86, h*0.5);
-          ctx.lineTo(-h*0.86, h*0.5);
-          ctx.closePath();
-          ctx.fill();
-        } else {
-          ctx.beginPath();
-          ctx.arc(0, 0, p.r, 0, Math.PI*2);
-          ctx.fill();
-        }
-        ctx.restore();
+  const handleDotClick = (i) => {
+    if (i === currentSlide) return;
+    clearInterval(timerRef.current);
+    goToSlide(i);
+    timerRef.current = setInterval(() => {
+      setCurrentSlide(prev => {
+        const next = (prev + 1) % CAROUSEL_SLIDES.length;
+        goToSlide(next);
+        return prev;
       });
+    }, SLIDE_DURATION);
+  };
 
-      animRef.current = requestAnimationFrame(draw);
-    }
-    draw();
-
-    return () => {
-      running = false;
-      cancelAnimationFrame(animRef.current);
-      window.removeEventListener("resize", resize);
-    };
-  }, [isDark]);
-
-  return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />;
-}
-
-/* ── SVG ornamental overlay ─────────────────────────────────────────────────── */
-function OrnamentalLayer({ isDark }) {
-  const s  = isDark ? "rgba(96,165,250,"  : "rgba(59,130,246,";
-  const s2 = isDark ? "rgba(99,102,241,"  : "rgba(79,70,229,";
+  const slide = CAROUSEL_SLIDES[currentSlide];
+  const textAnimation = animatingOut
+    ? "carouselFadeOut .32s cubic-bezier(.4,0,.6,1) forwards"
+    : animatingIn
+    ? "carouselFadeIn .42s cubic-bezier(.2,0,.2,1) forwards"
+    : "none";
 
   return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none">
-
-      {/* Large rotating dashed ring — top-left */}
-      <div style={{ position:"absolute", top:"-160px", left:"-160px",
-        width:"520px", height:"520px", animation:"spinRing 55s linear infinite" }}>
-        <svg width="520" height="520" viewBox="0 0 520 520">
-          <circle cx="260" cy="260" r="230"
-            stroke={`${s}0.10)`} strokeWidth="1" fill="none" strokeDasharray="10 18" />
-          <circle cx="260" cy="260" r="190"
-            stroke={`${s2}0.07)`} strokeWidth="0.7" fill="none" strokeDasharray="4 22" />
-        </svg>
-      </div>
-
-      {/* Counter-rotating ring — bottom-right */}
-      <div style={{ position:"absolute", bottom:"-150px", right:"-150px",
-        width:"540px", height:"540px", animation:"spinRingRv 70s linear infinite" }}>
-        <svg width="540" height="540" viewBox="0 0 540 540">
-          <circle cx="270" cy="270" r="240"
-            stroke={`${s2}0.09)`} strokeWidth="1" fill="none" strokeDasharray="8 20" />
-          <circle cx="270" cy="270" r="195"
-            stroke={`${s}0.06)`} strokeWidth="0.7" fill="none" strokeDasharray="3 26" />
-        </svg>
-      </div>
-
-      {/* Pulsing center halo */}
-      <div style={{ position:"absolute", top:"50%", left:"50%",
-        width:"700px", height:"700px", transform:"translate(-50%,-50%)",
-        animation:"pulseFade 7s ease-in-out infinite" }}>
-        <svg width="700" height="700" viewBox="0 0 700 700">
-          <circle cx="350" cy="350" r="320"
-            stroke={`${s}1)`} strokeWidth="0.8" fill="none" />
-        </svg>
-      </div>
-
-      {/* Corner bracket — top-left */}
-      <svg width="80" height="80" viewBox="0 0 80 80"
-        style={{ position:"absolute", top:"28px", left:"28px", opacity: isDark ? 0.22 : 0.18 }}>
-        <path d="M60 10 L10 10 L10 60" fill="none"
-          stroke={isDark ? "#60a5fa" : "#3b82f6"} strokeWidth="1.5"
-          strokeLinecap="round" strokeLinejoin="round" />
-        <circle cx="10" cy="10" r="3" fill={isDark ? "#60a5fa" : "#3b82f6"} />
-      </svg>
-
-      {/* Corner bracket — bottom-right */}
-      <svg width="80" height="80" viewBox="0 0 80 80"
-        style={{ position:"absolute", bottom:"28px", right:"28px", opacity: isDark ? 0.22 : 0.18 }}>
-        <path d="M20 70 L70 70 L70 20" fill="none"
-          stroke={isDark ? "#818cf8" : "#6366f1"} strokeWidth="1.5"
-          strokeLinecap="round" strokeLinejoin="round" />
-        <circle cx="70" cy="70" r="3" fill={isDark ? "#818cf8" : "#6366f1"} />
-      </svg>
-
-      {/* Corner bracket — top-right */}
-      <svg width="60" height="60" viewBox="0 0 60 60"
-        style={{ position:"absolute", top:"28px", right:"28px", opacity: isDark ? 0.15 : 0.13 }}>
-        <path d="M10 10 L50 10 L50 50" fill="none"
-          stroke={isDark ? "#60a5fa" : "#3b82f6"} strokeWidth="1.2"
-          strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-
-      {/* Corner bracket — bottom-left */}
-      <svg width="60" height="60" viewBox="0 0 60 60"
-        style={{ position:"absolute", bottom:"28px", left:"28px", opacity: isDark ? 0.15 : 0.13 }}>
-        <path d="M50 50 L10 50 L10 10" fill="none"
-          stroke={isDark ? "#818cf8" : "#6366f1"} strokeWidth="1.2"
-          strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-
-      {/* Floating hexagon — top-right */}
-      <svg width="64" height="64" viewBox="0 0 64 64"
-        style={{ position:"absolute", top:"12%", right:"10%",
-          animation:"floatA 11s ease-in-out infinite", opacity: isDark ? 0.22 : 0.17 }}>
-        <polygon points="32,4 58,18 58,46 32,60 6,46 6,18"
-          fill="none" stroke={isDark ? "#60a5fa" : "#3b82f6"} strokeWidth="1.2" />
-      </svg>
-
-      {/* Floating diamond — bottom-left */}
-      <svg width="44" height="44" viewBox="0 0 44 44"
-        style={{ position:"absolute", bottom:"14%", left:"9%",
-          animation:"floatB 14s ease-in-out infinite 1s", opacity: isDark ? 0.20 : 0.15 }}>
-        <rect x="8" y="8" width="28" height="28" fill="none"
-          stroke={isDark ? "#818cf8" : "#6366f1"}
-          strokeWidth="1.2" transform="rotate(45 22 22)" rx="2" />
-      </svg>
-
-      {/* Floating triangle — left-middle */}
-      <svg width="38" height="38" viewBox="0 0 38 38"
-        style={{ position:"absolute", top:"42%", left:"7%",
-          animation:"floatA 16s ease-in-out infinite 2.5s", opacity: isDark ? 0.18 : 0.13 }}>
-        <polygon points="19,4 34,32 4,32"
-          fill="none" stroke={isDark ? "#60a5fa" : "#3b82f6"} strokeWidth="1.1" />
-      </svg>
-
-      {/* Floating circle-target — right-middle */}
-      <svg width="40" height="40" viewBox="0 0 40 40"
-        style={{ position:"absolute", top:"55%", right:"7%",
-          animation:"floatB 13s ease-in-out infinite 0.8s", opacity: isDark ? 0.18 : 0.14 }}>
-        <circle cx="20" cy="20" r="15"
-          fill="none" stroke={isDark ? "#818cf8" : "#6366f1"} strokeWidth="1.1" />
-        <circle cx="20" cy="20" r="4"
-          fill={isDark ? "rgba(99,102,241,0.25)" : "rgba(99,102,241,0.18)"} />
-      </svg>
-
-      {/* Floating small hexagon — bottom-right */}
-      <svg width="32" height="32" viewBox="0 0 32 32"
-        style={{ position:"absolute", bottom:"22%", right:"14%",
-          animation:"floatA 18s ease-in-out infinite 3s", opacity: isDark ? 0.20 : 0.16 }}>
-        <polygon points="16,2 28,9 28,23 16,30 4,23 4,9"
-          fill="none" stroke={isDark ? "#60a5fa" : "#3b82f6"} strokeWidth="1" />
-      </svg>
-
-      {/* Floating plus — top-left area */}
-      <svg width="24" height="24" viewBox="0 0 24 24"
-        style={{ position:"absolute", top:"22%", left:"14%",
-          animation:"floatB 20s ease-in-out infinite 1.5s", opacity: isDark ? 0.22 : 0.16 }}>
-        <line x1="12" y1="2" x2="12" y2="22"
-          stroke={isDark ? "#60a5fa" : "#3b82f6"} strokeWidth="1.4" strokeLinecap="round" />
-        <line x1="2" y1="12" x2="22" y2="12"
-          stroke={isDark ? "#60a5fa" : "#3b82f6"} strokeWidth="1.4" strokeLinecap="round" />
-      </svg>
-
-      {/* Animated dashed line — left edge */}
-      <svg width="180" height="2"
-        style={{ position:"absolute", top:"35%", left:0, opacity: isDark ? 0.12 : 0.09 }}>
-        <line x1="0" y1="1" x2="180" y2="1"
-          stroke={isDark ? "#60a5fa" : "#3b82f6"} strokeWidth="1" strokeDasharray="6 10"
-          style={{ animation:"dashScroll 3s linear infinite" }} />
-      </svg>
-
-      {/* Animated dashed line — right edge */}
-      <svg width="160" height="2"
-        style={{ position:"absolute", top:"65%", right:0, opacity: isDark ? 0.12 : 0.09 }}>
-        <line x1="0" y1="1" x2="160" y2="1"
-          stroke={isDark ? "#818cf8" : "#6366f1"} strokeWidth="1" strokeDasharray="6 10"
-          style={{ animation:"dashScroll 4s linear infinite reverse" }} />
-      </svg>
-
-      {/* Dot grid cluster — top-right */}
-      <svg width="60" height="60" viewBox="0 0 60 60"
-        style={{ position:"absolute", top:"8%", right:"22%", opacity: isDark ? 0.25 : 0.18 }}>
-        {[0,1,2].flatMap(row => [0,1,2].map(col => (
-          <circle key={`${row}-${col}`}
-            cx={10+col*20} cy={10+row*20} r="2"
-            fill={isDark ? "#60a5fa" : "#3b82f6"} />
-        )))}
-      </svg>
-
-      {/* Dot grid cluster — bottom-left */}
-      <svg width="60" height="60" viewBox="0 0 60 60"
-        style={{ position:"absolute", bottom:"10%", left:"20%", opacity: isDark ? 0.20 : 0.14 }}>
-        {[0,1,2].flatMap(row => [0,1,2].map(col => (
-          <circle key={`${row}-${col}`}
-            cx={10+col*20} cy={10+row*20} r="2"
-            fill={isDark ? "#818cf8" : "#6366f1"} />
-        )))}
-      </svg>
-
+    <div style={{
+      width:"100%", height:"100%", position:"relative", overflow:"hidden",
+      background:"linear-gradient(160deg, #0a1628 0%, #0d1f3e 30%, #12103a 60%, #0a1628 100%)",
+      display:"flex", flexDirection:"column",
+      alignItems:"flex-start", justifyContent:"space-between",
+      padding:"32px 32px 28px",
+    }}>
       {/* Ambient blobs */}
       <div style={{
-        position:"absolute", top:"-100px", left:"-100px",
-        width:"420px", height:"420px", borderRadius:"50%",
-        background: isDark ? "rgba(30,64,175,0.14)" : "rgba(147,197,253,0.30)",
-        filter:"blur(90px)", transition:"background 0.5s",
+        position:"absolute", top:"10%", left:"5%",
+        width:"70%", height:"65%",
+        background:"radial-gradient(ellipse at 40% 40%, rgba(0,210,190,.55) 0%, rgba(0,150,220,.30) 35%, transparent 70%)",
+        filter:"blur(52px)", borderRadius:"50%",
+        animation:"floatBlob 9s ease-in-out infinite", pointerEvents:"none",
       }} />
       <div style={{
-        position:"absolute", bottom:"-80px", right:"-80px",
-        width:"380px", height:"380px", borderRadius:"50%",
-        background: isDark ? "rgba(67,56,202,0.11)" : "rgba(165,180,252,0.25)",
-        filter:"blur(90px)", transition:"background 0.5s",
+        position:"absolute", top:"20%", left:"20%",
+        width:"65%", height:"60%",
+        background:"radial-gradient(ellipse at 55% 55%, rgba(160,60,255,.50) 0%, rgba(100,30,200,.28) 40%, transparent 72%)",
+        filter:"blur(56px)", borderRadius:"50%",
+        animation:"floatBlob2 11s ease-in-out infinite", pointerEvents:"none",
       }} />
+      <div style={{
+        position:"absolute", top:"30%", left:"-8%",
+        width:"55%", height:"50%",
+        background:"radial-gradient(ellipse at 50% 50%, rgba(0,180,230,.35) 0%, transparent 68%)",
+        filter:"blur(40px)", borderRadius:"50%",
+        animation:"floatBlob 14s ease-in-out infinite reverse", pointerEvents:"none",
+      }} />
+      {/* Noise */}
+      <div style={{
+        position:"absolute", inset:0, pointerEvents:"none",
+        backgroundImage:"url(\"data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E\")",
+        backgroundSize:"180px 180px", opacity:.55,
+      }} />
+
+      {/* Logo */}
+      <div style={{ position:"relative", zIndex:10, display:"flex", alignItems:"center", gap:"10px" }}>
+        <div style={{
+          width:"36px", height:"36px", borderRadius:"10px",
+          backdropFilter:"blur(8px)",
+          display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+        }}>
+          <img src={Rebate} alt="Logo"
+            style={{ width:"50px", height:"50px", objectFit:"contain" }} />
+        </div>
+        <span style={{
+          fontFamily:"'Sora', sans-serif",
+          fontSize:"13px", fontWeight:700, color:"rgba(255,255,255,.85)",
+          letterSpacing:".2px",
+        }}>Rebate Management System</span>
+      </div>
+
+      {/* Central swirl — clamped to top 62% so it never bleeds over the text zone */}
+      <div style={{
+        position:"absolute",
+        top:"8%", left:"50%",
+        transform:"translateX(-50%)",
+        width:"300px", height:"300px",
+        zIndex:2, pointerEvents:"none",
+      }}>
+        <div style={{
+          position:"absolute", inset:"-10px", borderRadius:"50%",
+          background:"radial-gradient(circle, rgba(0,210,190,.18) 0%, transparent 70%)",
+          filter:"blur(16px)",
+        }} />
+        <div style={{
+          position:"absolute", inset:"10px", borderRadius:"50%",
+          background:"conic-gradient(from 0deg, rgba(0,210,190,.0) 0deg, rgba(0,210,190,.85) 90deg, rgba(0,180,240,.70) 160deg, rgba(0,210,190,.0) 200deg, rgba(0,210,190,.0) 360deg)",
+          filter:"blur(3px)", animation:"swirl 8s linear infinite", opacity:.85,
+        }} />
+        <div style={{
+          position:"absolute", inset:"28px", borderRadius:"50%",
+          background:"conic-gradient(from 120deg, rgba(160,60,255,.0) 0deg, rgba(160,60,255,.80) 80deg, rgba(200,80,255,.60) 150deg, rgba(160,60,255,.0) 200deg, rgba(160,60,255,.0) 360deg)",
+          filter:"blur(3.5px)", animation:"swirlRv 10s linear infinite", opacity:.80,
+        }} />
+        <div style={{
+          position:"absolute", inset:"52px", borderRadius:"50%",
+          background:"conic-gradient(from 240deg, rgba(255,80,180,.0) 0deg, rgba(255,80,180,.65) 70deg, rgba(255,120,200,.50) 130deg, rgba(255,80,180,.0) 190deg, rgba(255,80,180,.0) 360deg)",
+          filter:"blur(4px)", animation:"swirl 12s linear infinite", opacity:.70,
+        }} />
+        <div style={{
+          position:"absolute", inset:"80px", borderRadius:"50%",
+          background:"radial-gradient(circle at 38% 38%, rgba(220,240,255,.22) 0%, rgba(120,180,255,.08) 50%, transparent 75%)",
+          backdropFilter:"blur(1px)",
+        }} />
+        <div style={{
+          position:"absolute", inset:"130px", borderRadius:"50%",
+          background:"rgba(255,255,255,.06)",
+        }} />
+      </div>
+
+      {/* Dark gradient scrim — covers the bottom ~45% so decorative elements
+          never paint over the carousel text */}
+      <div style={{
+        position:"absolute", bottom:0, left:0, right:0,
+        height:"55%",
+        background:"linear-gradient(to bottom, transparent 0%, rgba(8,14,30,.82) 55%, rgba(8,14,30,.97) 100%)",
+        zIndex:3, pointerEvents:"none",
+      }} />
+
+      {/* Bottom carousel — z-index above scrim */}
+      <div style={{ position:"relative", zIndex:10, width:"100%" }}>
+        <div style={{ minHeight:"108px", animation: textAnimation }}>
+          {/* Icon pill */}
+          <div style={{
+            display:"inline-flex", alignItems:"center", gap:"7px",
+            background:"rgba(255,255,255,.07)",
+            border:`1px solid ${slide.accent}44`,
+            borderRadius:"20px", padding:"5px 12px 5px 8px",
+            marginBottom:"10px",
+          }}>
+            <div style={{
+              color: slide.accent,
+              display:"flex", alignItems:"center", justifyContent:"center",
+            }}>
+              {React.cloneElement(slide.icon, { size:15, strokeWidth:1.8 })}
+            </div>
+            <span style={{
+              fontSize:"10px", fontWeight:600, color: slide.accent,
+              letterSpacing:".4px", textTransform:"uppercase",
+              fontFamily:"'DM Sans', sans-serif",
+            }}>
+              {currentSlide === 0 ? "Management" : currentSlide === 1 ? "Tracking" : "Reports"}
+            </span>
+          </div>
+
+          {/* Heading — plain white with colored first word for legibility */}
+          <h2 style={{
+            margin:"0 0 8px",
+            fontFamily:"'Sora', sans-serif",
+            fontSize:"20px", fontWeight:800, lineHeight:1.3,
+            letterSpacing:"-.3px",
+            color:"#ffffff",
+            whiteSpace:"pre-line",
+            /* Strong text-shadow so it reads over any blob that drifts behind */
+            textShadow:"0 1px 16px rgba(0,0,0,.90), 0 2px 4px rgba(0,0,0,.70)",
+          }}>
+            {/* Colour only the accent word(s) */}
+            {slide.heading.split("\n").map((line, li) => (
+              <span key={li} style={{ display:"block" }}>
+                {li === 0
+                  ? <span style={{ color: slide.accent }}>{line}</span>
+                  : line
+                }
+              </span>
+            ))}
+          </h2>
+
+          <p style={{
+            margin:0,
+            fontSize:"12px", fontWeight:400,
+            color:"rgba(255,255,255,.60)", lineHeight:1.65,
+            maxWidth:"230px",
+            textShadow:"0 1px 6px rgba(0,0,0,.70)",
+          }}>
+            {slide.description}
+          </p>
+        </div>
+
+        {/* Dots */}
+        <div style={{ display:"flex", gap:"6px", marginTop:"16px", alignItems:"center" }}>
+          {CAROUSEL_SLIDES.map((s, i) => (
+            <button key={i} onClick={() => handleDotClick(i)} title={`Slide ${i + 1}`}
+              style={{
+                padding:0, border:"none", cursor:"pointer",
+                height:"6px",
+                width: i === currentSlide ? "20px" : "6px",
+                borderRadius:"3px",
+                background: i === currentSlide ? slide.accent : "rgba(255,255,255,.20)",
+                transition:"width .35s cubic-bezier(.4,0,.2,1), background .35s ease",
+                boxShadow: i === currentSlide ? `0 0 8px 1px ${slide.accent}55` : "none",
+              }}
+            />
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
 
-/* ── Full-screen sign-in overlay ───────────────────────────────────────────── */
+/* ─── Sign-in transition overlay ─────────────────────────────────────────────── */
 function TransitionOverlay({ visible, isDark }) {
   if (!visible) return null;
   return (
-    <div className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center transition-colors duration-200 ${
-      isDark ? "bg-slate-900" : "bg-white"
-    }`}>
-      <div className="relative w-16 h-16 mb-6">
-        <div className={`absolute inset-0 rounded-full border-2 ${isDark ? "border-slate-800" : "border-slate-100"}`} />
-        <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-blue-500 animate-spin" />
-        <div className="absolute inset-0 rounded-full border-2 border-transparent border-b-blue-300/40 animate-spin"
-          style={{ animationDuration:"1.8s", animationDirection:"reverse" }} />
-        <div className="absolute inset-0 flex items-center justify-center">
-          <Shield size={18} className={isDark ? "text-blue-400" : "text-blue-500"} />
+    <div style={{
+      position:"fixed", inset:0, zIndex:9999,
+      display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+      background: isDark ? "#0f172a" : "#fff",
+      fontFamily:"'DM Sans', sans-serif",
+    }}>
+      <div style={{ position:"relative", width:"54px", height:"54px", marginBottom:"20px" }}>
+        <div style={{
+          position:"absolute", inset:0, borderRadius:"50%",
+          border:`2px solid ${isDark?"#1e293b":"#f1f5f9"}`,
+        }} />
+        <div style={{
+          position:"absolute", inset:0, borderRadius:"50%",
+          border:"2px solid transparent", borderTopColor:"#3b82f6",
+          animation:"spinSlow .9s linear infinite",
+        }} />
+        <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <Shield size={16} color={isDark?"#60a5fa":"#3b82f6"} />
         </div>
       </div>
-      <p className={`text-[13px] font-bold tracking-wide ${isDark ? "text-slate-200" : "text-slate-700"}`}>Signing in…</p>
-      <p className={`text-[11px] mt-1.5 ${isDark ? "text-slate-500" : "text-slate-400"}`}>Verifying your credentials</p>
-      <div className="flex gap-1.5 mt-5">
+      <p style={{ color:isDark?"#e2e8f0":"#1e293b", fontSize:"13px", fontWeight:700, margin:0 }}>
+        Signing in…
+      </p>
+      <p style={{ color:isDark?"#475569":"#94a3b8", fontSize:"11px", margin:"6px 0 18px" }}>
+        Verifying credentials
+      </p>
+      <div style={{ display:"flex", gap:"6px" }}>
         {[0,1,2].map(i => (
-          <div key={i} className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce"
-            style={{ animationDelay:`${i*0.15}s`, animationDuration:"0.8s" }} />
+          <div key={i} style={{
+            width:"6px", height:"6px", borderRadius:"50%", background:"#3b82f6",
+            animation:"floatUp .7s ease-in-out infinite",
+            animationDelay:`${i*.15}s`,
+          }} />
         ))}
       </div>
     </div>
   );
 }
 
-/* ── Floating-label input ──────────────────────────────────────────────────── */
-function Field({ label, icon:Icon, type="text", value, onChange, disabled, placeholder, right, autoComplete, isDark }) {
+/* ─── Floating-label input ───────────────────────────────────────────────────── */
+function Field({ label, icon: Icon, type="text", value, onChange,
+                  disabled, placeholder, right, autoComplete, isDark }) {
   const [focused, setFocused] = useState(false);
   const lifted = focused || value.length > 0;
+  const borderColor = focused
+    ? "#3b82f6"
+    : isDark ? "rgba(255,255,255,.10)" : "#e2e8f0";
+
   return (
-    <div className="relative">
-      <div className="absolute left-3 top-1/2 -translate-y-1/2 z-10 pointer-events-none">
-        <Icon size={14} className={`transition-colors duration-150 ${
-          focused
-            ? isDark ? "text-blue-400" : "text-blue-500"
-            : isDark ? "text-slate-500" : "text-slate-400"
-        }`} />
+    <div style={{ position:"relative", fontFamily:"'DM Sans', sans-serif" }}>
+      <div style={{
+        position:"absolute", left:"14px", top:"50%", transform:"translateY(-50%)",
+        zIndex:2, pointerEvents:"none",
+        color: focused ? "#3b82f6" : isDark ? "rgba(255,255,255,.25)" : "#94a3b8",
+        transition:"color .15s",
+      }}>
+        <Icon size={14} />
       </div>
-      <label className={`absolute left-9 z-10 pointer-events-none transition-all duration-150 ${
-        lifted
-          ? ("top-[6px] text-[9px] font-bold tracking-widest uppercase "+(isDark?"text-blue-400":"text-blue-600"))
-          : ("top-1/2 -translate-y-1/2 text-[13px] "+(isDark?"text-slate-500":"text-slate-400"))
-      }`}>{label}</label>
+      <label style={{
+        position:"absolute", left:"42px", zIndex:2, pointerEvents:"none",
+        transition:"all .15s ease",
+        top:       lifted ? "7px"  : "50%",
+        transform: lifted ? "none" : "translateY(-50%)",
+        fontSize:  lifted ? "9px"  : "13px",
+        fontWeight: lifted ? 600 : 400,
+        letterSpacing: lifted ? ".8px" : "0",
+        textTransform: lifted ? "uppercase" : "none",
+        color: focused
+          ? "#3b82f6"
+          : isDark ? "rgba(255,255,255,.30)" : "#94a3b8",
+      }}>{label}</label>
       <input
         type={type} value={value} onChange={onChange}
         onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
         disabled={disabled} autoComplete={autoComplete}
         placeholder={focused ? placeholder : ""}
-        className={[
-          "w-full h-12 pl-9 text-[13px] rounded-xl border outline-none transition-all duration-150",
-          "disabled:opacity-40 disabled:cursor-not-allowed",
-          right ? "pr-10" : "pr-3",
-          lifted ? "pt-4" : "pt-0",
-          isDark
-            ? ("bg-slate-800/80 text-slate-100 placeholder-slate-600 "+(focused?"border-blue-500 ring-2 ring-blue-500/15 shadow-sm shadow-blue-500/10":"border-slate-700 hover:border-slate-600"))
-            : ("bg-slate-50/80 text-slate-800 placeholder-slate-400 "+(focused?"border-blue-500 ring-2 ring-blue-500/10 shadow-sm shadow-blue-500/10":"border-slate-200 hover:border-slate-300")),
-        ].join(" ")}
+        style={{
+          width:"100%", height:"54px",
+          paddingLeft:"42px", paddingRight: right ? "44px" : "14px",
+          paddingTop: lifted ? "16px" : "0",
+          fontSize:"13.5px", fontFamily:"'DM Sans', sans-serif",
+          background: isDark
+            ? (focused ? "rgba(59,130,246,.06)" : "rgba(255,255,255,.04)")
+            : (focused ? "#f8faff" : "#f8fafc"),
+          color: isDark ? "#f1f5f9" : "#0f172a",
+          border:`1.5px solid ${borderColor}`,
+          borderRadius:"12px", outline:"none",
+          boxShadow: focused ? "0 0 0 3px rgba(59,130,246,.10)" : "none",
+          transition:"border-color .15s, box-shadow .15s, background .15s",
+          opacity: disabled ? .45 : 1,
+          cursor:  disabled ? "not-allowed" : "text",
+        }}
       />
-      {right && <div className="absolute right-2.5 top-1/2 -translate-y-1/2 z-10">{right}</div>}
+      {right && (
+        <div style={{
+          position:"absolute", right:"12px", top:"50%",
+          transform:"translateY(-50%)", zIndex:2,
+        }}>{right}</div>
+      )}
     </div>
   );
 }
 
-/* ── Main Login Component ──────────────────────────────────────────────────── */
+/* ─── Password strength bar ─────────────────────────────────────────────────── */
+function StrengthMeter({ password, isDark }) {
+  if (!password) return null;
+  let score = 0;
+  if (password.length >= 6)           score++;
+  if (password.length >= 10)          score++;
+  if (/[A-Z]/.test(password))         score++;
+  if (/[0-9!@#$%^&*]/.test(password)) score++;
+  const levels = [
+    { label:"Weak",   color:"#ef4444" },
+    { label:"Fair",   color:"#f97316" },
+    { label:"Good",   color:"#eab308" },
+    { label:"Strong", color:"#22c55e" },
+  ];
+  const lv = levels[Math.max(0, score - 1)];
+  return (
+    <div style={{ marginTop:"6px" }}>
+      <div style={{ display:"flex", gap:"4px", marginBottom:"4px" }}>
+        {[1,2,3,4].map(i => (
+          <div key={i} style={{
+            flex:1, height:"3px", borderRadius:"3px",
+            background: i <= score ? lv.color : isDark ? "#1e293b" : "#e2e8f0",
+            transition:"background .25s",
+          }} />
+        ))}
+      </div>
+      <p style={{ margin:0, fontSize:"10px", fontWeight:600, color:lv.color }}>{lv.label}</p>
+    </div>
+  );
+}
+
+/* ─── Main component ────────────────────────────────────────────────────────── */
 export default function Login() {
   const { theme, updateTheme } = useTheme();
-  const isDark = theme === "dark";
+  const isDark  = theme === "dark";
   const navigate = useNavigate();
 
-  const [userCode, setUserCode]           = useState("");
-  const [password, setPassword]           = useState("");
-  const [showPwd, setShowPwd]             = useState(false);
-  const [rememberMe, setRememberMe]       = useState(false);
-  const [error, setError]                 = useState("");
+  const [userCode,   setUserCode]   = useState("");
+  const [password,   setPassword]   = useState("");
+  const [showPwd,    setShowPwd]    = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
+  const [error,      setError]      = useState("");
   const [transitioning, setTransitioning] = useState(false);
-  const [signingIn, setSigningIn]         = useState(false);
+  const [signingIn,  setSigningIn]  = useState(false);
+  const [mounted,    setMounted]    = useState(false);
 
-  const [showModal, setShowModal]           = useState(false);
-  const [newPwd, setNewPwd]                 = useState("");
-  const [confirmPwd, setConfirmPwd]         = useState("");
-  const [showNewPwd, setShowNewPwd]         = useState(false);
+  const [showModal,      setShowModal]      = useState(false);
+  const [newPwd,         setNewPwd]         = useState("");
+  const [confirmPwd,     setConfirmPwd]     = useState("");
+  const [showNewPwd,     setShowNewPwd]     = useState(false);
   const [showConfirmPwd, setShowConfirmPwd] = useState(false);
-  const [pwdError, setPwdError]             = useState("");
-  const [changing, setChanging]             = useState(false);
-  const [tempResult, setTempResult]         = useState(null);
+  const [pwdError,       setPwdError]       = useState("");
+  const [changing,       setChanging]       = useState(false);
+  const [tempResult,     setTempResult]     = useState(null);
 
   const [themeSaveStatus, setThemeSaveStatus] = useState({
-    saving:false, saved:false, error:false, message:"",
+    saving:false, saved:false, error:false,
   });
-  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    const t = setTimeout(() => setMounted(true), 50);
+    const t = setTimeout(() => setMounted(true), 60);
     const rem = localStorage.getItem("rememberedUser");
     if (rem) { setUserCode(rem); setRememberMe(true); }
     const lastTheme = localStorage.getItem("lastActiveTheme") || localStorage.getItem("userTheme");
@@ -412,28 +536,26 @@ export default function Login() {
 
   const handleThemeToggle = async () => {
     const newTheme = isDark ? "light" : "dark";
-    setThemeSaveStatus({ saving:true, saved:false, error:false, message:"Saving theme..." });
+    setThemeSaveStatus({ saving:true, saved:false, error:false });
     try {
       updateTheme(newTheme);
       localStorage.setItem("userTheme", newTheme);
       localStorage.setItem("lastActiveTheme", newTheme);
-      const storedUser = JSON.parse(localStorage.getItem("currentUser") || "{}");
-      const userId = storedUser.UserID || storedUser.User_ID;
+      const stored = JSON.parse(localStorage.getItem("currentUser") || "{}");
+      const userId = stored.UserID || stored.User_ID;
       if (userId) {
-        const response = await axios.post(`${API_BASE}/user/preferences/save?db=${DB_NAME}`,
-          { userId, preferenceKey:"theme",
-            preferenceValue: newTheme.charAt(0).toUpperCase()+newTheme.slice(1) });
-        if (response.data.success) setThemeSaveStatus({ saving:false, saved:true, error:false, message:"Theme saved!" });
-        else throw new Error("DB returned failure");
-      } else {
-        setThemeSaveStatus({ saving:false, saved:true, error:false, message:"Theme saved locally" });
+        await axios.post(`${API_BASE}/user/preferences/save?db=${DB_NAME}`, {
+          userId, preferenceKey:"theme",
+          preferenceValue: newTheme.charAt(0).toUpperCase() + newTheme.slice(1),
+        });
       }
+      setThemeSaveStatus({ saving:false, saved:true, error:false });
     } catch {
       localStorage.setItem("userTheme", isDark ? "light" : "dark");
       localStorage.setItem("lastActiveTheme", isDark ? "light" : "dark");
-      setThemeSaveStatus({ saving:false, saved:false, error:true, message:"Error saving theme" });
+      setThemeSaveStatus({ saving:false, saved:false, error:true });
     }
-    setTimeout(() => setThemeSaveStatus({ saving:false, saved:false, error:false, message:"" }), 3000);
+    setTimeout(() => setThemeSaveStatus({ saving:false, saved:false, error:false }), 2800);
   };
 
   const goHome = async (userData) => {
@@ -441,16 +563,17 @@ export default function Login() {
     localStorage.setItem("userTheme", theme);
     localStorage.setItem("lastActiveTheme", theme);
     if (rememberMe) localStorage.setItem("rememberedUser", userCode.trim());
-    else localStorage.removeItem("rememberedUser");
+    else            localStorage.removeItem("rememberedUser");
     try {
-      const userId = userData.UserID || userData.User_ID;
-      if (userId) {
+      const uid = userData.UserID || userData.User_ID;
+      if (uid)
         await axios.post(`${API_BASE}/user/preferences/save?db=${DB_NAME}`, {
-          userId, preferenceKey:"theme",
-          preferenceValue: theme.charAt(0).toUpperCase()+theme.slice(1),
+          userId: uid, preferenceKey:"theme",
+          preferenceValue: theme.charAt(0).toUpperCase() + theme.slice(1),
         });
-      }
     } catch { /* non-blocking */ }
+    setTransitioning(true);
+    await new Promise(resolve => setTimeout(resolve, 2000));
     navigate("/HomePage", { replace:true });
   };
 
@@ -458,23 +581,28 @@ export default function Login() {
     e.preventDefault();
     setError("");
     if (!userCode || !password) { setError("Please enter both username and password."); return; }
-    setSigningIn(true); setTransitioning(true);
+    setSigningIn(true);
     try {
       const res = await fetch(`${API_BASE}/auth/login`, {
         method:"POST", headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({ userCode:userCode.trim(), password }),
+        body: JSON.stringify({ userCode: userCode.trim(), password }),
       });
-      if (!res.ok) throw new Error(res.status===401?"Invalid username or password.":`Server error (${res.status})`);
+      if (!res.ok)
+        throw new Error(res.status===401 ? "Invalid username or password." : `Server error (${res.status})`);
       const result = await res.json();
       if (result.success) {
         if (result.user?.OneLogPwd===1 || result.OneLogPwd===1) {
-          setTempResult(result); setSigningIn(false); setTransitioning(false);
-          setShowModal(true); return;
+          setSigningIn(false);
+          setTempResult(result);
+          setShowModal(true);
+          return;
         }
         await goHome(result.user);
-      } else { throw new Error("Incorrect credentials. Please try again."); }
+      } else {
+        throw new Error("Incorrect credentials. Please try again.");
+      }
     } catch (err) {
-      setSigningIn(false); setTransitioning(false);
+      setSigningIn(false);
       setError(err.message || "Network error. Check your connection.");
     }
   };
@@ -484,7 +612,7 @@ export default function Login() {
     setPwdError("");
     if (!newPwd || !confirmPwd) { setPwdError("Both fields are required."); return; }
     if (newPwd !== confirmPwd)  { setPwdError("Passwords do not match."); return; }
-    if (newPwd.length < 6)      { setPwdError("Password must be at least 6 characters."); return; }
+    if (newPwd.length < 6)     { setPwdError("Password must be at least 6 characters."); return; }
     setChanging(true);
     try {
       const res = await fetch(`${API_BASE}/auth/change-password`, {
@@ -494,331 +622,540 @@ export default function Login() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.success) {
-        setShowModal(false); setNewPwd(""); setConfirmPwd(""); setTempResult(null);
-        setTransitioning(true); await goHome(data.user);
-      } else { setPwdError(data.error || "Password change failed."); }
-    } catch (err) { setPwdError(err.message || "Network error."); }
-    finally { setChanging(false); }
+        setShowModal(false);
+        setNewPwd(""); setConfirmPwd(""); setTempResult(null);
+        await goHome(data.user);
+      } else {
+        setPwdError(data.error || "Password change failed.");
+        setChanging(false);
+      }
+    } catch (err) {
+      setPwdError(err.message || "Network error.");
+      setChanging(false);
+    }
   };
 
-  const strength = (() => {
-    if (!newPwd) return 0;
-    let s = 0;
-    if (newPwd.length >= 6)  s++;
-    if (newPwd.length >= 10) s++;
-    if (/[A-Z]/.test(newPwd)) s++;
-    if (/[0-9!@#$%^&*]/.test(newPwd)) s++;
-    return s;
-  })();
-  const SM = [null,
-    { label:"Weak",   color:"#ef4444" },
-    { label:"Fair",   color:"#f97316" },
-    { label:"Good",   color:"#eab308" },
-    { label:"Strong", color:"#22c55e" },
-  ][strength];
-
-  const tp   = isDark ? "text-slate-100" : "text-slate-800";
-  const ts   = isDark ? "text-slate-400" : "text-slate-500";
-  const hdiv = isDark ? "border-slate-700/60" : "border-slate-100";
-  const card = isDark
-    ? "bg-slate-800/95 border-slate-700/80 shadow-black/60"
-    : "bg-white/95 border-slate-200/80 shadow-slate-300/40";
+  /* ── Derived tokens ── */
+  const pageBg     = isDark ? "#0a0f1e"              : "#f0f4f8";
+  const cardBg     = isDark ? "rgba(13,20,40,.97)"   : "rgba(255,255,255,.98)";
+  const cardBorder = isDark ? "rgba(255,255,255,.07)" : "rgba(0,0,0,.07)";
+  const heading    = isDark ? "#f1f5f9"              : "#0f172a";
+  const subtext    = isDark ? "rgba(255,255,255,.36)" : "#94a3b8";
+  const divBorder  = isDark ? "rgba(255,255,255,.07)" : "#f1f5f9";
 
   return (
     <>
-      <style>{bgStyles}</style>
+      <style>{GLOBAL_STYLES}</style>
       <TransitionOverlay visible={transitioning} isDark={isDark} />
 
-      <div className={"min-h-screen flex items-center justify-center relative transition-colors duration-300 "+
-        (isDark ? "bg-slate-900" : "bg-[#eef2f7]")}>
-
-        {/* Animated constellation canvas */}
-        <ParticleCanvas isDark={isDark} />
-
-        {/* SVG geometric ornaments */}
-        <OrnamentalLayer isDark={isDark} />
-
-        {/* Dot-grid texture */}
-        <div className="absolute inset-0 pointer-events-none" style={{
-          backgroundImage: isDark
-            ? "radial-gradient(circle, rgba(255,255,255,0.020) 1px, transparent 1px)"
-            : "radial-gradient(circle, rgba(0,0,0,0.032) 1px, transparent 1px)",
-          backgroundSize:"28px 28px",
+      {/* Page */}
+      <div style={{
+        minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
+        background: pageBg, fontFamily:"'DM Sans', sans-serif",
+        position:"relative", transition:"background .3s",
+      }}>
+        {/* Page glow */}
+        <div style={{
+          position:"fixed", top:"30%", left:"50%", transform:"translateX(-50%)",
+          width:"600px", height:"400px",
+          background:"radial-gradient(ellipse, rgba(59,130,246,.06) 0%, transparent 70%)",
+          filter:"blur(40px)", pointerEvents:"none", zIndex:0,
         }} />
 
         {/* Theme toggle */}
-        <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+        <div style={{
+          position:"fixed", top:"16px", right:"16px", zIndex:100,
+          display:"flex", alignItems:"center", gap:"8px",
+        }}>
           {themeSaveStatus.saving && (
-            <div className="flex items-center gap-1 text-[11px] text-blue-500">
-              <Loader2 size={11} className="animate-spin" /><span>Saving…</span>
-            </div>
+            <span style={{ color:"#3b82f6", fontSize:"11px", display:"flex", alignItems:"center", gap:"4px" }}>
+              <Loader2 size={11} style={{ animation:"spinSlow .8s linear infinite" }} /> Saving…
+            </span>
           )}
-          {themeSaveStatus.saved && !themeSaveStatus.error && (
-            <div className="flex items-center gap-1 text-[11px] text-emerald-500">
-              <CheckCircle size={11} /><span>Saved</span>
-            </div>
+          {themeSaveStatus.saved && (
+            <span style={{ color:"#10b981", fontSize:"11px", display:"flex", alignItems:"center", gap:"4px" }}>
+              <CheckCircle size={11} /> Saved
+            </span>
           )}
           {themeSaveStatus.error && (
-            <div className="flex items-center gap-1 text-[11px] text-red-500">
-              <X size={11} /><span>Error</span>
-            </div>
+            <span style={{ color:"#ef4444", fontSize:"11px", display:"flex", alignItems:"center", gap:"4px" }}>
+              <X size={11} /> Error
+            </span>
           )}
           <button onClick={handleThemeToggle}
-            title={isDark ? "Switch to Light" : "Switch to Dark"}
-            className={"w-8 h-8 rounded-xl border flex items-center justify-center transition-all duration-200 group "+(
-              isDark
-                ? "bg-slate-800/90 border-slate-700 hover:border-slate-500 hover:bg-slate-700"
-                : "bg-white/90 border-slate-200 hover:border-slate-300 shadow-sm hover:shadow"
-            )}>
+            title={isDark?"Switch to Light":"Switch to Dark"}
+            style={{
+              width:"36px", height:"36px", borderRadius:"12px",
+              border:`1.5px solid ${isDark?"rgba(255,255,255,.10)":"rgba(0,0,0,.10)"}`,
+              background: isDark ? "rgba(15,23,42,.90)" : "rgba(255,255,255,.90)",
+              backdropFilter:"blur(8px)",
+              display:"flex", alignItems:"center", justifyContent:"center",
+              cursor:"pointer", boxShadow:"0 2px 12px rgba(0,0,0,.10)",
+              transition:"all .2s",
+            }}>
             {isDark
-              ? <Sun  size={13} className="text-amber-400 group-hover:rotate-45 transition-transform duration-300" />
-              : <Moon size={13} className="text-slate-500 group-hover:-rotate-12 transition-transform duration-300" />
+              ? <Sun  size={14} color="#fbbf24" />
+              : <Moon size={14} color="#64748b" />
             }
           </button>
         </div>
 
-        {/* Watermark */}
-        <div className={`absolute bottom-4 left-4 text-[10px] font-mono tracking-widest select-none ${
-          isDark ? "text-slate-700" : "text-slate-300"
-        }`}>RMS v1.0</div>
+        {/* ══ SPLIT CARD ══ */}
+        <div style={{
+          position:"relative", zIndex:10,
+          width:"min(880px, calc(100vw - 32px))",
+          minHeight:"520px",
+          display:"flex", borderRadius:"20px", overflow:"hidden",
+          boxShadow: isDark
+            ? "0 32px 80px rgba(0,0,0,.75), 0 0 0 1px rgba(255,255,255,.06)"
+            : "0 20px 60px rgba(0,0,0,.14), 0 0 0 1px rgba(0,0,0,.06)",
+          opacity:   mounted ? 1 : 0,
+          transform: mounted ? "translateY(0) scale(1)" : "translateY(22px) scale(.98)",
+          transition:"opacity .55s ease, transform .55s ease",
+        }}>
+          {/* LEFT panel */}
+          <div className="brand-panel" style={{ width:"42%", flexShrink:0, minHeight:"520px" }}>
+            <BrandPanel isDark={isDark} />
+          </div>
 
-        {/* Login Card */}
-        <div className={`w-full max-w-[368px] mx-4 relative transition-all duration-500 ease-out ${
-          mounted ? "opacity-100 translate-y-0" : "opacity-0 translate-y-5"
-        }`}>
-          <div className={`absolute -inset-px rounded-2xl blur-xl opacity-0 transition-opacity duration-500 ${
-            mounted ? "opacity-100" : ""
-          } ${isDark ? "bg-blue-900/20" : "bg-blue-200/40"}`} />
+          {/* RIGHT: login form — uses flex column with space-between so the
+              version/tooltip footer sticks to the bottom */}
+          <div style={{
+            flex:1, background: cardBg,
+            display:"flex", flexDirection:"column",
+            padding:"48px 44px",
+            position:"relative", overflow:"hidden",
+          }}>
+            {/* Top accent line */}
+            <div style={{
+              position:"absolute", top:0, left:0, right:0, height:"1px",
+              background:"linear-gradient(90deg, transparent, rgba(59,130,246,.30), transparent)",
+            }} />
 
-          <div className={`relative rounded-2xl border shadow-2xl overflow-hidden backdrop-blur-sm ${card}`}>
-            <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-blue-500/60 to-transparent" />
-
-            <div className={`px-6 pt-6 pb-5 border-b flex items-center gap-3.5 ${hdiv}`}>
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 border shadow-sm ${
-                isDark ? "bg-slate-900/80 border-slate-700" : "bg-slate-50 border-slate-200"
-              }`}>
-                <img src={Rebate} alt="Logo" className="w-6 h-6 object-contain" />
+            {/* Mobile logo row */}
+            <div className="mobile-logo-row" style={{
+              display:"none", alignItems:"center", gap:"12px", marginBottom:"24px",
+            }}>
+              <div style={{
+                width:"40px", height:"40px", borderRadius:"12px",
+                background: isDark ? "rgba(59,130,246,.14)" : "#eff6ff",
+                border:`1px solid ${isDark?"rgba(59,130,246,.24)":"#bfdbfe"}`,
+                display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+              }}>
+                <img src={Rebate} alt="Logo" style={{ width:"24px", height:"24px", objectFit:"contain" }} />
               </div>
               <div>
-                <h1 className={`text-[13px] font-bold leading-none tracking-tight ${tp}`}>
+                <div style={{ fontSize:"12px", fontWeight:700, color:heading, lineHeight:1.2 }}>
                   Rebate Management System
-                </h1>
-                <div className="flex items-center gap-1.5 mt-1.5">
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
-                  </span>
-                  <p className={`text-[11px] ${ts}`}>Secure portal · v1.0</p>
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:"5px", marginTop:"4px" }}>
+                  <span style={{
+                    width:"6px", height:"6px", borderRadius:"50%", background:"#10b981",
+                    display:"inline-block", animation:"pulse2 2s ease-in-out infinite",
+                  }} />
+                  <span style={{ color:subtext, fontSize:"10px" }}>Secure portal · v1.0</span>
                 </div>
               </div>
             </div>
 
-            <div className="px-6 pt-5 pb-1">
-              <p className={`text-[12px] font-semibold tracking-widest uppercase ${
-                isDark ? "text-slate-500" : "text-slate-400"
-              }`}>Sign in to continue</p>
-            </div>
+            {/* ── SCROLLABLE MAIN CONTENT (grows to fill) ── */}
+            <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"center" }}>
 
-            <div className="px-6 pb-6 pt-3 space-y-3">
+              {/* Header — NO extra wrapper that clips the text, plain div */}
+              <div style={{ marginBottom:"28px" }}>
+                <h1 style={{
+                  margin:"0 0 6px",
+                  fontSize:"26px",
+                  fontWeight:700,
+                  /* Explicit solid color — no gradient clip, no transparency */
+                  color: isDark ? "#f1f5f9" : "#0f172a",
+                  letterSpacing:"-.4px",
+                  lineHeight:1.2,
+                  fontFamily:"'Sora', sans-serif",
+                  /* Safety: make sure nothing above can accidentally hide it */
+                  position:"relative",
+                  zIndex:5,
+                }}>Welcome!</h1>
+                <p style={{
+                  margin:0,
+                  color: isDark ? "rgba(255,255,255,.45)" : "#64748b",
+                  fontSize:"13px",
+                  fontWeight:400,
+                  position:"relative",
+                  zIndex:5,
+                }}>
+                  Sign in to your RMS account to continue
+                </p>
+              </div>
+
+              {/* Error banner */}
               {error && (
-                <div className={`flex items-start gap-2.5 px-3 py-2.5 rounded-xl border text-[12px] ${
-                  isDark?"bg-red-950/30 border-red-800/50 text-red-300":"bg-red-50 border-red-200 text-red-700"
-                }`}>
-                  <AlertCircle size={13} className="mt-px flex-shrink-0" />
-                  <p className="leading-snug">{error}</p>
-                  <button onClick={() => setError("")} className="ml-auto opacity-50 hover:opacity-100 transition-opacity">
-                    <X size={12} />
-                  </button>
+                <div style={{
+                  display:"flex", alignItems:"flex-start", gap:"10px",
+                  padding:"10px 14px", borderRadius:"12px", marginBottom:"18px",
+                  background: isDark ? "rgba(239,68,68,.10)" : "#fef2f2",
+                  border:`1px solid ${isDark?"rgba(239,68,68,.28)":"#fecaca"}`,
+                  color: isDark ? "#fca5a5" : "#b91c1c",
+                  fontSize:"12px", animation:"slideIn .25s ease",
+                }}>
+                  <AlertCircle size={13} style={{ flexShrink:0, marginTop:"1px" }} />
+                  <p style={{ margin:0, flex:1, lineHeight:1.5 }}>{error}</p>
+                  <button onClick={() => setError("")} style={{
+                    background:"none", border:"none", cursor:"pointer",
+                    padding:0, opacity:.6, color:"inherit",
+                  }}><X size={12} /></button>
                 </div>
               )}
 
-              <form onSubmit={handleSubmit} className="space-y-3">
-                <Field label="UserID" icon={User} isDark={isDark}
+              {/* Form */}
+              <form onSubmit={handleSubmit} style={{ display:"flex", flexDirection:"column", gap:"14px" }}>
+                <Field
+                  label="Username" icon={User} isDark={isDark}
                   value={userCode} onChange={e => setUserCode(e.target.value)}
-                  disabled={signingIn} placeholder="USERID" autoComplete="username" />
-
-                <Field label="Password" icon={Lock} isDark={isDark}
+                  disabled={signingIn} placeholder="Enter your user ID" autoComplete="username"
+                />
+                <Field
+                  label="Password" icon={Lock} isDark={isDark}
                   type={showPwd ? "text" : "password"}
                   value={password} onChange={e => setPassword(e.target.value)}
                   disabled={signingIn} placeholder="••••••••" autoComplete="current-password"
                   right={
-                    <button type="button" onClick={() => setShowPwd(!showPwd)}
-                      className={`p-1 rounded transition-colors ${isDark?"text-slate-500 hover:text-slate-300":"text-slate-400 hover:text-slate-600"}`}>
-                      {showPwd ? <EyeOff size={13} /> : <Eye size={13} />}
+                    <button type="button" onClick={() => setShowPwd(!showPwd)} style={{
+                      background:"none", border:"none", cursor:"pointer", padding:"4px",
+                      color: isDark ? "rgba(255,255,255,.28)" : "#94a3b8", borderRadius:"6px",
+                    }}>
+                      {showPwd ? <EyeOff size={13}/> : <Eye size={13}/>}
                     </button>
-                  } />
+                  }
+                />
 
-                <label className="flex items-center gap-2 cursor-pointer pt-0.5">
-                  <button type="button" onClick={() => setRememberMe(!rememberMe)}
-                    className={`w-4 h-4 rounded-md flex-shrink-0 border flex items-center justify-center transition-all duration-150 ${
-                      rememberMe
-                        ? "bg-blue-500 border-blue-500"
-                        : isDark ? "border-slate-600 bg-slate-800" : "border-slate-300 bg-white"
-                    }`}>
-                    {rememberMe && <CheckCircle size={9} className="text-white" />}
+                {/* Remember me */}
+                <label style={{
+                  display:"flex", alignItems:"center", gap:"8px",
+                  cursor:"pointer", userSelect:"none", marginTop:"-2px",
+                }}>
+                  <button type="button" onClick={() => setRememberMe(!rememberMe)} style={{
+                    width:"16px", height:"16px", borderRadius:"4px", flexShrink:0,
+                    border:`1.5px solid ${rememberMe?"#3b82f6":isDark?"rgba(255,255,255,.18)":"#cbd5e1"}`,
+                    background: rememberMe ? "#3b82f6" : "transparent",
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    cursor:"pointer", transition:"all .15s", padding:0,
+                  }}>
+                    {rememberMe && <CheckCircle size={9} color="#fff"/>}
                   </button>
-                  <span className={`text-[12px] select-none ${ts}`}>Remember me</span>
+                  <span style={{ color:subtext, fontSize:"12px" }}>Remember me</span>
                 </label>
 
-                <button type="submit" disabled={signingIn}
-                  className="relative w-full h-11 rounded-xl text-[13px] font-semibold text-white
-                    bg-blue-600 hover:bg-blue-700 active:bg-blue-800 active:scale-[0.99]
-                    shadow-lg shadow-blue-500/25 hover:shadow-blue-500/35
-                    transition-all duration-150 overflow-hidden group
-                    disabled:opacity-80 disabled:cursor-not-allowed
-                    flex items-center justify-center gap-2 mt-1">
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-600 pointer-events-none" />
-                  {signingIn ? (
-                    <><Loader2 size={14} className="animate-spin relative" /><span className="relative">Signing in…</span></>
-                  ) : (
-                    <><span className="relative">Sign In</span><ArrowRight size={13} className="relative group-hover:translate-x-0.5 transition-transform duration-150" /></>
-                  )}
+                {/* Sign In button */}
+                <button type="submit" disabled={signingIn} style={{
+                  height:"52px", borderRadius:"12px", border:"none",
+                  background: signingIn
+                    ? "#2563eb"
+                    : "linear-gradient(135deg, #2563eb 0%, #6366f1 100%)",
+                  color:"#fff", fontSize:"14px", fontWeight:600,
+                  fontFamily:"'DM Sans', sans-serif", letterSpacing:".2px",
+                  cursor: signingIn ? "not-allowed" : "pointer",
+                  display:"flex", alignItems:"center", justifyContent:"center", gap:"8px",
+                  boxShadow: signingIn ? "none" : "0 8px 24px rgba(59,130,246,.35)",
+                  transition:"all .2s", opacity: signingIn ? .80 : 1,
+                  marginTop:"4px",
+                }}>
+                  {signingIn
+                    ? <><Loader2 size={15} style={{ animation:"spinSlow .8s linear infinite" }}/>Signing in…</>
+                    : <>Sign In <ArrowRight size={14}/></>
+                  }
                 </button>
               </form>
-
-              <p className={`text-center text-[10px] pt-1 ${isDark?"text-slate-600":"text-slate-400"}`}>
-                Protected by enterprise-grade security
-              </p>
             </div>
-          </div>
-        </div>
 
-        {/* Password Change Modal */}
-        {showModal && tempResult && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-            style={{ background:"rgba(0,0,0,0.5)", backdropFilter:"blur(8px)" }}>
-            <div className={`w-full max-w-[390px] rounded-2xl border shadow-2xl overflow-hidden backdrop-blur-sm ${card}`}>
-              <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-amber-500/60 to-transparent" />
+            {/* ── FOOTER: version tag + help tooltip — pinned to the bottom ── */}
+            <div
+              style={{
+                marginTop: "20px",
+                paddingTop: "14px",
+                position: "relative",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              {/* Version badge */}
+              <span
+                style={{
+                  fontSize: "10px",
+                  fontWeight: 500,
+                  fontFamily: "'DM Sans', sans-serif",
+                  letterSpacing: "0.3px",
+                  color: isDark ? "rgba(255,255,255,.28)" : "#94a3b8",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "5px",
+                }}
+              >
+                <Shield size={10} style={{ opacity: 0.55 }} />
+                RMS v0.0.1
+              </span>
 
-              <div className={`px-6 py-4 border-b flex items-center gap-3 ${hdiv}`}>
-                <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 border ${
-                  isDark?"bg-amber-950/40 border-amber-800/40":"bg-amber-50 border-amber-200"
-                }`}>
-                  <KeyRound size={14} className={isDark?"text-amber-400":"text-amber-600"} />
+              {/* Help tooltip — pinned right */}
+              <div
+                className="tooltip-hover"
+                style={{
+                  lineHeight: 0,
+                  position: "absolute",
+                  right: 0,
+                }}
+              >
+                <HelpCircle
+                  size={17}
+                  strokeWidth={1.6}
+                  style={{
+                    color: isDark ? "rgba(255,255,255,.30)" : "#94a3b8",
+                    transition: "color .15s",
+                  }}
+                />
+
+                <div className="tooltip-text">
+                  <strong
+                    style={{
+                      display: "block",
+                      marginBottom: "6px",
+                      fontSize: "12px",
+                      color: "#f1f5f9",
+                    }}
+                  >
+                    Need help?
+                  </strong>
+
+                  <span style={{ opacity: 0.75 }}>• No account yet?</span> Contact your
+                  system administrator.
+                  <br />
+
+                  <span style={{ opacity: 0.75 }}>• Forgot password?</span> Reach out to
+                  support or reset via admin.
+                  <br />
+
+                  <span style={{ opacity: 0.75 }}>• First-time login?</span> Use your
+                  temporary password.
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className={`text-[13px] font-bold ${tp}`}>Password Change Required</p>
-                  <p className={`text-[11px] ${ts}`}>First-time login security policy</p>
-                </div>
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse flex-shrink-0" />
               </div>
+            </div>
+          </div>{/* end right panel */}
+        </div>{/* end split card */}
 
-              <div className={`mx-6 mt-4 px-3 py-2.5 rounded-xl border flex items-center gap-2.5 ${
-                isDark?"bg-slate-900/50 border-slate-700":"bg-slate-50 border-slate-200"
-              }`}>
-                <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[11px] font-bold flex-shrink-0 border ${
-                  isDark?"bg-blue-900/40 text-blue-300 border-blue-800/50":"bg-blue-50 text-blue-600 border-blue-100"
-                }`}>
-                  {(tempResult.user?.DisplayName || userCode).charAt(0).toUpperCase()}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className={`text-[12px] font-semibold truncate ${tp}`}>{tempResult.user?.DisplayName || userCode}</p>
-                  <p className={`text-[10px] ${ts}`}>ID: {tempResult.user?.User_ID}</p>
-                </div>
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md border ${
-                  isDark?"bg-emerald-950/40 border-emerald-800/40 text-emerald-400":"bg-emerald-50 border-emerald-200 text-emerald-700"
-                }`}>First Login</span>
+        {/* Responsive breakpoints */}
+        <style>{`
+          @media (min-width: 640px) {
+            .brand-panel     { display: block !important; }
+            .mobile-logo-row { display: none  !important; }
+          }
+          @media (max-width: 639px) {
+            .brand-panel     { display: none  !important; }
+            .mobile-logo-row { display: flex  !important; }
+          }
+        `}</style>
+      </div>
+
+      {/* ══ Password-change modal ══ */}
+      {showModal && tempResult && (
+        <div style={{
+          position:"fixed", inset:0, zIndex:9000,
+          display:"flex", alignItems:"center", justifyContent:"center", padding:"16px",
+          background:"rgba(0,0,0,.55)", backdropFilter:"blur(10px)",
+        }}>
+          <div style={{
+            width:"min(420px,100%)", borderRadius:"20px", overflow:"hidden",
+            background: cardBg, border:`1px solid ${cardBorder}`,
+            boxShadow:"0 32px 80px rgba(0,0,0,.40)",
+            fontFamily:"'DM Sans', sans-serif",
+            animation:"slideIn .3s ease",
+          }}>
+            <div style={{
+              height:"3px",
+              background:"linear-gradient(90deg, transparent, #f59e0b, transparent)",
+            }} />
+
+            {/* Modal header */}
+            <div style={{
+              padding:"20px 24px 16px",
+              borderBottom:`1px solid ${divBorder}`,
+              display:"flex", alignItems:"center", gap:"12px",
+            }}>
+              <div style={{
+                width:"36px", height:"36px", borderRadius:"12px", flexShrink:0,
+                background: isDark ? "rgba(245,158,11,.12)" : "#fffbeb",
+                border:`1px solid ${isDark?"rgba(245,158,11,.25)":"#fde68a"}`,
+                display:"flex", alignItems:"center", justifyContent:"center",
+              }}>
+                <KeyRound size={15} color={isDark?"#fbbf24":"#d97706"}/>
               </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <p style={{ margin:"0 0 2px", fontSize:"13px", fontWeight:700, color:heading }}>
+                  Password Change Required
+                </p>
+                <p style={{ margin:0, fontSize:"11px", color:subtext }}>First-time login security policy</p>
+              </div>
+              <span style={{
+                width:"8px", height:"8px", borderRadius:"50%",
+                background:"#f59e0b", animation:"pulse2 1.5s ease-in-out infinite",
+              }} />
+            </div>
 
-              <div className="px-6 py-4 space-y-3">
-                {pwdError && (
-                  <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-[12px] ${
-                    isDark?"bg-red-950/30 border-red-800/50 text-red-300":"bg-red-50 border-red-200 text-red-700"
-                  }`}>
-                    <AlertCircle size={12} className="flex-shrink-0" /><p>{pwdError}</p>
-                  </div>
-                )}
+            {/* User chip */}
+            <div style={{
+              margin:"16px 24px 0", padding:"10px 14px", borderRadius:"12px",
+              background: isDark ? "rgba(255,255,255,.04)" : "rgba(0,0,0,.02)",
+              border:`1px solid ${divBorder}`,
+              display:"flex", alignItems:"center", gap:"10px",
+            }}>
+              <div style={{
+                width:"32px", height:"32px", borderRadius:"10px", flexShrink:0,
+                background: isDark ? "rgba(59,130,246,.18)" : "#eff6ff",
+                border:`1px solid ${isDark?"rgba(59,130,246,.30)":"#bfdbfe"}`,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontSize:"13px", fontWeight:700,
+                color: isDark ? "#60a5fa" : "#2563eb",
+              }}>
+                {(tempResult.user?.DisplayName || userCode).charAt(0).toUpperCase()}
+              </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <p style={{
+                  margin:"0 0 1px", fontSize:"12px", fontWeight:600, color:heading,
+                  overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+                }}>
+                  {tempResult.user?.DisplayName || userCode}
+                </p>
+                <p style={{ margin:0, fontSize:"10px", color:subtext }}>
+                  ID: {tempResult.user?.User_ID}
+                </p>
+              </div>
+              <span style={{
+                fontSize:"9px", fontWeight:700, letterSpacing:".4px", textTransform:"uppercase",
+                color: isDark?"#34d399":"#059669",
+                background: isDark?"rgba(52,211,153,.12)":"#ecfdf5",
+                border:`1px solid ${isDark?"rgba(52,211,153,.20)":"#a7f3d0"}`,
+                padding:"3px 8px", borderRadius:"20px",
+              }}>First Login</span>
+            </div>
 
-                <form onSubmit={handlePasswordChange} className="space-y-3">
+            {/* Modal body */}
+            <div style={{ padding:"16px 24px 24px", display:"flex", flexDirection:"column", gap:"12px" }}>
+              {pwdError && (
+                <div style={{
+                  display:"flex", alignItems:"center", gap:"8px",
+                  padding:"9px 12px", borderRadius:"10px",
+                  background: isDark?"rgba(239,68,68,.10)":"#fef2f2",
+                  border:`1px solid ${isDark?"rgba(239,68,68,.30)":"#fecaca"}`,
+                  color: isDark?"#fca5a5":"#b91c1c", fontSize:"12px",
+                }}>
+                  <AlertCircle size={12} style={{ flexShrink:0 }}/>{pwdError}
+                </div>
+              )}
+
+              <form onSubmit={handlePasswordChange} style={{ display:"flex", flexDirection:"column", gap:"12px" }}>
+                <div>
                   <Field label="New Password" icon={Lock} isDark={isDark}
-                    type={showNewPwd ? "text" : "password"}
+                    type={showNewPwd?"text":"password"}
                     value={newPwd} onChange={e => setNewPwd(e.target.value)}
                     disabled={changing} placeholder="Min. 6 characters" autoComplete="new-password"
                     right={
-                      <button type="button" onClick={() => setShowNewPwd(!showNewPwd)}
-                        className={`p-1 rounded transition-colors ${isDark?"text-slate-500 hover:text-slate-300":"text-slate-400 hover:text-slate-600"}`}>
-                        {showNewPwd ? <EyeOff size={13} /> : <Eye size={13} />}
+                      <button type="button" onClick={() => setShowNewPwd(!showNewPwd)} style={{
+                        background:"none", border:"none", cursor:"pointer", padding:"4px",
+                        color: isDark?"rgba(255,255,255,.28)":"#94a3b8",
+                      }}>
+                        {showNewPwd ? <EyeOff size={13}/> : <Eye size={13}/>}
                       </button>
-                    } />
-
-                  {newPwd.length > 0 && SM && (
-                    <div className="space-y-1">
-                      <div className="flex gap-1">
-                        {[1,2,3,4].map(i => (
-                          <div key={i} className="flex-1 h-1 rounded-full transition-all duration-300"
-                            style={{ background: i<=strength ? SM.color : isDark?"#334155":"#e2e8f0" }} />
-                        ))}
-                      </div>
-                      <p className="text-[10px] font-semibold" style={{ color:SM.color }}>{SM.label}</p>
-                    </div>
-                  )}
-
+                    }
+                  />
+                  <StrengthMeter password={newPwd} isDark={isDark}/>
+                </div>
+                <div>
                   <Field label="Confirm Password" icon={KeyRound} isDark={isDark}
-                    type={showConfirmPwd ? "text" : "password"}
+                    type={showConfirmPwd?"text":"password"}
                     value={confirmPwd} onChange={e => setConfirmPwd(e.target.value)}
                     disabled={changing} placeholder="Repeat password" autoComplete="new-password"
                     right={
-                      <button type="button" onClick={() => setShowConfirmPwd(!showConfirmPwd)}
-                        className={`p-1 rounded transition-colors ${isDark?"text-slate-500 hover:text-slate-300":"text-slate-400 hover:text-slate-600"}`}>
-                        {showConfirmPwd ? <EyeOff size={13} /> : <Eye size={13} />}
+                      <button type="button" onClick={() => setShowConfirmPwd(!showConfirmPwd)} style={{
+                        background:"none", border:"none", cursor:"pointer", padding:"4px",
+                        color: isDark?"rgba(255,255,255,.28)":"#94a3b8",
+                      }}>
+                        {showConfirmPwd ? <EyeOff size={13}/> : <Eye size={13}/>}
                       </button>
-                    } />
-
+                    }
+                  />
                   {confirmPwd.length > 0 && (
-                    <div className="flex items-center gap-1.5">
+                    <div style={{ display:"flex", alignItems:"center", gap:"5px", marginTop:"5px" }}>
                       {newPwd === confirmPwd
-                        ? <><CheckCircle size={11} className="text-emerald-500"/><span className="text-[11px] text-emerald-600 font-medium">Passwords match</span></>
-                        : <><X size={11} className="text-red-500"/><span className="text-[11px] text-red-500 font-medium">Passwords don't match</span></>
+                        ? <><CheckCircle size={11} color="#10b981"/>
+                            <span style={{ fontSize:"11px", color:"#10b981", fontWeight:500 }}>Passwords match</span></>
+                        : <><X size={11} color="#ef4444"/>
+                            <span style={{ fontSize:"11px", color:"#ef4444", fontWeight:500 }}>Passwords don't match</span></>
                       }
                     </div>
                   )}
+                </div>
 
-                  <div className={`px-3 py-2.5 rounded-xl border text-[11px] space-y-1.5 ${
-                    isDark?"bg-slate-900/40 border-slate-700":"bg-slate-50 border-slate-200"
-                  }`}>
-                    {[
-                      { ok: newPwd.length >= 6,                         label:"At least 6 characters" },
-                      { ok: newPwd === confirmPwd && newPwd.length > 0, label:"Passwords match" },
-                    ].map(({ ok, label }) => (
-                      <div key={label} className="flex items-center gap-2">
-                        <div className={`w-3.5 h-3.5 rounded-full flex items-center justify-center transition-colors duration-200 ${
-                          ok ? "bg-emerald-500" : isDark ? "bg-slate-700" : "bg-slate-200"
-                        }`}>
-                          {ok && <CheckCircle size={8} className="text-white" />}
-                        </div>
-                        <span className={ok ? "text-emerald-600 font-medium" : ts}>{label}</span>
+                {/* Requirements checklist */}
+                <div style={{
+                  padding:"10px 12px", borderRadius:"10px",
+                  background: isDark?"rgba(255,255,255,.03)":"rgba(0,0,0,.02)",
+                  border:`1px solid ${divBorder}`,
+                  display:"flex", flexDirection:"column", gap:"8px",
+                }}>
+                  {[
+                    { ok: newPwd.length >= 6,                       label:"At least 6 characters" },
+                    { ok: newPwd===confirmPwd && newPwd.length > 0, label:"Passwords match" },
+                  ].map(({ ok, label }) => (
+                    <div key={label} style={{ display:"flex", alignItems:"center", gap:"8px" }}>
+                      <div style={{
+                        width:"14px", height:"14px", borderRadius:"50%", flexShrink:0,
+                        background: ok ? "#10b981" : isDark ? "#1e293b" : "#e2e8f0",
+                        display:"flex", alignItems:"center", justifyContent:"center",
+                        transition:"background .2s",
+                      }}>
+                        {ok && <CheckCircle size={9} color="#fff"/>}
                       </div>
-                    ))}
-                  </div>
+                      <span style={{
+                        fontSize:"11px",
+                        color: ok ? "#10b981" : subtext,
+                        fontWeight: ok ? 500 : 400,
+                      }}>{label}</span>
+                    </div>
+                  ))}
+                </div>
 
-                  <div className="flex gap-2 pt-0.5">
-                    <button type="button" disabled={changing}
-                      onClick={() => { setShowModal(false); setNewPwd(""); setConfirmPwd(""); setPwdError(""); }}
-                      className={`flex-1 h-9 rounded-xl text-[12px] font-semibold border transition-all duration-150 disabled:opacity-40 ${
-                        isDark
-                          ? "bg-transparent border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600"
-                          : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"
-                      }`}>Cancel</button>
-                    <button type="submit" disabled={changing}
-                      className="flex-1 h-9 rounded-xl text-[12px] font-semibold text-white
-                        bg-blue-600 hover:bg-blue-700 transition-all duration-150
-                        shadow-md shadow-blue-500/20 disabled:opacity-60
-                        relative overflow-hidden group">
-                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-500 pointer-events-none" />
-                      {changing
-                        ? <div className="flex items-center justify-center gap-1.5">
-                            <Loader2 size={13} className="animate-spin" /><span>Saving…</span>
-                          </div>
-                        : <span className="relative">Update Password</span>
-                      }
-                    </button>
-                  </div>
-                </form>
-              </div>
+                {/* Actions */}
+                <div style={{ display:"flex", gap:"10px", marginTop:"4px" }}>
+                  <button type="button" disabled={changing}
+                    onClick={() => { setShowModal(false); setNewPwd(""); setConfirmPwd(""); setPwdError(""); }}
+                    style={{
+                      flex:1, height:"44px", borderRadius:"12px",
+                      background:"transparent", cursor: changing ? "not-allowed" : "pointer",
+                      border:`1.5px solid ${isDark?"rgba(255,255,255,.10)":"#e2e8f0"}`,
+                      color: isDark?"rgba(255,255,255,.48)":"#64748b",
+                      fontSize:"12.5px", fontWeight:600, fontFamily:"'DM Sans', sans-serif",
+                      opacity: changing ? .4 : 1,
+                    }}>Cancel</button>
+                  <button type="submit" disabled={changing} style={{
+                    flex:1, height:"44px", borderRadius:"12px", border:"none",
+                    background:"linear-gradient(135deg, #2563eb, #6366f1)",
+                    cursor: changing ? "not-allowed" : "pointer",
+                    color:"#fff", fontSize:"12.5px", fontWeight:600,
+                    fontFamily:"'DM Sans', sans-serif",
+                    boxShadow:"0 6px 18px rgba(59,130,246,.28)",
+                    opacity: changing ? .7 : 1,
+                    display:"flex", alignItems:"center", justifyContent:"center", gap:"6px",
+                  }}>
+                    {changing
+                      ? <><Loader2 size={13} style={{ animation:"spinSlow .8s linear infinite" }}/>Saving…</>
+                      : "Update Password"
+                    }
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </>
   );
 }

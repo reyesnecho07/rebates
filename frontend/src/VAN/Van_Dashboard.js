@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from 'axios';
 import {
   FileText,
@@ -132,6 +132,7 @@ function Van_Dashboard() {
   const [customers, setCustomers] = useState([]);
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [customersLoading, setCustomersLoading] = useState(false);
 
   const API_BASE = 'http://192.168.100.193:3009/api';
   const DB_NAME = 'USER';
@@ -581,10 +582,6 @@ const calculateQuotaStatus = (rebateType, totalAchieved, totalQuota, customer) =
   }, []);
 
 
-  useEffect(() => {
-    if (selectedRebate || modalCustomer) return;
-    loadCustomerStatus();
-  }, [statusSummaryPeriodFrom, statusSummaryPeriodTo, selectedAgent]);
 
   useEffect(() => {
     if (modalCustomer && currentCustomerData) {
@@ -1245,63 +1242,96 @@ useEffect(() => {
     return Object.values(summary);
   };
 
-  // Main API Functions
+// ✅ loadCustomerStatus FIRST
+const loadCustomerStatus = useCallback(async (forceRefresh = false) => {
+  try {
+    setCustomersLoading(true);
+    let url = `http://192.168.100.193:3009/api/van/dashboard/rebates-summary?db=VAN_OWN`;
+    const params = new URLSearchParams();
+    if (statusSummaryPeriodFrom) params.append('periodFrom', statusSummaryPeriodFrom);
+    if (statusSummaryPeriodTo)   params.append('periodTo',   statusSummaryPeriodTo);
+    if (selectedAgent !== 'All') params.append('agent',      selectedAgent);
+    if (params.toString()) url += `&${params.toString()}`;
+    const response = await fetch(url);
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success) {
+        const summaryList = data.data.summary || [];
+        if (summaryList.length === 0) {
+          setCustomers([]);
+          setAgents([]);
+          return;
+        }
+        const processedCustomers = summaryList.map((item) => ({
+          customer:      item.customer    || 'Unknown Customer',
+          agent:         item.agent       || 'Unknown Agent',
+          rebateType:    item.rebateType  || 'Unknown',
+          code:          item.code        || `CUST-${Math.random().toString(36).substr(2, 5)}`,
+          rebateCode:    item.rebateCode  || 'UNKNOWN-CODE',
+          dateFrom:      item.dateFrom    || '',
+          dateTo:        item.dateTo      || '',
+          frequency:     item.frequency   || 'Quarterly',
+          isActive:      item.isActive,
+          progress:      item.totalAchieved || 0,
+          totalAchieved: item.totalAchieved || 0,
+          totalQuota:    item.totalQuota    || 0,
+          quotaStatus:   item.quotaStatus   || 'Starting',
+          rebate:        item.rebateStatus  || 'Not Eligible',
+          rebateAmount:  parseFloat(item.rebateAmount)  || 0,
+          paidAmount:    parseFloat(item.paidAmount)    || 0,
+          rebateBalance: parseFloat(item.rebateBalance) || 0,
+          enrollment:    item.enrollment || new Date().toISOString().split('T')[0],
+          color:         item.color      || `#${Math.floor(Math.random() * 16777215).toString(16)}`,
+          quotas:        item.quotas     || {},
+          ranges:        item.ranges     || [],
+          itemDetails:   item.itemDetails || [],
+          currentRange:  item.currentRange || null,
+          createdDate:   item.createdDate  || new Date().toISOString(),
+        }));
+        const sortedCustomers = processedCustomers.sort((a, b) => {
+          const dateA = new Date(a.createdDate || a.enrollment);
+          const dateB = new Date(b.createdDate || b.enrollment);
+          return dateB - dateA;
+        });
+        const uniqueAgents = [
+          ...new Set(sortedCustomers.map(c => c.agent))
+        ].filter(agent => agent && agent !== 'Unknown Agent');
+        setCustomers(sortedCustomers);
+        setAgents(uniqueAgents);
+      } else {
+        setCustomers([]);
+        setAgents([]);
+      }
+    } else {
+      setCustomers([]);
+      setAgents([]);
+    }
+  } catch (error) {
+    console.error('Error loading customer status:', error);
+    setCustomers([]);
+    setAgents([]);
+  } finally {
+    setCustomersLoading(false);
+  }
+}, [statusSummaryPeriodFrom, statusSummaryPeriodTo, selectedAgent]);
+
+  // ADD this instead:
+  useEffect(() => {
+    loadCustomerStatus();
+  }, [loadCustomerStatus]);
+
+  // ✅ loadDashboardData SECOND (can now safely call loadCustomerStatus)
   const loadDashboardData = async () => {
-    if (selectedRebate || modalCustomer) return;
     setLoading(true);
     try {
-      console.log('🔄 Loading dashboard data...');
-
-      const metricsResponse = await fetch(`http://192.168.100.193:3009/api/van/dashboard/metrics?db=VAN_OWN`);
+      const [metricsResponse, rebatesResponse] = await Promise.all([
+        fetch(`http://192.168.100.193:3009/api/van/dashboard/metrics?db=VAN_OWN`),
+        fetch(`http://192.168.100.193:3009/api/van/dashboard/rebates?db=VAN_OWN`)
+      ]);
       if (metricsResponse.ok) {
         const metricsData = await metricsResponse.json();
         if (metricsData.success) {
           const currentData = metricsData.data;
-          
-          let previousData = null;
-          try {
-            const yesterdayResponse = await fetch(`http://192.168.100.193:3009/api/van/dashboard/metrics?db=VAN_OWN&period=yesterday`);
-            if (yesterdayResponse.ok) {
-              const yesterdayData = await yesterdayResponse.json();
-              if (yesterdayData.success) {
-                previousData = yesterdayData.data;
-              }
-            }
-          } catch (err) {
-            console.log('⚠️ Could not load yesterday data:', err);
-          }
-
-          if (!previousData) {
-            try {
-              const lastMonthResponse = await fetch(`http://192.168.100.193:3009/api/van/dashboard/metrics?db=VAN_OWN&period=lastMonth`);
-              if (lastMonthResponse.ok) {
-                const lastMonthData = await lastMonthResponse.json();
-                if (lastMonthData.success) {
-                  previousData = lastMonthData.data;
-                }
-              }
-            } catch (err) {
-              console.log('⚠️ Could not load last month data:', err);
-            }
-          }
-
-          const calculateChange = (current, previous) => {
-            if (!previous || previous === 0) return 100;
-            return ((current - previous) / previous) * 100;
-          };
-
-          const paidChange = previousData ? 
-            calculateChange(currentData.totalRebatePaid, previousData.totalRebatePaid) : 
-            100;
-          
-          const unpaidChange = previousData ? 
-            calculateChange(currentData.totalUnpaidRebate, previousData.totalUnpaidRebate) : 
-            0;
-          
-          const activeCustomersChange = previousData ? 
-            calculateChange(currentData.activeCustomers, previousData.activeCustomers) : 
-            100;
-
           setDashboardMetrics({
             totalRebatePaid: `₱${currentData.totalRebatePaid.toLocaleString()}`,
             totalUnpaidRebate: `₱${currentData.totalUnpaidRebate.toLocaleString()}`,
@@ -1309,228 +1339,128 @@ useEffect(() => {
             newCustomersThisMonth: `+${currentData.newCustomersThisMonth}`,
             totalRebatePaidValue: currentData.totalRebatePaid,
             totalUnpaidRebateValue: currentData.totalUnpaidRebate,
-            paidRebateChange: Math.round(paidChange * 10) / 10,
-            unpaidRebateChange: Math.round(unpaidChange * 10) / 10,
-            activeCustomersChange: Math.round(activeCustomersChange * 10) / 10,
-            previousTotalPaid: previousData?.totalRebatePaid || 0,
-            previousTotalUnpaid: previousData?.totalUnpaidRebate || 0,
-            previousActiveCustomers: previousData?.activeCustomers || 0
+            paidRebateChange: 0,
+            unpaidRebateChange: 0,
+            activeCustomersChange: 0,
+            previousTotalPaid: 0,
+            previousTotalUnpaid: 0,
+            previousActiveCustomers: 0
           });
         }
       }
-
-      try {
-        const rebatesResponse = await fetch(`http://192.168.100.193:3009/api/van/dashboard/rebates?db=VAN_OWN`);
-        if (rebatesResponse.ok) {
-          const rebatesData = await rebatesResponse.json();
-          if (rebatesData.success) {
-            const rebatesArray = Array.isArray(rebatesData.data) ? rebatesData.data : [];
-            setRebates(rebatesArray);
-          } else {
-            setRebates([]);
-          }
+      if (rebatesResponse.ok) {
+        const rebatesData = await rebatesResponse.json();
+        if (rebatesData.success) {
+          setRebates(Array.isArray(rebatesData.data) ? rebatesData.data : []);
         } else {
           setRebates([]);
         }
-      } catch (fetchError) {
-        console.log('❌ Fetch error:', fetchError);
-        setRebates([]);
       }
-
-      await loadCustomerStatus();
-
     } catch (error) {
-      console.error('💥 Error loading dashboard data:', error);
+      console.error('Error loading dashboard data:', error);
       setRebates([]);
     } finally {
-      setLoading(false);
+      setLoading(false); // ✅ page visible immediately
     }
+    loadCustomerStatus(); // ✅ now safe — defined above
   };
 
-const loadCustomerStatus = async () => {
-  if (selectedRebate || modalCustomer) return;
-  try {
-    let url = `http://192.168.100.193:3009/api/van/dashboard/rebates-summary?db=VAN_OWN`;
-    
-    const params = new URLSearchParams();
-    if (statusSummaryPeriodFrom) params.append('periodFrom', statusSummaryPeriodFrom);
-    if (statusSummaryPeriodTo) params.append('periodTo', statusSummaryPeriodTo);
-    if (selectedAgent !== 'All') params.append('agent', selectedAgent);
-    
-
-    if (params.toString()) {
+  const loadCustomerDetails = async (customerCode, rebateCode, rebateType, forceAutoLoad = true) => {
+    try {
+      console.log('📥 Loading details for:', customerCode, rebateCode, rebateType);
+      
+      let url = `http://192.168.100.193:3009/api/van/dashboard/customer/${customerCode}/details?db=VAN_OWN`;
+      
+      const params = new URLSearchParams();
+      params.append('rebateCode', rebateCode);
+      params.append('rebateType', rebateType);
+      
+      // DO NOT pass frequency to API - let backend determine it
+      // Remove this line: if (modalCustomer?.frequency) { params.append('frequency', modalCustomer.frequency); }
+      
+      params.append('useRebatePeriod', 'true');
+      
       url += `&${params.toString()}`;
-    }
-
-    console.log('📊 Loading customer status with frequency...');
-    const response = await fetch(url);
-    
-    if (response.ok) {
-      const data = await response.json();
-      if (data.success) {
-        console.log('✅ Customer status data with frequency loaded:', {
-          totalCustomers: data.data.summary?.length,
-          sampleCustomer: data.data.summary?.[0]
-        });
-        
-        // Process the data with frequency and calculate progress
-        const processedCustomers = await Promise.all(
-          data.data.summary.map(async (item) => {
-            // First create the basic customer object
-            const customer = {
-              customer: item.customer || 'Unknown Customer',
-              agent: item.agent || 'Unknown Agent',
-              rebateType: item.rebateType || 'Unknown',
-              code: item.code || `CUST-${Math.random().toString(36).substr(2, 5)}`,
-              rebateCode: item.rebateCode || 'UNKNOWN-CODE',
-              dateFrom: item.dateFrom || '',
-              dateTo: item.dateTo || '',
-              frequency: item.frequency || 'Quarterly',
-              isActive: item.isActive,
-              progress: item.totalAchieved || 0,
-              totalAchieved: item.totalAchieved || 0,
-              totalQuota: item.totalQuota || 0,
-              quotaStatus: item.quotaStatus || "Starting",
-              rebate: item.rebateStatus || "Not Eligible",
-              rebateAmount: parseFloat(item.rebateAmount) || 0,
-              paidAmount: parseFloat(item.paidAmount) || 0,
-              rebateBalance: parseFloat(item.rebateBalance) || 0,
-              enrollment: item.enrollment || new Date().toISOString().split('T')[0],
-              color: item.color || `#${Math.floor(Math.random()*16777215).toString(16)}`,
-              quotas: item.quotas || {},
-              ranges: item.ranges || [],
-              itemDetails: item.itemDetails || [],
-              currentRange: item.currentRange || null
-            };
-            
-            // Now calculate the progress using the function
-            return await calculateCustomerProgress(customer);
-          })
-        );
-
-        // Log frequency distribution for debugging
-        const frequencyCount = processedCustomers.reduce((acc, customer) => {
-          acc[customer.frequency] = (acc[customer.frequency] || 0) + 1;
-          return acc;
-        }, {});
-        console.log('📊 Frequency distribution:', frequencyCount);
-
-        const sortedCustomers = processedCustomers.sort((a, b) => {
-          const dateA = new Date(a.enrollment);
-          const dateB = new Date(b.enrollment);
-          return dateB - dateA;
-        });
-
-        console.log(`Loaded ${sortedCustomers.length} customers with calculated progress`);
-        
-        setCustomers(sortedCustomers);
-        setLastRefreshTime(Date.now());
-        
-        const uniqueAgents = [...new Set(sortedCustomers.map(c => c.agent))].filter(agent => agent && agent !== 'Unknown Agent');
-        setAgents(uniqueAgents);
+      console.log('🌐 Calling customer details URL:', url);
+      
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          console.log('✅ Customer details loaded with frequency:', data.data.frequency);
+          
+          // Use frequency from backend response
+          const frequency = data.data.frequency || 'Quarterly';
+          
+          // Store frequency in customer data
+          data.data.frequency = frequency;
+          data.data.isMonthly = frequency === 'Monthly';
+          
+          return data.data;
+        }
       }
+    } catch (error) {
+      console.error('❌ Network error loading customer details:', error);
     }
-  } catch (error) {
-    console.error('❌ Error loading customer status:', error);
-  }
-};
+    return null;
+  };
 
-const loadCustomerDetails = async (customerCode, rebateCode, rebateType, forceAutoLoad = true) => {
-  try {
-    console.log('📥 Loading details for:', customerCode, rebateCode, rebateType);
-    
-    let url = `http://192.168.100.193:3009/api/van/dashboard/customer/${customerCode}/details?db=VAN_OWN`;
-    
-    const params = new URLSearchParams();
-    params.append('rebateCode', rebateCode);
-    params.append('rebateType', rebateType);
-    
-    // DO NOT pass frequency to API - let backend determine it
-    // Remove this line: if (modalCustomer?.frequency) { params.append('frequency', modalCustomer.frequency); }
-    
-    params.append('useRebatePeriod', 'true');
-    
-    url += `&${params.toString()}`;
-    console.log('🌐 Calling customer details URL:', url);
-    
-    const response = await fetch(url);
-    if (response.ok) {
-      const data = await response.json();
-      if (data.success) {
-        console.log('✅ Customer details loaded with frequency:', data.data.frequency);
-        
-        // Use frequency from backend response
-        const frequency = data.data.frequency || 'Quarterly';
-        
-        // Store frequency in customer data
-        data.data.frequency = frequency;
-        data.data.isMonthly = frequency === 'Monthly';
-        
-        return data.data;
+    const loadRebateDetails = async (rebateCode, customerCode = null) => {
+    try {
+      console.log('🔍 Loading rebate details for:', rebateCode, customerCode ? `customer: ${customerCode}` : '');
+      
+      let url = `http://192.168.100.193:3009/api/van/dashboard/rebate/${rebateCode}/details?db=VAN_OWN`;
+      
+      if (customerCode) {
+        url += `&customerCode=${customerCode}`;
       }
-    }
-  } catch (error) {
-    console.error('❌ Network error loading customer details:', error);
-  }
-  return null;
-};
-
-  const loadRebateDetails = async (rebateCode, customerCode = null) => {
-  try {
-    console.log('🔍 Loading rebate details for:', rebateCode, customerCode ? `customer: ${customerCode}` : '');
-    
-    let url = `http://192.168.100.193:3009/api/van/dashboard/rebate/${rebateCode}/details?db=VAN_OWN`;
-    
-    if (customerCode) {
-      url += `&customerCode=${customerCode}`;
-    }
-    
-    console.log('🌐 Calling API:', url);
-    
-    const response = await fetch(url);
-    
-    console.log('📊 Response status:', response.status);
-    console.log('📊 Response ok:', response.ok);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ API error response:', errorText);
-      throw new Error(`HTTP error! status: ${response.status}, details: ${errorText}`);
-    }
-    
-    const data = await response.json();
-    console.log('📦 API response data:', {
-      success: data.success,
-      dataKeys: data.data ? Object.keys(data.data) : 'No data',
-      customersCount: data.data?.customers?.length || 0,
-      ranges: data.data?.ranges,
-      rangesLength: data.data?.ranges?.length || 0
-    });
-    
-    if (data.success) {
-      console.log('Loaded rebate details:', {
-        rebateType: data.data.rebateType,
-        ranges: data.data.ranges,
-        customers: data.data.customers?.length || 0,
-        dateFrom: data.data.dateFrom,
-        dateTo: data.data.dateTo,
-        name: data.data.Name || data.data.name || ''
+      
+      console.log('🌐 Calling API:', url);
+      
+      const response = await fetch(url);
+      
+      console.log('📊 Response status:', response.status);
+      console.log('📊 Response ok:', response.ok);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ API error response:', errorText);
+        throw new Error(`HTTP error! status: ${response.status}, details: ${errorText}`);
+      }
+      
+      const data = await response.json();
+      console.log('📦 API response data:', {
+        success: data.success,
+        dataKeys: data.data ? Object.keys(data.data) : 'No data',
+        customersCount: data.data?.customers?.length || 0,
+        ranges: data.data?.ranges,
+        rangesLength: data.data?.ranges?.length || 0
       });
+      
+      if (data.success) {
+        console.log('Loaded rebate details:', {
+          rebateType: data.data.rebateType,
+          ranges: data.data.ranges,
+          customers: data.data.customers?.length || 0,
+          dateFrom: data.data.dateFrom,
+          dateTo: data.data.dateTo,
+          name: data.data.Name || data.data.name || ''
+        });
 
-      return {
-        ...data.data,
-        name: data.data.Name || data.data.name || '',
-      };
-    }else {
-      console.error('❌ API returned error:', data.message);
+        return {
+          ...data.data,
+          name: data.data.Name || data.data.name || '',
+        };
+      }else {
+        console.error('❌ API returned error:', data.message);
+        return null;
+      }
+    } catch (error) {
+      console.error('❌ Network error loading rebate details:', error);
+      console.error('❌ Error stack:', error.stack);
       return null;
     }
-  } catch (error) {
-    console.error('❌ Network error loading rebate details:', error);
-    console.error('❌ Error stack:', error.stack);
-    return null;
-  }
-};
+  };
 
   const fetchMonthlyQuotaData = async (customerCode, rebateCode, rebateType, useAutoDates = true) => {
     try {
@@ -6355,6 +6285,7 @@ const renderPercentageItemsTable = ({ access } = {}) => {
               onFetchData={() => loadCustomerStatus(true)}   // calls your existing function, forceRefresh=true
               fetchIntervalMs={3000}                       // refresh every 30 seconds
               autoFetchEnabled={!selectedRebate && !modalCustomer}                        // flip to false to pause
+              isLoading={customersLoading}
               selectedProgramStatus={selectedProgramStatus}
               setSelectedProgramStatus={setSelectedProgramStatus}
               showStatus={dbType === "VAN"}
