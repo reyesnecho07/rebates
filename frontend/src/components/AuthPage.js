@@ -4,15 +4,13 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import {
   Eye, EyeOff, Lock, X, KeyRound,
-  AlertCircle, CheckCircle, Shield, ArrowRight,
+  AlertCircle, CheckCircle, Shield, ShieldCheck, ArrowRight,
   Sun, Moon, Loader2, User, HelpCircle, LayoutDashboard, Users, BarChart3,
 } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import Rebate from "../assets/Rebate.png";
-
 const API_BASE = "http://192.168.100.193:3009/api";
 const DB_NAME  = "USER";
-
 /* ─── Global styles & keyframes ─────────────────────────────────────────────── */
 const GLOBAL_STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Sora:wght@300;400;500;600;700;800&display=swap');
@@ -48,7 +46,6 @@ const GLOBAL_STYLES = `
     from { opacity:1; transform:translateY(0); }
     to   { opacity:0; transform:translateY(-14px); }
   }
-
   /* ── Tooltip ── */
   .tooltip-hover {
     position: relative;
@@ -94,7 +91,6 @@ const GLOBAL_STYLES = `
     border-style: solid;
     border-color: #0f172aee transparent transparent transparent;
   }
-
   @media (max-width: 639px) {
     .tooltip-hover .tooltip-text {
       width: 220px;
@@ -103,7 +99,6 @@ const GLOBAL_STYLES = `
     }
   }
 `;
-
 /* ─── Carousel slides ────────────────────────────────────────────────────────── */
 const CAROUSEL_SLIDES = [
   {
@@ -126,14 +121,12 @@ const CAROUSEL_SLIDES = [
   },
 ];
 const SLIDE_DURATION = 4000;
-
 /* ─── Left decorative panel ──────────────────────────────────────────────────── */
 function BrandPanel({ isDark }) {
   const [currentSlide, setCurrentSlide] = useState(0);
   const [animatingOut, setAnimatingOut] = useState(false);
   const [animatingIn,  setAnimatingIn]  = useState(false);
   const timerRef = useRef(null);
-
   const goToSlide = (next) => {
     if (animatingOut || animatingIn) return;
     setAnimatingOut(true);
@@ -144,7 +137,6 @@ function BrandPanel({ isDark }) {
       setTimeout(() => setAnimatingIn(false), 420);
     }, 320);
   };
-
   useEffect(() => {
     timerRef.current = setInterval(() => {
       setCurrentSlide(prev => {
@@ -156,7 +148,6 @@ function BrandPanel({ isDark }) {
     return () => clearInterval(timerRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
   const handleDotClick = (i) => {
     if (i === currentSlide) return;
     clearInterval(timerRef.current);
@@ -169,14 +160,12 @@ function BrandPanel({ isDark }) {
       });
     }, SLIDE_DURATION);
   };
-
   const slide = CAROUSEL_SLIDES[currentSlide];
   const textAnimation = animatingOut
     ? "carouselFadeOut .32s cubic-bezier(.4,0,.6,1) forwards"
     : animatingIn
     ? "carouselFadeIn .42s cubic-bezier(.2,0,.2,1) forwards"
     : "none";
-
   return (
     <div style={{
       width:"100%", height:"100%", position:"relative", overflow:"hidden",
@@ -213,7 +202,6 @@ function BrandPanel({ isDark }) {
         backgroundImage:"url(\"data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E\")",
         backgroundSize:"180px 180px", opacity:.55,
       }} />
-
       {/* Logo */}
       <div style={{ position:"relative", zIndex:10, display:"flex", alignItems:"center", gap:"10px" }}>
         <div style={{
@@ -230,7 +218,6 @@ function BrandPanel({ isDark }) {
           letterSpacing:".2px",
         }}>Rebate Management System</span>
       </div>
-
       {/* Central swirl — clamped to top 62% so it never bleeds over the text zone */}
       <div style={{
         position:"absolute",
@@ -269,7 +256,6 @@ function BrandPanel({ isDark }) {
           background:"rgba(255,255,255,.06)",
         }} />
       </div>
-
       {/* Dark gradient scrim — covers the bottom ~45% so decorative elements
           never paint over the carousel text */}
       <div style={{
@@ -278,7 +264,6 @@ function BrandPanel({ isDark }) {
         background:"linear-gradient(to bottom, transparent 0%, rgba(8,14,30,.82) 55%, rgba(8,14,30,.97) 100%)",
         zIndex:3, pointerEvents:"none",
       }} />
-
       {/* Bottom carousel — z-index above scrim */}
       <div style={{ position:"relative", zIndex:10, width:"100%" }}>
         <div style={{ minHeight:"108px", animation: textAnimation }}>
@@ -304,7 +289,6 @@ function BrandPanel({ isDark }) {
               {currentSlide === 0 ? "Management" : currentSlide === 1 ? "Tracking" : "Reports"}
             </span>
           </div>
-
           {/* Heading — plain white with colored first word for legibility */}
           <h2 style={{
             margin:"0 0 8px",
@@ -326,7 +310,6 @@ function BrandPanel({ isDark }) {
               </span>
             ))}
           </h2>
-
           <p style={{
             margin:0,
             fontSize:"12px", fontWeight:400,
@@ -337,7 +320,6 @@ function BrandPanel({ isDark }) {
             {slide.description}
           </p>
         </div>
-
         {/* Dots */}
         <div style={{ display:"flex", gap:"6px", marginTop:"16px", alignItems:"center" }}>
           {CAROUSEL_SLIDES.map((s, i) => (
@@ -358,7 +340,6 @@ function BrandPanel({ isDark }) {
     </div>
   );
 }
-
 /* ─── Sign-in transition overlay ─────────────────────────────────────────────── */
 function TransitionOverlay({ visible, isDark }) {
   if (!visible) return null;
@@ -401,7 +382,6 @@ function TransitionOverlay({ visible, isDark }) {
     </div>
   );
 }
-
 /* ─── Floating-label input ───────────────────────────────────────────────────── */
 function Field({ label, icon: Icon, type="text", value, onChange,
                   disabled, placeholder, right, autoComplete, isDark }) {
@@ -410,7 +390,6 @@ function Field({ label, icon: Icon, type="text", value, onChange,
   const borderColor = focused
     ? "#3b82f6"
     : isDark ? "rgba(255,255,255,.10)" : "#e2e8f0";
-
   return (
     <div style={{ position:"relative", fontFamily:"'DM Sans', sans-serif" }}>
       <div style={{
@@ -465,7 +444,6 @@ function Field({ label, icon: Icon, type="text", value, onChange,
     </div>
   );
 }
-
 /* ─── Password strength bar ─────────────────────────────────────────────────── */
 function StrengthMeter({ password, isDark }) {
   if (!password) return null;
@@ -496,13 +474,249 @@ function StrengthMeter({ password, isDark }) {
     </div>
   );
 }
+/* ─── Password-change modal (Tailwind) ───────────────────────────────────────
+   This is the only piece that was redesigned. It now uses Tailwind utility
+   classes instead of inline style objects, and pulls its palette from the
+   same indigo/blue/violet gradient + "pill" language used on the brand panel
+   and the Sign In button, instead of the old mismatched amber theme.
+   NOTE: this assumes Tailwind is configured in this project (postcss +
+   tailwind.config content globs covering this file). The rest of AuthPage.js
+   intentionally stays on inline styles, untouched, as requested.
+────────────────────────────────────────────────────────────────────────────── */
+function PasswordChangeModal({
+  isDark,
+  tempResult, userCode,
+  newPwd, setNewPwd, confirmPwd, setConfirmPwd,
+  showNewPwd, setShowNewPwd, showConfirmPwd, setShowConfirmPwd,
+  pwdError, changing, onSubmit, onClose,
+}) {
+  const headingText = isDark ? "text-[#f1f5f9]" : "text-[#0f172a]";
+  const subText      = isDark ? "text-white/[0.36]" : "text-[#94a3b8]";
+  const dividerBorder = isDark ? "border-white/[0.07]" : "border-[#f1f5f9]";
 
+  return (
+    <div className="fixed inset-0 z-[9000] flex items-center justify-center p-4 bg-[rgba(8,12,24,0.65)] backdrop-blur-[12px]">
+      <div
+        className={[
+          "w-[min(440px,100%)] rounded-[22px] overflow-hidden border",
+          "font-['DM_Sans',sans-serif] animate-[slideIn_.32s_cubic-bezier(.2,0,.2,1)]",
+          isDark
+            ? "bg-[rgba(13,20,40,0.97)] border-white/[0.07] shadow-[0_32px_80px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.05)]"
+            : "bg-white/[0.98] border-black/[0.07] shadow-[0_32px_80px_rgba(15,23,42,0.2),0_0_0_1px_rgba(0,0,0,0.04)]",
+        ].join(" ")}
+      >
+        {/* ── Gradient header banner — echoes the brand-panel palette ── */}
+        <div className="relative overflow-hidden px-6 pt-6 pb-5 bg-[linear-gradient(135deg,#1d4ed8_0%,#4338ca_55%,#6d28d9_100%)]">
+          <div className="pointer-events-none absolute -top-[35%] -left-[10%] w-[60%] h-[150%] rounded-full blur-[28px] bg-[radial-gradient(ellipse,rgba(255,255,255,0.20)_0%,transparent_68%)] animate-[floatBlob_8s_ease-in-out_infinite]" />
+          <div className="pointer-events-none absolute -bottom-[45%] -right-[12%] w-[58%] h-[140%] rounded-full blur-[26px] bg-[radial-gradient(ellipse,rgba(129,140,248,0.45)_0%,transparent_70%)] animate-[floatBlob2_10s_ease-in-out_infinite]" />
+
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={changing}
+            className={[
+              "absolute top-3.5 right-3.5 z-[3] w-[26px] h-[26px] rounded-lg",
+              "bg-white/[0.12] border border-white/[0.18] flex items-center justify-center",
+              changing ? "cursor-not-allowed opacity-50" : "cursor-pointer",
+            ].join(" ")}
+          >
+            <X size={12} className="text-white/[0.85]" />
+          </button>
+
+          <div className="relative z-[2] w-[42px] h-[42px] rounded-[13px] bg-white/[0.14] backdrop-blur-[8px] border border-white/[0.24] flex items-center justify-center mb-3.5">
+            <ShieldCheck size={19} className="text-white" strokeWidth={1.8} />
+          </div>
+
+          <div className="relative z-[2] inline-flex items-center gap-1.5 bg-white/[0.12] border border-white/[0.20] rounded-full pl-2 pr-2.5 py-1 mb-2.5">
+            <Lock size={10} className="text-[#a5b4fc]" />
+            <span className="text-[9.5px] font-bold text-[#e0e7ff] tracking-[0.5px] uppercase">
+              Security Required
+            </span>
+          </div>
+
+          <h2 className="relative z-[2] m-0 mb-1 font-['Sora',sans-serif] text-[18px] font-extrabold text-white tracking-[-0.2px]">
+            Set a New Password
+          </h2>
+          <p className="relative z-[2] m-0 text-[12px] text-white/[0.70] leading-[1.55] max-w-[320px]">
+            This is a first-time login. Please create a new password to continue.
+          </p>
+        </div>
+
+        {/* User chip */}
+        <div
+          className={[
+            "mt-[18px] mx-6 px-3.5 py-2.5 rounded-xl border flex items-center gap-2.5",
+            isDark ? "bg-white/[0.04]" : "bg-black/[0.02]",
+            dividerBorder,
+          ].join(" ")}
+        >
+          <div
+            className={[
+              "w-8 h-8 rounded-[10px] flex-shrink-0 flex items-center justify-center",
+              "text-[13px] font-bold border",
+              isDark
+                ? "bg-[rgba(99,102,241,0.18)] border-[rgba(99,102,241,0.30)] text-[#a5b4fc]"
+                : "bg-[#eef2ff] border-[#c7d2fe] text-[#4f46e5]",
+            ].join(" ")}
+          >
+            {(tempResult.user?.DisplayName || userCode).charAt(0).toUpperCase()}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className={`m-0 mb-px text-xs font-semibold truncate ${headingText}`}>
+              {tempResult.user?.DisplayName || userCode}
+            </p>
+            <p className={`m-0 text-[10px] ${subText}`}>
+              ID: {tempResult.user?.User_ID}
+            </p>
+          </div>
+          <span
+            className={[
+              "text-[9px] font-bold tracking-[0.4px] uppercase px-2 py-1 rounded-full border",
+              isDark
+                ? "text-[#34d399] bg-[rgba(52,211,153,0.12)] border-[rgba(52,211,153,0.20)]"
+                : "text-[#059669] bg-[#ecfdf5] border-[#a7f3d0]",
+            ].join(" ")}
+          >
+            First Login
+          </span>
+        </div>
+
+        {/* Body / form */}
+        <div className="px-6 pt-4 pb-6 flex flex-col gap-3">
+          {pwdError && (
+            <div
+              className={[
+                "flex items-center gap-2 px-3 py-2.5 rounded-[10px] text-xs border",
+                isDark
+                  ? "bg-[rgba(239,68,68,0.10)] border-[rgba(239,68,68,0.30)] text-[#fca5a5]"
+                  : "bg-[#fef2f2] border-[#fecaca] text-[#b91c1c]",
+              ].join(" ")}
+            >
+              <AlertCircle size={12} className="flex-shrink-0" />
+              {pwdError}
+            </div>
+          )}
+
+          <form onSubmit={onSubmit} className="flex flex-col gap-3">
+            <div>
+              <Field
+                label="New Password" icon={Lock} isDark={isDark}
+                type={showNewPwd ? "text" : "password"}
+                value={newPwd} onChange={e => setNewPwd(e.target.value)}
+                disabled={changing} placeholder="Min. 6 characters" autoComplete="new-password"
+                right={
+                  <button
+                    type="button" onClick={() => setShowNewPwd(!showNewPwd)}
+                    className={`bg-transparent border-0 cursor-pointer p-1 ${isDark ? "text-white/[0.28]" : "text-[#94a3b8]"}`}
+                  >
+                    {showNewPwd ? <EyeOff size={13} /> : <Eye size={13} />}
+                  </button>
+                }
+              />
+              <StrengthMeter password={newPwd} isDark={isDark} />
+            </div>
+
+            <div>
+              <Field
+                label="Confirm Password" icon={KeyRound} isDark={isDark}
+                type={showConfirmPwd ? "text" : "password"}
+                value={confirmPwd} onChange={e => setConfirmPwd(e.target.value)}
+                disabled={changing} placeholder="Repeat password" autoComplete="new-password"
+                right={
+                  <button
+                    type="button" onClick={() => setShowConfirmPwd(!showConfirmPwd)}
+                    className={`bg-transparent border-0 cursor-pointer p-1 ${isDark ? "text-white/[0.28]" : "text-[#94a3b8]"}`}
+                  >
+                    {showConfirmPwd ? <EyeOff size={13} /> : <Eye size={13} />}
+                  </button>
+                }
+              />
+              {confirmPwd.length > 0 && (
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  {newPwd === confirmPwd ? (
+                    <>
+                      <CheckCircle size={11} className="text-[#10b981]" />
+                      <span className="text-[11px] font-medium text-[#10b981]">Passwords match</span>
+                    </>
+                  ) : (
+                    <>
+                      <X size={11} className="text-[#ef4444]" />
+                      <span className="text-[11px] font-medium text-[#ef4444]">Passwords don't match</span>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Requirements checklist */}
+            <div
+              className={[
+                "px-3 py-2.5 rounded-[10px] border flex flex-col gap-2",
+                isDark ? "bg-white/[0.03]" : "bg-black/[0.02]",
+                dividerBorder,
+              ].join(" ")}
+            >
+              {[
+                { ok: newPwd.length >= 6,                       label: "At least 6 characters" },
+                { ok: newPwd === confirmPwd && newPwd.length > 0, label: "Passwords match" },
+              ].map(({ ok, label }) => (
+                <div key={label} className="flex items-center gap-2">
+                  <div
+                    className={[
+                      "w-3.5 h-3.5 rounded-full flex-shrink-0 flex items-center justify-center transition-colors duration-200",
+                      ok ? "bg-[#10b981]" : isDark ? "bg-[#1e293b]" : "bg-[#e2e8f0]",
+                    ].join(" ")}
+                  >
+                    {ok && <CheckCircle size={9} className="text-white" />}
+                  </div>
+                  <span className={`text-[11px] ${ok ? "font-medium text-[#10b981]" : `font-normal ${subText}`}`}>
+                    {label}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-2.5 mt-1">
+              <button
+                type="button"
+                disabled={changing}
+                onClick={onClose}
+                className={[
+                  "flex-1 h-11 rounded-xl bg-transparent border-[1.5px] text-[12.5px] font-semibold",
+                  changing ? "cursor-not-allowed opacity-40" : "cursor-pointer",
+                  isDark ? "border-white/10 text-white/[0.48]" : "border-[#e2e8f0] text-[#64748b]",
+                ].join(" ")}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={changing}
+                className={[
+                  "flex-1 h-11 rounded-xl border-0 text-white text-[12.5px] font-semibold",
+                  "flex items-center justify-center gap-1.5",
+                  "bg-[linear-gradient(135deg,#2563eb,#6366f1)] shadow-[0_6px_18px_rgba(59,130,246,0.28)]",
+                  changing ? "cursor-not-allowed opacity-70" : "cursor-pointer",
+                ].join(" ")}
+              >
+                {changing
+                  ? <><Loader2 size={13} className="animate-[spinSlow_.8s_linear_infinite]" />Saving…</>
+                  : "Update Password"
+                }
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
 /* ─── Main component ────────────────────────────────────────────────────────── */
 export default function Login() {
   const { theme, updateTheme } = useTheme();
   const isDark  = theme === "dark";
   const navigate = useNavigate();
-
   const [userCode,   setUserCode]   = useState("");
   const [password,   setPassword]   = useState("");
   const [showPwd,    setShowPwd]    = useState(false);
@@ -511,7 +725,6 @@ export default function Login() {
   const [transitioning, setTransitioning] = useState(false);
   const [signingIn,  setSigningIn]  = useState(false);
   const [mounted,    setMounted]    = useState(false);
-
   const [showModal,      setShowModal]      = useState(false);
   const [newPwd,         setNewPwd]         = useState("");
   const [confirmPwd,     setConfirmPwd]     = useState("");
@@ -520,11 +733,9 @@ export default function Login() {
   const [pwdError,       setPwdError]       = useState("");
   const [changing,       setChanging]       = useState(false);
   const [tempResult,     setTempResult]     = useState(null);
-
   const [themeSaveStatus, setThemeSaveStatus] = useState({
     saving:false, saved:false, error:false,
   });
-
   useEffect(() => {
     const t = setTimeout(() => setMounted(true), 60);
     const rem = localStorage.getItem("rememberedUser");
@@ -533,7 +744,6 @@ export default function Login() {
     if (lastTheme && lastTheme !== theme) updateTheme(lastTheme);
     return () => clearTimeout(t);
   }, []);
-
   const handleThemeToggle = async () => {
     const newTheme = isDark ? "light" : "dark";
     setThemeSaveStatus({ saving:true, saved:false, error:false });
@@ -557,7 +767,6 @@ export default function Login() {
     }
     setTimeout(() => setThemeSaveStatus({ saving:false, saved:false, error:false }), 2800);
   };
-
   const goHome = async (userData) => {
     localStorage.setItem("currentUser", JSON.stringify(userData));
     localStorage.setItem("userTheme", theme);
@@ -576,7 +785,6 @@ export default function Login() {
     await new Promise(resolve => setTimeout(resolve, 2000));
     navigate("/HomePage", { replace:true });
   };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -606,7 +814,6 @@ export default function Login() {
       setError(err.message || "Network error. Check your connection.");
     }
   };
-
   const handlePasswordChange = async (e) => {
     e.preventDefault();
     setPwdError("");
@@ -634,7 +841,6 @@ export default function Login() {
       setChanging(false);
     }
   };
-
   /* ── Derived tokens ── */
   const pageBg     = isDark ? "#0a0f1e"              : "#f0f4f8";
   const cardBg     = isDark ? "rgba(13,20,40,.97)"   : "rgba(255,255,255,.98)";
@@ -642,12 +848,10 @@ export default function Login() {
   const heading    = isDark ? "#f1f5f9"              : "#0f172a";
   const subtext    = isDark ? "rgba(255,255,255,.36)" : "#94a3b8";
   const divBorder  = isDark ? "rgba(255,255,255,.07)" : "#f1f5f9";
-
   return (
     <>
       <style>{GLOBAL_STYLES}</style>
       <TransitionOverlay visible={transitioning} isDark={isDark} />
-
       {/* Page */}
       <div style={{
         minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
@@ -661,7 +865,6 @@ export default function Login() {
           background:"radial-gradient(ellipse, rgba(59,130,246,.06) 0%, transparent 70%)",
           filter:"blur(40px)", pointerEvents:"none", zIndex:0,
         }} />
-
         {/* Theme toggle */}
         <div style={{
           position:"fixed", top:"16px", right:"16px", zIndex:100,
@@ -699,7 +902,6 @@ export default function Login() {
             }
           </button>
         </div>
-
         {/* ══ SPLIT CARD ══ */}
         <div style={{
           position:"relative", zIndex:10,
@@ -717,7 +919,6 @@ export default function Login() {
           <div className="brand-panel" style={{ width:"42%", flexShrink:0, minHeight:"520px" }}>
             <BrandPanel isDark={isDark} />
           </div>
-
           {/* RIGHT: login form — uses flex column with space-between so the
               version/tooltip footer sticks to the bottom */}
           <div style={{
@@ -731,7 +932,6 @@ export default function Login() {
               position:"absolute", top:0, left:0, right:0, height:"1px",
               background:"linear-gradient(90deg, transparent, rgba(59,130,246,.30), transparent)",
             }} />
-
             {/* Mobile logo row */}
             <div className="mobile-logo-row" style={{
               display:"none", alignItems:"center", gap:"12px", marginBottom:"24px",
@@ -757,10 +957,8 @@ export default function Login() {
                 </div>
               </div>
             </div>
-
             {/* ── SCROLLABLE MAIN CONTENT (grows to fill) ── */}
             <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"center" }}>
-
               {/* Header — NO extra wrapper that clips the text, plain div */}
               <div style={{ marginBottom:"28px" }}>
                 <h1 style={{
@@ -787,7 +985,6 @@ export default function Login() {
                   Sign in to your RMS account to continue
                 </p>
               </div>
-
               {/* Error banner */}
               {error && (
                 <div style={{
@@ -806,7 +1003,6 @@ export default function Login() {
                   }}><X size={12} /></button>
                 </div>
               )}
-
               {/* Form */}
               <form onSubmit={handleSubmit} style={{ display:"flex", flexDirection:"column", gap:"14px" }}>
                 <Field
@@ -828,7 +1024,6 @@ export default function Login() {
                     </button>
                   }
                 />
-
                 {/* Remember me */}
                 <label style={{
                   display:"flex", alignItems:"center", gap:"8px",
@@ -845,7 +1040,6 @@ export default function Login() {
                   </button>
                   <span style={{ color:subtext, fontSize:"12px" }}>Remember me</span>
                 </label>
-
                 {/* Sign In button */}
                 <button type="submit" disabled={signingIn} style={{
                   height:"52px", borderRadius:"12px", border:"none",
@@ -867,7 +1061,6 @@ export default function Login() {
                 </button>
               </form>
             </div>
-
             {/* ── FOOTER: version tag + help tooltip — pinned to the bottom ── */}
             <div
               style={{
@@ -895,7 +1088,6 @@ export default function Login() {
                 <Shield size={10} style={{ opacity: 0.55 }} />
                 RMS v0.0.1
               </span>
-
               {/* Help tooltip — pinned right */}
               <div
                 className="tooltip-hover"
@@ -913,7 +1105,6 @@ export default function Login() {
                     transition: "color .15s",
                   }}
                 />
-
                 <div className="tooltip-text">
                   <strong
                     style={{
@@ -925,15 +1116,12 @@ export default function Login() {
                   >
                     Need help?
                   </strong>
-
                   <span style={{ opacity: 0.75 }}>• No account yet?</span> Contact your
                   system administrator.
                   <br />
-
                   <span style={{ opacity: 0.75 }}>• Forgot password?</span> Reach out to
                   support or reset via admin.
                   <br />
-
                   <span style={{ opacity: 0.75 }}>• First-time login?</span> Use your
                   temporary password.
                 </div>
@@ -941,7 +1129,6 @@ export default function Login() {
             </div>
           </div>{/* end right panel */}
         </div>{/* end split card */}
-
         {/* Responsive breakpoints */}
         <style>{`
           @media (min-width: 640px) {
@@ -954,207 +1141,21 @@ export default function Login() {
           }
         `}</style>
       </div>
-
-      {/* ══ Password-change modal ══ */}
+      {/* ══ Password-change modal (Tailwind-based, redesigned) ══ */}
       {showModal && tempResult && (
-        <div style={{
-          position:"fixed", inset:0, zIndex:9000,
-          display:"flex", alignItems:"center", justifyContent:"center", padding:"16px",
-          background:"rgba(0,0,0,.55)", backdropFilter:"blur(10px)",
-        }}>
-          <div style={{
-            width:"min(420px,100%)", borderRadius:"20px", overflow:"hidden",
-            background: cardBg, border:`1px solid ${cardBorder}`,
-            boxShadow:"0 32px 80px rgba(0,0,0,.40)",
-            fontFamily:"'DM Sans', sans-serif",
-            animation:"slideIn .3s ease",
-          }}>
-            <div style={{
-              height:"3px",
-              background:"linear-gradient(90deg, transparent, #f59e0b, transparent)",
-            }} />
-
-            {/* Modal header */}
-            <div style={{
-              padding:"20px 24px 16px",
-              borderBottom:`1px solid ${divBorder}`,
-              display:"flex", alignItems:"center", gap:"12px",
-            }}>
-              <div style={{
-                width:"36px", height:"36px", borderRadius:"12px", flexShrink:0,
-                background: isDark ? "rgba(245,158,11,.12)" : "#fffbeb",
-                border:`1px solid ${isDark?"rgba(245,158,11,.25)":"#fde68a"}`,
-                display:"flex", alignItems:"center", justifyContent:"center",
-              }}>
-                <KeyRound size={15} color={isDark?"#fbbf24":"#d97706"}/>
-              </div>
-              <div style={{ flex:1, minWidth:0 }}>
-                <p style={{ margin:"0 0 2px", fontSize:"13px", fontWeight:700, color:heading }}>
-                  Password Change Required
-                </p>
-                <p style={{ margin:0, fontSize:"11px", color:subtext }}>First-time login security policy</p>
-              </div>
-              <span style={{
-                width:"8px", height:"8px", borderRadius:"50%",
-                background:"#f59e0b", animation:"pulse2 1.5s ease-in-out infinite",
-              }} />
-            </div>
-
-            {/* User chip */}
-            <div style={{
-              margin:"16px 24px 0", padding:"10px 14px", borderRadius:"12px",
-              background: isDark ? "rgba(255,255,255,.04)" : "rgba(0,0,0,.02)",
-              border:`1px solid ${divBorder}`,
-              display:"flex", alignItems:"center", gap:"10px",
-            }}>
-              <div style={{
-                width:"32px", height:"32px", borderRadius:"10px", flexShrink:0,
-                background: isDark ? "rgba(59,130,246,.18)" : "#eff6ff",
-                border:`1px solid ${isDark?"rgba(59,130,246,.30)":"#bfdbfe"}`,
-                display:"flex", alignItems:"center", justifyContent:"center",
-                fontSize:"13px", fontWeight:700,
-                color: isDark ? "#60a5fa" : "#2563eb",
-              }}>
-                {(tempResult.user?.DisplayName || userCode).charAt(0).toUpperCase()}
-              </div>
-              <div style={{ flex:1, minWidth:0 }}>
-                <p style={{
-                  margin:"0 0 1px", fontSize:"12px", fontWeight:600, color:heading,
-                  overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
-                }}>
-                  {tempResult.user?.DisplayName || userCode}
-                </p>
-                <p style={{ margin:0, fontSize:"10px", color:subtext }}>
-                  ID: {tempResult.user?.User_ID}
-                </p>
-              </div>
-              <span style={{
-                fontSize:"9px", fontWeight:700, letterSpacing:".4px", textTransform:"uppercase",
-                color: isDark?"#34d399":"#059669",
-                background: isDark?"rgba(52,211,153,.12)":"#ecfdf5",
-                border:`1px solid ${isDark?"rgba(52,211,153,.20)":"#a7f3d0"}`,
-                padding:"3px 8px", borderRadius:"20px",
-              }}>First Login</span>
-            </div>
-
-            {/* Modal body */}
-            <div style={{ padding:"16px 24px 24px", display:"flex", flexDirection:"column", gap:"12px" }}>
-              {pwdError && (
-                <div style={{
-                  display:"flex", alignItems:"center", gap:"8px",
-                  padding:"9px 12px", borderRadius:"10px",
-                  background: isDark?"rgba(239,68,68,.10)":"#fef2f2",
-                  border:`1px solid ${isDark?"rgba(239,68,68,.30)":"#fecaca"}`,
-                  color: isDark?"#fca5a5":"#b91c1c", fontSize:"12px",
-                }}>
-                  <AlertCircle size={12} style={{ flexShrink:0 }}/>{pwdError}
-                </div>
-              )}
-
-              <form onSubmit={handlePasswordChange} style={{ display:"flex", flexDirection:"column", gap:"12px" }}>
-                <div>
-                  <Field label="New Password" icon={Lock} isDark={isDark}
-                    type={showNewPwd?"text":"password"}
-                    value={newPwd} onChange={e => setNewPwd(e.target.value)}
-                    disabled={changing} placeholder="Min. 6 characters" autoComplete="new-password"
-                    right={
-                      <button type="button" onClick={() => setShowNewPwd(!showNewPwd)} style={{
-                        background:"none", border:"none", cursor:"pointer", padding:"4px",
-                        color: isDark?"rgba(255,255,255,.28)":"#94a3b8",
-                      }}>
-                        {showNewPwd ? <EyeOff size={13}/> : <Eye size={13}/>}
-                      </button>
-                    }
-                  />
-                  <StrengthMeter password={newPwd} isDark={isDark}/>
-                </div>
-                <div>
-                  <Field label="Confirm Password" icon={KeyRound} isDark={isDark}
-                    type={showConfirmPwd?"text":"password"}
-                    value={confirmPwd} onChange={e => setConfirmPwd(e.target.value)}
-                    disabled={changing} placeholder="Repeat password" autoComplete="new-password"
-                    right={
-                      <button type="button" onClick={() => setShowConfirmPwd(!showConfirmPwd)} style={{
-                        background:"none", border:"none", cursor:"pointer", padding:"4px",
-                        color: isDark?"rgba(255,255,255,.28)":"#94a3b8",
-                      }}>
-                        {showConfirmPwd ? <EyeOff size={13}/> : <Eye size={13}/>}
-                      </button>
-                    }
-                  />
-                  {confirmPwd.length > 0 && (
-                    <div style={{ display:"flex", alignItems:"center", gap:"5px", marginTop:"5px" }}>
-                      {newPwd === confirmPwd
-                        ? <><CheckCircle size={11} color="#10b981"/>
-                            <span style={{ fontSize:"11px", color:"#10b981", fontWeight:500 }}>Passwords match</span></>
-                        : <><X size={11} color="#ef4444"/>
-                            <span style={{ fontSize:"11px", color:"#ef4444", fontWeight:500 }}>Passwords don't match</span></>
-                      }
-                    </div>
-                  )}
-                </div>
-
-                {/* Requirements checklist */}
-                <div style={{
-                  padding:"10px 12px", borderRadius:"10px",
-                  background: isDark?"rgba(255,255,255,.03)":"rgba(0,0,0,.02)",
-                  border:`1px solid ${divBorder}`,
-                  display:"flex", flexDirection:"column", gap:"8px",
-                }}>
-                  {[
-                    { ok: newPwd.length >= 6,                       label:"At least 6 characters" },
-                    { ok: newPwd===confirmPwd && newPwd.length > 0, label:"Passwords match" },
-                  ].map(({ ok, label }) => (
-                    <div key={label} style={{ display:"flex", alignItems:"center", gap:"8px" }}>
-                      <div style={{
-                        width:"14px", height:"14px", borderRadius:"50%", flexShrink:0,
-                        background: ok ? "#10b981" : isDark ? "#1e293b" : "#e2e8f0",
-                        display:"flex", alignItems:"center", justifyContent:"center",
-                        transition:"background .2s",
-                      }}>
-                        {ok && <CheckCircle size={9} color="#fff"/>}
-                      </div>
-                      <span style={{
-                        fontSize:"11px",
-                        color: ok ? "#10b981" : subtext,
-                        fontWeight: ok ? 500 : 400,
-                      }}>{label}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Actions */}
-                <div style={{ display:"flex", gap:"10px", marginTop:"4px" }}>
-                  <button type="button" disabled={changing}
-                    onClick={() => { setShowModal(false); setNewPwd(""); setConfirmPwd(""); setPwdError(""); }}
-                    style={{
-                      flex:1, height:"44px", borderRadius:"12px",
-                      background:"transparent", cursor: changing ? "not-allowed" : "pointer",
-                      border:`1.5px solid ${isDark?"rgba(255,255,255,.10)":"#e2e8f0"}`,
-                      color: isDark?"rgba(255,255,255,.48)":"#64748b",
-                      fontSize:"12.5px", fontWeight:600, fontFamily:"'DM Sans', sans-serif",
-                      opacity: changing ? .4 : 1,
-                    }}>Cancel</button>
-                  <button type="submit" disabled={changing} style={{
-                    flex:1, height:"44px", borderRadius:"12px", border:"none",
-                    background:"linear-gradient(135deg, #2563eb, #6366f1)",
-                    cursor: changing ? "not-allowed" : "pointer",
-                    color:"#fff", fontSize:"12.5px", fontWeight:600,
-                    fontFamily:"'DM Sans', sans-serif",
-                    boxShadow:"0 6px 18px rgba(59,130,246,.28)",
-                    opacity: changing ? .7 : 1,
-                    display:"flex", alignItems:"center", justifyContent:"center", gap:"6px",
-                  }}>
-                    {changing
-                      ? <><Loader2 size={13} style={{ animation:"spinSlow .8s linear infinite" }}/>Saving…</>
-                      : "Update Password"
-                    }
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
+        <PasswordChangeModal
+          isDark={isDark}
+          tempResult={tempResult}
+          userCode={userCode}
+          newPwd={newPwd} setNewPwd={setNewPwd}
+          confirmPwd={confirmPwd} setConfirmPwd={setConfirmPwd}
+          showNewPwd={showNewPwd} setShowNewPwd={setShowNewPwd}
+          showConfirmPwd={showConfirmPwd} setShowConfirmPwd={setShowConfirmPwd}
+          pwdError={pwdError}
+          changing={changing}
+          onSubmit={handlePasswordChange}
+          onClose={() => { setShowModal(false); setNewPwd(""); setConfirmPwd(""); setPwdError(""); }}
+        />
       )}
     </>
   );
