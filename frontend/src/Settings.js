@@ -11,7 +11,7 @@ import {
   CheckCircle
 } from "lucide-react";
 import { useLocation } from "react-router-dom";
-import userpreference from "./assets/userpreference.png";
+//import userpreference from "./assets/userpreference.png";
 import Sidebar from "./components/Sidebar";
 import Header from './components/Header';
 import { useTheme } from './context/ThemeContext';
@@ -484,7 +484,7 @@ function Settings() {
           userName={userName}
           userCode={userCode}
           initials={initials}
-          logo={userpreference}
+          //logo={userpreference}
           theme={theme}
         />
 

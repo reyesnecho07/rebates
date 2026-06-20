@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import RebateLogo from "./assets/Rebate.png";
-import userpreference from "./assets/userpreference.png";
+//import userpreference from "./assets/userpreference.png";
 import Sidebar from "./components/Sidebar";
 import Header from './components/Header';
 import { useTheme } from './context/ThemeContext';
@@ -172,7 +172,7 @@ function HomePage() {
         userName={userName}
         userCode={userCode}
         initials={initials}
-        logo={userpreference}
+        //logo={userpreference}
         theme={theme}
       />
       
