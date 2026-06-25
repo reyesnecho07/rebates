@@ -782,7 +782,7 @@ const Sidebar = ({ collapsed, setCollapsed, userDbOrder }) => {
   return (
     <aside className={asideClass}>
       {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div className={`flex items-center justify-between px-4 py-3.5 border-b ${isDark ? 'border-slate-700/60' : 'border-slate-200'}`}>
+      <div className={`flex items-center justify-between px-4 py-3.5 ${isDark ? 'border-slate-700/60' : 'border-slate-200'}`}>
         <div className={`flex items-center gap-3 transition-all duration-300 group ${collapsed ? 'justify-center w-full' : 'min-w-0 flex-1'}`}>
           <div className="relative w-8 h-8 flex-shrink-0">
             <div className={`w-8 h-8 rounded-xl flex items-center justify-center border shadow-sm transition-all duration-300 ${
@@ -805,7 +805,7 @@ const Sidebar = ({ collapsed, setCollapsed, userDbOrder }) => {
                 className={`font-bold leading-none whitespace-nowrap text-ellipsis overflow-hidden ${isDark ? 'text-slate-100' : 'text-slate-800'}`}
                 style={{ fontSize: 'clamp(13px, 1.1vw, 15px)' }}
               >
-                Rebate System
+                RMS
               </h2>
               {syncing && <SyncDot isDark={isDark} />}
             </div>

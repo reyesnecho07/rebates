@@ -144,7 +144,7 @@ const VanTransactionRecords = ({
 
   const ItemCell = ({ name, code }) => (
     <td className="px-4 py-2.5">
-      <div className={`font-medium truncate max-w-[200px] ${T.tp}`} title={name}>{name}</div>
+      <div className={`font-medium truncate max-w-[500px] ${T.tp}`} title={name}>{name}</div>
       <div className={`text-[10px] font-mono mt-0.5 ${T.tm}`}>{code}</div>
     </td>
   );

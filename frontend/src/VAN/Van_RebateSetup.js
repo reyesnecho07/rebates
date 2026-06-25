@@ -123,6 +123,17 @@ const detectUnitOfMeasure = (itemName) => {
   return matchedUnit;
 };
 
+/** Safely add N months without day-overflow (Jan 31 + 1 month → Feb 28, not Mar 3) */
+const addMonths = (date, n) => {
+  const d   = new Date(date);
+  const day = d.getDate();
+  d.setDate(1);                                                    // anchor to 1st first
+  d.setMonth(d.getMonth() + n);
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, last));
+  return d;
+};
+
 const UOM_OPTIONS = [
   'Bag/s','Btl/s','Ctn','Pc/s','Bx/s','Gal','Kg','Oz','Bundle','ML','Gram/s','Liter/s'
 ];
@@ -702,61 +713,74 @@ function Van_RebateSetup() {
     const startDate = new Date(selectedDateFrom);
     const endDate   = new Date(selectedDateTo);
     const periods   = [];
-    if (selectedFrequency === "Monthly") {
-      let currentDate = new Date(startDate);
-      let periodNumber = 1;
-      while (currentDate <= endDate) {
-        const periodStart = new Date(currentDate);
-        const periodEnd   = new Date(currentDate);
-        periodEnd.setMonth(periodEnd.getMonth() + 1);
-        periodEnd.setDate(periodEnd.getDate() - 1);
-        const actualEnd = periodEnd > endDate ? endDate : periodEnd;
-        periods.push({
-          period: `Month ${periodNumber}`, label: `Month ${periodNumber}`,
-          startDate: new Date(periodStart), endDate: new Date(actualEnd),
-          dates: `${periodStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${actualEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
-        });
-        periodNumber++;
-        currentDate.setMonth(currentDate.getMonth() + 1);
-        currentDate.setDate(1);
-      }
-    } else if (selectedFrequency === "Quarterly") {
-      let quarterStart = new Date(startDate);
-      const startMonth = quarterStart.getMonth();
-      if      (startMonth < 3) quarterStart.setMonth(0);
-      else if (startMonth < 6) quarterStart.setMonth(3);
-      else if (startMonth < 9) quarterStart.setMonth(6);
-      else                     quarterStart.setMonth(9);
-      quarterStart.setDate(1);
-      while (quarterStart <= endDate) {
-        const periodStart  = new Date(quarterStart);
-        const periodEnd    = new Date(quarterStart);
-        periodEnd.setMonth(periodEnd.getMonth() + 3);
-        periodEnd.setDate(periodEnd.getDate() - 1);
-        const actualEnd    = periodEnd > endDate ? endDate : periodEnd;
-        const quarterNames = ["Q1", "Q2", "Q3", "Q4"];
-        const quarterIndex = Math.floor(periodStart.getMonth() / 3);
-        const quarterName  = quarterNames[quarterIndex];
-        const year         = periodStart.getFullYear();
-        periods.push({
-          period: `${quarterName} ${year}`, label: `${quarterName} ${year}`,
-          startDate: new Date(periodStart), endDate: new Date(actualEnd),
-          dates: `${periodStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${actualEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
-          quarter: quarterName, year,
-        });
-        quarterStart.setMonth(quarterStart.getMonth() + 3);
-      }
+
+    const fmt  = (d, opts) => d.toLocaleDateString('en-US', opts);
+    const sOpt = { month: 'short', day: 'numeric' };
+    const lOpt = { month: 'short', day: 'numeric', year: 'numeric' };
+
+  if (selectedFrequency === "Monthly") {
+    let periodStart = new Date(startDate);
+    while (periodStart <= endDate) {
+      const nextStart = addMonths(periodStart, 1);
+      const isLast    = nextStart >= endDate;
+      const actualEnd = isLast
+        ? new Date(endDate)
+        : (() => { const d = new Date(nextStart); d.setDate(d.getDate() - 1); return d; })();
+
+      const monthName = periodStart.toLocaleDateString('en-US', { month: 'long' });
+      const year      = periodStart.getFullYear();
+
+      periods.push({
+        period:    `${monthName} ${year}`,
+        label:     monthName,
+        startDate: new Date(periodStart),
+        endDate:   new Date(actualEnd),
+        dates:     `${fmt(periodStart, sOpt)} - ${fmt(actualEnd, lOpt)}`,
+      });
+
+      if (isLast) break;
+      periodStart = nextStart;
     }
-    setQuotaPeriods(periods);
-    setQuotaCount(periods.length);
-    setCustomers(prev => prev.map(c => ({
-      ...c,
-      quotas:      quotaType === "withQuota" ? Array(periods.length).fill("") : [],
-      percentages: quotaType === "withQuota" ? Array(periods.length).fill("") : [],
-      ranges:      c.ranges || {},
-    })));
-    setItems(prev => prev.map(i => ({ ...i, ranges: i.ranges || {} })));
-  };
+  } else if (selectedFrequency === "Quarterly") {
+    // ← Start from the exact DateFrom, NOT the calendar-quarter boundary
+    let periodStart = new Date(startDate);
+
+    while (periodStart <= endDate) {
+      const nextStart = addMonths(periodStart, 3);
+      const isLast    = nextStart >= endDate;
+      const actualEnd = isLast
+        ? new Date(endDate)
+        : (() => { const d = new Date(nextStart); d.setDate(d.getDate() - 1); return d; })();
+
+      const qIdx  = Math.floor(periodStart.getMonth() / 3);
+      const qName = ["Q1", "Q2", "Q3", "Q4"][qIdx];
+      const year  = periodStart.getFullYear();
+
+      periods.push({
+        period:    `${qName} ${year}`,
+        label:     `${qName} ${year}`,
+        startDate: new Date(periodStart),
+        endDate:   new Date(actualEnd),
+        dates:     `${fmt(periodStart, sOpt)} - ${fmt(actualEnd, lOpt)}`,
+        quarter:   qName,
+        year,
+      });
+
+      if (isLast) break;
+      periodStart = nextStart;
+    }
+  }
+
+  setQuotaPeriods(periods);
+  setQuotaCount(periods.length);
+  setCustomers(prev => prev.map(c => ({
+    ...c,
+    quotas:      quotaType === "withQuota" ? Array(periods.length).fill("") : [],
+    percentages: quotaType === "withQuota" ? Array(periods.length).fill("") : [],
+    ranges:      c.ranges || {},
+  })));
+  setItems(prev => prev.map(i => ({ ...i, ranges: i.ranges || {} })));
+};
 
   const fetchSalesEmployees = async () => {
     try {
@@ -1734,39 +1758,83 @@ function Van_RebateSetup() {
     }
   };
 
-  const getMonthlyPeriodsFromQuotaPeriods = () => {
-    if (quotaPeriods && quotaPeriods.length > 0) {
-      const monthlyPeriods = [];
-      quotaPeriods.forEach((qp) => {
-        if (qp.startDate && qp.endDate) {
-          const sd = new Date(qp.startDate), ed = new Date(qp.endDate);
-          let current = new Date(sd);
-          while (current <= ed) {
-            const ms  = new Date(current), me = new Date(current);
-            me.setMonth(me.getMonth() + 1); me.setDate(0);
-            const ae  = me > ed ? ed : me;
-            const mn  = ms.toLocaleDateString('en-US', { month: 'long' });
-            const yr  = ms.getFullYear();
-            monthlyPeriods.push({ period: `${mn} ${yr}`, label: mn, startDate: new Date(ms), endDate: new Date(ae), dates: `${ms.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${ae.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`, month: mn, year: yr, quarter: qp.quarter, quarterPeriod: qp.period });
-            current.setMonth(current.getMonth() + 1); current.setDate(1);
-          }
-        }
-      });
-      return monthlyPeriods;
-    }
-    if (selectedDateFrom && selectedDateTo && selectedFrequency) {
-      const periods = [], sd = new Date(selectedDateFrom), ed = new Date(selectedDateTo);
-      const mNames  = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-      let cur = new Date(sd);
-      while (cur <= ed) {
-        const mn = mNames[cur.getMonth()], yr = cur.getFullYear();
-        periods.push({ period: `${mn} ${yr}`, label: mn, month: mn, year: yr, dates: `${mn} ${yr}` });
-        cur.setMonth(cur.getMonth() + 1);
+const getMonthlyPeriodsFromQuotaPeriods = () => {
+  // For Monthly (and N/A), quotaPeriods are already monthly — return them directly
+  if (selectedFrequency === "Monthly" || selectedFrequency === "N/A" || !selectedFrequency) {
+    return quotaPeriods.map((qp, i) => ({
+      period:    qp.period    || `Month ${i + 1}`,
+      label:     qp.label     || qp.period || `Month ${i + 1}`,
+      startDate: qp.startDate,
+      endDate:   qp.endDate,
+      dates:     qp.dates     || '',
+      month:     qp.label     || `Month ${i + 1}`,
+      year:      qp.year      || (qp.startDate ? new Date(qp.startDate).getFullYear() : ''),
+    }));
+  }
+
+  // Quarterly: expand each quarter into monthly slices
+  const monthlyPeriods = [];
+  const fmt  = (d, opts) => d.toLocaleDateString('en-US', opts);
+  const sOpt = { month: 'short', day: 'numeric' };
+  const lOpt = { month: 'short', day: 'numeric', year: 'numeric' };
+
+  quotaPeriods.forEach((qp) => {
+    if (!qp.startDate || !qp.endDate) {
+      // fallback: no dates, use quarter name
+      const quarterNames = ["Q1","Q2","Q3","Q4"];
+      const monthNames   = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+      const quarterIndex = quarterNames.indexOf(qp.quarter);
+      const startMonth   = quarterIndex * 3;
+      for (let i = 0; i < 3; i++) {
+        const mn = monthNames[startMonth + i];
+        const yr = new Date().getFullYear();
+        monthlyPeriods.push({
+          period:        `${mn} ${yr}`,
+          label:         mn,
+          month:         mn,
+          year:          yr,
+          quarter:       qp.quarter,
+          quarterPeriod: qp.period,
+          dates:         `${mn} ${yr}`,
+        });
       }
-      return periods;
+      return;
     }
-    return [];
-  };
+
+    const ed   = new Date(qp.endDate);
+    let mStart = new Date(qp.startDate);
+
+    while (mStart <= ed) {
+      if (mStart.getTime() === ed.getTime()) break;
+
+      const mNext       = addMonths(mStart, 1);
+      const isLastMonth = mNext >= ed;
+      const mEnd        = isLastMonth
+        ? new Date(ed)
+        : (() => { const d = new Date(mNext); d.setDate(d.getDate() - 1); return d; })();
+
+      const mn = fmt(mStart, { month: 'long' });
+      const yr = mStart.getFullYear();
+
+      monthlyPeriods.push({
+        period:        `${mn} ${yr}`,
+        label:         mn,
+        startDate:     new Date(mStart),
+        endDate:       new Date(mEnd),
+        dates:         `${fmt(mStart, sOpt)} - ${fmt(mEnd, lOpt)}`,
+        month:         mn,
+        year:          yr,
+        quarter:       qp.quarter,
+        quarterPeriod: qp.period,
+      });
+
+      if (isLastMonth) break;
+      mStart = mNext;
+    }
+  });
+
+  return monthlyPeriods;
+};
 
   const handleUpdate = async () => {
     if (!access.canEdit) { showToast("You do not have permission to update rebate setups", "error"); return; }
@@ -1885,7 +1953,7 @@ function Van_RebateSetup() {
       else if (rebateType === "Incremental") await saveIncrementalRebateData(rebateCodeId, 'VAN_OWN');
       else if (rebateType === "Percentage")  await savePercentageRebateData(rebateCodeId, 'VAN_OWN');
       setRebateCode(rebateCodeId);
-      showToast(`✅ Rebate setup saved successfully! ID: ${rebateCodeId}`, "success");
+      showToast(`Rebate setup saved successfully! ID: ${rebateCodeId}`, "success");
       setEditingRows({ customer: { 0: true }, item: { 0: true } });
     } catch (error) {
       showToast(`Failed to save rebate setup: ${error.message}`, "error");

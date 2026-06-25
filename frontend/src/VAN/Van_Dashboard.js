@@ -845,17 +845,17 @@ const getFilteredMonthlyQuotas = () => {
   });
 
   // Define handleMonthlyFixedQuotas function BEFORE using it
-  const handleMonthlyFixedQuotas = () => {
-    // Return simplified monthly quota data
-    // You can customize this based on your requirements
-    return modalCustomer.details?.monthlyQuotas?.map(quota => ({
-      ...quota,
-      displayTarget: `Monthly Target: ${formatDecimal(quota.target || 0)}`,
-      displayAchieved: `Monthly Achieved: ${formatDecimal(quota.achieved || 0)}`,
-      rebateType: 'Fixed',
-      frequency: 'Monthly'
-    })) || [];
-  };
+const handleMonthlyFixedQuotas = () => {
+  // Return simplified monthly quota data
+  return modalCustomer.details?.monthlyQuotas?.map((quota, index) => ({ // Changed from 'i' to 'index'
+    ...quota,
+    monthName: quota.monthName || quota.month || quota.label || `Month ${index + 1}`, // Using 'index' instead of 'i'
+    displayTarget: `Monthly Target: ${formatDecimal(quota.target || 0)}`,
+    displayAchieved: `Monthly Achieved: ${formatDecimal(quota.achieved || 0)}`,
+    rebateType: 'Fixed',
+    frequency: 'Monthly',
+  })) || [];
+};
   
   if (isMonthly && modalCustomer.rebateType === 'Fixed') {
     // For monthly Fixed rebates, we might want to show different data
@@ -1122,8 +1122,10 @@ const getFilteredMonthlyQuotas = () => {
       
       return {
         monthIndex: index + 1,
-        monthName: quota.month || quota.monthName || `Month ${index + 1}`,
-        monthKey: quota.monthKey || (quota.month ? quota.month.toLowerCase().substring(0, 3) : `${index + 1}`),
+        monthName: quota.month || quota.monthName || quota.label || `Month ${index + 1}`,
+        monthKey:  quota.monthKey || (quota.month
+          ? `${new Date(Date.parse(quota.month + ' 1')).getFullYear()}-${String(new Date(Date.parse(quota.month + ' 1')).getMonth() + 1).padStart(2, '0')}`
+          : `${index + 1}`),
         target: quota.target || quota.quota || 0,
         achieved: achieved,
         progress: quota.progress || 0,
@@ -3547,195 +3549,330 @@ const handleSaveItem = async (itemCode) => {
       );
     }
 
-  // Replace the existing getQuotaMonthNames() function in both Fixed and Percentage render functions
-  const getQuotaMonthNames = () => {
-    const months = [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'
-    ];
-    
-    // Try to get start date from multiple possible sources
-    const dateFrom = rebateDetails?.dateFrom || 
-                    rebateDetails?.rebateDetails?.dateFrom || 
-                    selectedRebate?.from ||
-                    rebateDetails?.rebatePeriod?.dateFrom;
-    
-    console.log('📅 Determining months from rebate date:', dateFrom);
-    
-    if (dateFrom) {
-      try {
-        const startDate = new Date(dateFrom);
-        const startMonth = startDate.getMonth(); // 0-11
-        
-        console.log('📅 Start month index:', startMonth);
-        
-        // Always return exactly 3 months starting from the rebate start month
-        const result = [];
-        for (let i = 0; i < 3; i++) {
-          const monthIndex = (startMonth + i) % 12;
-          result.push(months[monthIndex]);
-        }
-        
-        console.log('📅 Determined months for display:', result);
-        return result;
-      } catch (error) {
-        console.error('Error parsing date:', error);
-        // Fallback to first 3 months
-        return ['January', 'February', 'March'];
-      }
-    }
-    
-    console.log('📅 No date found, using default months');
-    // Default to first 3 months
-    return ['January', 'February', 'March'];
+const getQuotaMonthNames = () => {
+  const dateFrom = rebateDetails?.dateFrom ||
+                   rebateDetails?.rebateDetails?.dateFrom ||
+                   selectedRebate?.from;
+
+  const frequency = rebateDetails?.frequency || 'Quarterly';
+  
+  // Get the actual quotas from the first customer
+  const firstCustomer = rebateDetails?.customers?.[0];
+  let quotaCount = 0;
+  
+  // Determine quota count from the actual data
+  if (Array.isArray(firstCustomer?.quotas)) {
+    quotaCount = firstCustomer.quotas.length;
+  } else if (typeof firstCustomer?.quotas === 'object' && firstCustomer?.quotas) {
+    quotaCount = Object.keys(firstCustomer.quotas).length;
+  }
+  
+  // If no quotas found, use default based on frequency
+  if (quotaCount === 0) {
+    quotaCount = frequency === 'Quarterly' ? 3 : 3;
+  }
+
+  if (!dateFrom) {
+    return Array.from({ length: quotaCount }, (_, i) => ({
+      name: frequency === 'Quarterly' ? `Q${i + 1} ${new Date().getFullYear()}` : `Month ${i + 1}`,
+      dates: frequency === 'Quarterly' ? `Quarter ${i + 1}` : `Month ${i + 1}`,
+      shortLabel: frequency === 'Quarterly' ? `Q${i + 1}` : `M${i + 1}`,
+      isMonthly: frequency === 'Monthly',
+      isQuarterly: frequency === 'Quarterly'
+    }));
+  }
+
+  const addMonths = (date, n) => {
+    const d = new Date(date);
+    const day = d.getDate();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + n);
+    const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    d.setDate(Math.min(day, last));
+    return d;
   };
+
+  const fmtShort = (d) =>
+    d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const fmtFull = (d) =>
+    d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  const start = new Date(dateFrom);
+  const labels = [];
+
+  // Calculate periods based on frequency
+  for (let i = 0; i < quotaCount; i++) {
+    let sliceStart, sliceEnd;
+    
+  if (frequency === 'Quarterly') {
+    // Each period is 1 MONTH (monthly breakdown)
+    sliceStart = addMonths(start, i);
+    const nextStart = addMonths(start, i + 1);
+    sliceEnd = new Date(nextStart);
+    sliceEnd.setDate(sliceEnd.getDate() - 1);
+  } else {
+      // For Monthly: each period is 1 month
+      sliceStart = addMonths(start, i);
+      const nextStart = addMonths(start, i + 1);
+      sliceEnd = new Date(nextStart);
+      sliceEnd.setDate(sliceEnd.getDate() - 1);
+    }
+
+    // Format the date range
+    // For Quarterly: "Jan 15 – Apr 14, 2026"
+    // For Monthly: "Jun 1 – Jun 30, 2026"
+    const dateRange = `${fmtShort(sliceStart)} – ${fmtFull(sliceEnd)}`;
+
+    labels.push({
+      name: dateRange,
+      dates: dateRange,
+      shortLabel: dateRange,
+      monthName: sliceStart.toLocaleDateString('en-US', { month: 'long' }),
+      year: sliceStart.getFullYear(),
+      isMonthly: frequency === 'Monthly',
+      isQuarterly: frequency === 'Quarterly',
+      index: i,
+      startDate: sliceStart,
+      endDate: sliceEnd
+    });
+  }
+
+  return labels;
+};
 
     const quotaMonths = getQuotaMonthNames();
 
-  // Helper to get quota value for Fixed rebate - CORRECTED
   const getFixedQuotaValue = (customer, monthIndex) => {
     if (!customer.quotas) return 0;
-    
-    const monthName = quotaMonths[monthIndex];
-    
+
+    const monthName = typeof quotaMonths[monthIndex] === 'object'
+      ? quotaMonths[monthIndex].name
+      : quotaMonths[monthIndex];
+
     if (Array.isArray(customer.quotas)) {
-      // If quotas is an array, use the index directly
       return customer.quotas[monthIndex] || 0;
     } else if (typeof customer.quotas === 'object') {
-      // If quotas is an object, check both the exact month name and sequential numbering
-      // Try exact month name first
-      if (customer.quotas[monthName] !== undefined) {
-        return customer.quotas[monthName] || 0;
-      }
-      // Try numeric index (1, 2, 3, etc.)
+      if (customer.quotas[monthName] !== undefined) return customer.quotas[monthName] || 0;
       const numericKey = monthIndex + 1;
-      if (customer.quotas[numericKey] !== undefined) {
-        return customer.quotas[numericKey] || 0;
-      }
-      // Try "Month1", "Month2", etc.
+      if (customer.quotas[numericKey] !== undefined) return customer.quotas[numericKey] || 0;
       const monthKey = `Month${numericKey}`;
-      if (customer.quotas[monthKey] !== undefined) {
-        return customer.quotas[monthKey] || 0;
-      }
+      if (customer.quotas[monthKey] !== undefined) return customer.quotas[monthKey] || 0;
     }
-    
     return 0;
   };
 
-    if (isMonthly) {
-    return (
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className={`sticky top-0 border-b ${
-            isDark 
-              ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
-              : 'bg-gray-50 border-gray-200'
-          }`}>
-            <tr>
-              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[250px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Customer</th>
-              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[150px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Code</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>QTR Rebate</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Actions</th>
-            </tr>
-          </thead>
-          <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-            {rebateDetails.customers.map((customer, i) => {
-              const customerCode = customer.code || `CUST-${i}`;
-              const isEditing = editingCustomers[customerCode] || false;
-              
-              return (
-                <tr key={i} className={`transition-colors duration-150 ${
-                  isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
-                }`}>
-                  <td className="px-3 py-2 align-top">
-                    <div className="flex items-center gap-2 w-full">
-                      <div 
-                        className="w-5 h-5 rounded-md text-white flex items-center justify-center font-medium text-xs flex-shrink-0 shadow-sm"
-                        style={{ backgroundColor: customer.color || '#3b82f6' }}
-                      >
-                        {(customer.name && customer.name.charAt(0)) || '?'}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
-                          isDark ? 'text-gray-200' : 'text-gray-800'
-                        }`}>
-                          {customer.name || 'Unknown Customer'}
-                        </div>
+    // Helper to get quota value safely
+  const getQuotaValue = (customer, monthIndex) => {
+    if (!customer.quotas) return 0;
+
+    const quotaMonths = getQuotaMonthNames();
+    const monthName = typeof quotaMonths[monthIndex] === 'object'
+      ? quotaMonths[monthIndex].name
+      : quotaMonths[monthIndex];
+
+    if (Array.isArray(customer.quotas)) {
+      return customer.quotas[monthIndex] || 0;
+    } else if (typeof customer.quotas === 'object') {
+      if (customer.quotas[monthName] !== undefined) return customer.quotas[monthName] || 0;
+      const numericKey = monthIndex + 1;
+      if (customer.quotas[numericKey] !== undefined) return customer.quotas[numericKey] || 0;
+      const monthKey = `Month${numericKey}`;
+      if (customer.quotas[monthKey] !== undefined) return customer.quotas[monthKey] || 0;
+    }
+    return 0;
+  };
+
+if (isMonthly) {
+  // Get all month names dynamically
+  const quotaMonths = getQuotaMonthNames();
+  
+  // ─── MONTHLY TABLE ───────────────────────────────────────────────────
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead className={`sticky top-0 border-b ${
+          isDark 
+            ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
+            : 'bg-gray-50 border-gray-200'
+        }`}>
+          <tr>
+            {/* Customer column - bold */}
+            <th className={`px-3 py-2 text-left text-xs font-bold uppercase tracking-wider min-w-[180px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>
+              Customer
+            </th>
+            
+            {/* Code column - bold */}
+            <th className={`px-3 py-2 text-left text-xs font-bold uppercase tracking-wider min-w-[100px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>
+              Code
+            </th>
+            
+            {/* Dynamic Month Columns with Date Ranges - bold */}
+            {quotaMonths.map((month, index) => (
+              <th
+                key={index}
+                className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[150px] ${
+                  isDark ? 'text-gray-300' : 'text-gray-700'
+                }`}
+              >
+                <div className="font-bold text-xs whitespace-nowrap">
+                  {month.dates || month.name || `Month ${index + 1}`}
+                </div>
+              </th>
+            ))}
+            
+            {/* QTR Rebate column - bold */}
+            <th className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>
+              QTR Rebate
+            </th>
+            
+            {/* Actions column - bold */}
+            <th className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>
+              Actions
+            </th>
+          </tr>
+        </thead>
+        <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
+          {rebateDetails.customers.map((customer, i) => {
+            const customerCode = customer.code || `CUST-${i}`;
+            const isEditing = editingCustomers[customerCode] || false;
+            
+            return (
+              <tr key={i} className={`transition-colors duration-150 ${
+                isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
+              }`}>
+                {/* Customer Name */}
+                <td className="px-3 py-2 align-top">
+                  <div className="flex items-center gap-2 w-full">
+                    <div 
+                      className="w-5 h-5 rounded-md text-white flex items-center justify-center font-medium text-xs flex-shrink-0 shadow-sm"
+                      style={{ backgroundColor: customer.color || '#3b82f6' }}
+                    >
+                      {(customer.name && customer.name.charAt(0)) || '?'}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
+                        isDark ? 'text-gray-200' : 'text-gray-800'
+                      }`}>
+                        {customer.name || 'Unknown Customer'}
                       </div>
                     </div>
-                  </td>
+                  </div>
+                </td>
+                
+                {/* Customer Code */}
+                <td className="px-3 py-2 align-top">
+                  <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
+                    isDark 
+                      ? 'bg-gray-800 text-gray-300' 
+                      : 'bg-gray-100 text-gray-700'
+                  }`}>
+                    {customer.code || 'N/A'}
+                  </code>
+                </td>
+                
+                {/* Dynamic Month Columns */}
+                {quotaMonths.map((month, idx) => {
+                  const quotaValue = getQuotaValue(customer, idx);
                   
-                  <td className="px-3 py-2 align-top">
-                    <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
-                      isDark 
-                        ? 'bg-gray-800 text-gray-300' 
-                        : 'bg-gray-100 text-gray-700'
+                  return (
+                    <td key={idx} className="px-3 py-2 text-center align-top">
+                      {isEditing ? (
+                        <div className="space-y-0.5">
+                          <input
+                            type="number"
+                            value={quotaValue}
+                            onChange={(e) => handleCustomerQuotaChange(customer.code, idx, e.target.value)}
+                            className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
+                              isDark 
+                                ? 'bg-gray-800 text-gray-100' 
+                                : 'bg-white text-gray-800'
+                            }`}
+                            min="0"
+                            step="1"
+                          />
+                        </div>
+                      ) : (
+                        <div className="space-y-0.5">
+                          <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
+                            quotaValue > 0
+                              ? isDark 
+                                ? 'bg-blue-500/80 text-white' 
+                                : 'bg-blue-500 text-white'
+                              : isDark
+                                ? 'bg-gray-700 text-gray-400'
+                                : 'bg-gray-200 text-gray-600'
+                          }`}>
+                            {quotaValue}
+                          </span>
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
+                
+                {/* QTR Rebate */}
+                <td className="px-3 py-2 text-center align-top">
+                  {isEditing ? (
+                    <div className="flex items-center justify-center gap-0.5">
+                      <span className={`text-xs ${
+                        isDark ? 'text-gray-300' : 'text-gray-700'
+                      }`}>₱</span>
+                      <input
+                        type="number"
+                        value={customer.qtrRebate || 0}
+                        onChange={(e) => handleCustomerQtrRebateChange(customer.code, e.target.value)}
+                        className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
+                          isDark 
+                            ? 'bg-gray-800 text-gray-100' 
+                            : 'bg-white text-gray-800'
+                        }`}
+                        min="0"
+                        step="0.01"
+                      />
+                    </div>
+                  ) : (
+                    <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
+                      customer.qtrRebate > 0
+                        ? isDark 
+                          ? 'bg-emerald-500/80 text-white' 
+                          : 'bg-emerald-500 text-white'
+                        : isDark
+                          ? 'bg-gray-700 text-gray-400'
+                          : 'bg-gray-200 text-gray-600'
                     }`}>
-                      {customer.code || 'N/A'}
-                    </code>
-                  </td>
-                  
-                  <td className="px-3 py-2 text-center align-top">
-                    {isEditing ? (
-                      <div className="flex items-center justify-center gap-0.5">
-                        <span className={`text-xs ${
-                          isDark ? 'text-gray-300' : 'text-gray-700'
-                        }`}>₱</span>
-                        <input
-                          type="number"
-                          value={customer.qtrRebate || 0}
-                          onChange={(e) => handleCustomerQtrRebateChange(customer.code, e.target.value)}
-                          className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                            isDark 
-                              ? 'bg-gray-800 text-gray-100' 
-                              : 'bg-white text-gray-800'
-                          }`}
-                          min="0"
-                          step="0.01"
-                        />
-                      </div>
-                    ) : (
-                      <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                        customer.qtrRebate > 0
-                          ? isDark 
-                            ? 'bg-emerald-500/80 text-white' 
-                            : 'bg-emerald-500 text-white'
-                          : isDark
-                            ? 'bg-gray-700 text-gray-400'
-                            : 'bg-gray-200 text-gray-600'
-                      }`}>
-                        ₱{(customer.qtrRebate || 0).toFixed(2)}
-                      </span>
-                    )}
-                  </td>
-                  
-                  <td className="px-3 py-2 text-center align-top">
-                    {isEditing ? (
-                      <div className="flex gap-1 justify-center">
-                        <button
-                          onClick={() => handleSaveCustomer(customer.code)}
-                          className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
-                          title="Save"
-                        >
-                          <Check size={10} />
-                        </button>
-                        <button
-                          onClick={() => handleCancelEditCustomer(customer.code)}
-                          className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
-                          title="Cancel"
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
-                    ) : (
+                      ₱{(customer.qtrRebate || 0).toFixed(2)}
+                    </span>
+                  )}
+                </td>
+                
+                {/* Actions */}
+                <td className="px-3 py-2 text-center align-top">
+                  {isEditing ? (
+                    <div className="flex gap-1 justify-center">
+                      <button
+                        onClick={() => handleSaveCustomer(customer.code)}
+                        className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
+                        title="Save"
+                      >
+                        <Check size={10} />
+                      </button>
+                      <button
+                        onClick={() => handleCancelEditCustomer(customer.code)}
+                        className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+                        title="Cancel"
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  ) : (
                     <button
                       onClick={() => access?.canEdit && handleEditCustomer(customer.code)}
                       disabled={!access?.canEdit}
@@ -3748,203 +3885,225 @@ const handleSaveItem = async (itemCode) => {
                     >
                       <Edit size={10} />
                     </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    );
-  }
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
-    return (
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className={`sticky top-0 border-b ${
-            isDark 
-              ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
-              : 'bg-gray-50 border-gray-200'
+// ─── QUARTERLY TABLE (non-Monthly) ──────────────────────────────────
+return (
+  <div className="overflow-x-auto">
+    <table className="w-full">
+      <thead className={`sticky top-0 border-b ${
+        isDark 
+          ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
+          : 'bg-gray-50 border-gray-200'
+      }`}>
+        <tr>
+          {/* Customer column - bold */}
+          <th className={`px-3 py-2 text-left text-xs font-bold uppercase tracking-wider min-w-[180px] ${
+            isDark ? 'text-gray-300' : 'text-gray-700'
           }`}>
-            <tr>
-              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] max-w-[180px] ${
+            Customer
+          </th>
+          
+          {/* Code column - bold */}
+          <th className={`px-3 py-2 text-left text-xs font-bold uppercase tracking-wider min-w-[100px] ${
+            isDark ? 'text-gray-300' : 'text-gray-700'
+          }`}>
+            Code
+          </th>
+          
+          {/* Dynamic Period Columns with Date Ranges - bold */}
+          {quotaMonths.map((col, index) => (
+            <th
+              key={index}
+              className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[150px] ${
                 isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Customer</th>
-              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Code</th>
-              {quotaMonths.map((month, index) => (
-                <th 
-                  key={index}
-                  className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[90px] max-w-[90px] ${
-                    isDark ? 'text-gray-300' : 'text-gray-700'
-                  }`}
-                >
-                  {month}
-                </th>
-              ))}
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>QTR Rebate</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Actions</th>
-            </tr>
-          </thead>
-          <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-            {rebateDetails.customers.map((customer, i) => {
-              const customerCode = customer.code || `CUST-${i}`;
-              const isEditing = editingCustomers[customerCode] || false;
-              
-              return (
-                <tr key={i} className={`transition-colors duration-150 ${
-                  isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
-                }`}>
-                  <td className="px-3 py-2 align-top">
-                    <div className="flex items-center gap-2 w-full">
-                      <div 
-                        className="w-5 h-5 rounded-md text-white flex items-center justify-center font-medium text-xs flex-shrink-0 shadow-sm"
-                        style={{ backgroundColor: customer.color || '#3b82f6' }}
-                      >
-                        {(customer.name && customer.name.charAt(0)) || '?'}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
-                          isDark ? 'text-gray-200' : 'text-gray-800'
-                        }`}>
-                          {customer.name || 'Unknown Customer'}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  
-                  <td className="px-3 py-2 align-top">
-                    <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
-                      isDark 
-                        ? 'bg-gray-800 text-gray-300' 
-                        : 'bg-gray-100 text-gray-700'
+              }`}
+            >
+              <div className="font-bold text-xs whitespace-nowrap">
+                {col.dates || col.name || `Period ${index + 1}`}
+              </div>
+            </th>
+          ))}
+          
+          {/* QTR Rebate column - bold */}
+          <th className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
+            isDark ? 'text-gray-300' : 'text-gray-700'
+          }`}>
+            QTR Rebate
+          </th>
+          
+          {/* Actions column - bold */}
+          <th className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
+            isDark ? 'text-gray-300' : 'text-gray-700'
+          }`}>
+            Actions
+          </th>
+        </tr>
+      </thead>
+      <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
+        {rebateDetails.customers.map((customer, i) => {
+          const customerCode = customer.code || `CUST-${i}`;
+          const isEditing = editingCustomers[customerCode] || false;
+          
+          return (
+            <tr key={i} className={`transition-colors duration-150 ${
+              isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
+            }`}>
+              {/* Customer Name */}
+              <td className="px-3 py-2 align-top">
+                <div className="flex items-center gap-2 w-full">
+                  <div 
+                    className="w-5 h-5 rounded-md text-white flex items-center justify-center font-medium text-xs flex-shrink-0 shadow-sm"
+                    style={{ backgroundColor: customer.color || '#3b82f6' }}
+                  >
+                    {(customer.name && customer.name.charAt(0)) || '?'}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
+                      isDark ? 'text-gray-200' : 'text-gray-800'
                     }`}>
-                      {customer.code || 'N/A'}
-                    </code>
-                  </td>
-                  
-                  {/* Quota Columns - FIXED ALIGNMENT */}
-                  {quotaMonths.map((month, idx) => {
-                    const quotaValue = getFixedQuotaValue(customer, idx);
-                    
-                    return (
-                      <td key={idx} className="px-3 py-2 text-center align-top">
-                        {isEditing ? (
-                          <div className="space-y-0.5">
-                            <input
-                              type="number"
-                              value={quotaValue}
-                              onChange={(e) => handleCustomerQuotaChange(customer.code, idx, e.target.value)}
-                              className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                                isDark 
-                                  ? 'bg-gray-800 text-gray-100' 
-                                  : 'bg-white text-gray-800'
-                              }`}
-                              min="0"
-                              step="1"
-                            />
-                          </div>
-                        ) : (
-                          <div className="space-y-0.5">
-                            <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                              quotaValue > 0
-                                ? isDark 
-                                  ? 'bg-blue-500/80 text-white' 
-                                  : 'bg-blue-500 text-white'
-                                : isDark
-                                  ? 'bg-gray-700 text-gray-400'
-                                  : 'bg-gray-200 text-gray-600'
-                            }`}>
-                              {quotaValue}
-                            </span>
-                          </div>
-                        )}
-                      </td>
-                    );
-                  })}
-                  
-                  <td className="px-3 py-2 text-center align-top">
+                      {customer.name || 'Unknown Customer'}
+                    </div>
+                  </div>
+                </div>
+              </td>
+              
+              {/* Customer Code */}
+              <td className="px-3 py-2 align-top">
+                <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
+                  isDark 
+                    ? 'bg-gray-800 text-gray-300' 
+                    : 'bg-gray-100 text-gray-700'
+                }`}>
+                  {customer.code || 'N/A'}
+                </code>
+              </td>
+              
+              {/* Dynamic Period Columns */}
+              {quotaMonths.map((month, idx) => {
+                const quotaValue = getQuotaValue(customer, idx);
+                
+                return (
+                  <td key={idx} className="px-3 py-2 text-center align-top">
                     {isEditing ? (
-                      <div className="flex items-center justify-center gap-0.5">
-                        <span className={`text-xs ${
-                          isDark ? 'text-gray-300' : 'text-gray-700'
-                        }`}>₱</span>
+                      <div className="space-y-0.5">
                         <input
                           type="number"
-                          value={customer.qtrRebate || 0}
-                          onChange={(e) => handleCustomerQtrRebateChange(customer.code, e.target.value)}
+                          value={quotaValue}
+                          onChange={(e) => handleCustomerQuotaChange(customer.code, idx, e.target.value)}
                           className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
                             isDark 
                               ? 'bg-gray-800 text-gray-100' 
                               : 'bg-white text-gray-800'
                           }`}
                           min="0"
-                          step="0.01"
+                          step="1"
                         />
                       </div>
                     ) : (
-                      <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                        customer.qtrRebate > 0
-                          ? isDark 
-                            ? 'bg-emerald-500/80 text-white' 
-                            : 'bg-emerald-500 text-white'
-                          : isDark
-                            ? 'bg-gray-700 text-gray-400'
-                            : 'bg-gray-200 text-gray-600'
-                      }`}>
-                        ₱{(customer.qtrRebate || 0).toFixed(2)}
-                      </span>
-                    )}
-                  </td>
-                  
-                  <td className="px-3 py-2 text-center align-top">
-                    {isEditing ? (
-                      <div className="flex gap-1 justify-center">
-                        <button
-                          onClick={() => handleSaveCustomer(customer.code)}
-                          className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
-                          title="Save"
-                        >
-                          <Check size={10} />
-                        </button>
-                        <button
-                          onClick={() => handleCancelEditCustomer(customer.code)}
-                          className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
-                          title="Cancel"
-                        >
-                          <X size={10} />
-                        </button>
+                      <div className="space-y-0.5">
+                        <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
+                          quotaValue > 0
+                            ? isDark 
+                              ? 'bg-blue-500/80 text-white' 
+                              : 'bg-blue-500 text-white'
+                            : isDark
+                              ? 'bg-gray-700 text-gray-400'
+                              : 'bg-gray-200 text-gray-600'
+                        }`}>
+                          {quotaValue}
+                        </span>
                       </div>
-                    ) : (
-                      <button
-                        onClick={() => access?.canEdit && handleEditCustomer(customer.code)}
-                        disabled={!access?.canEdit}
-                        title={access?.canEdit ? 'Edit' : 'No edit permission'}
-                        className={`p-1 rounded transition-colors ${
-                          access?.canEdit
-                            ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
-                            : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
-                        }`}
-                      >
-                        <Edit size={10} />
-                      </button>
                     )}
                   </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      
-    );
+                );
+              })}
+              
+              {/* QTR Rebate */}
+              <td className="px-3 py-2 text-center align-top">
+                {isEditing ? (
+                  <div className="flex items-center justify-center gap-0.5">
+                    <span className={`text-xs ${
+                      isDark ? 'text-gray-300' : 'text-gray-700'
+                    }`}>₱</span>
+                    <input
+                      type="number"
+                      value={customer.qtrRebate || 0}
+                      onChange={(e) => handleCustomerQtrRebateChange(customer.code, e.target.value)}
+                      className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
+                        isDark 
+                          ? 'bg-gray-800 text-gray-100' 
+                          : 'bg-white text-gray-800'
+                      }`}
+                      min="0"
+                      step="0.01"
+                    />
+                  </div>
+                ) : (
+                  <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
+                    customer.qtrRebate > 0
+                      ? isDark 
+                        ? 'bg-emerald-500/80 text-white' 
+                        : 'bg-emerald-500 text-white'
+                      : isDark
+                        ? 'bg-gray-700 text-gray-400'
+                        : 'bg-gray-200 text-gray-600'
+                  }`}>
+                    ₱{(customer.qtrRebate || 0).toFixed(2)}
+                  </span>
+                )}
+              </td>
+              
+              {/* Actions */}
+              <td className="px-3 py-2 text-center align-top">
+                {isEditing ? (
+                  <div className="flex gap-1 justify-center">
+                    <button
+                      onClick={() => handleSaveCustomer(customer.code)}
+                      className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
+                      title="Save"
+                    >
+                      <Check size={10} />
+                    </button>
+                    <button
+                      onClick={() => handleCancelEditCustomer(customer.code)}
+                      className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+                      title="Cancel"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => access?.canEdit && handleEditCustomer(customer.code)}
+                    disabled={!access?.canEdit}
+                    title={access?.canEdit ? 'Edit' : 'No edit permission'}
+                    className={`p-1 rounded transition-colors ${
+                      access?.canEdit
+                        ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
+                        : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
+                    }`}
+                  >
+                    <Edit size={10} />
+                  </button>
+                )}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+);
 
     
   };
@@ -4211,224 +4370,302 @@ const handleSaveItem = async (itemCode) => {
       );
     }
 
-    // Get month names from rebate period or use default
-// Get month names from rebate period or use default - ENHANCED
 const getQuotaMonthNames = () => {
-  const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-  ];
+  const dateFrom = rebateDetails?.dateFrom ||
+                   rebateDetails?.rebateDetails?.dateFrom ||
+                   selectedRebate?.from;
+
+  const frequency = rebateDetails?.frequency || 'Quarterly';
   
-  // Try to get start date from multiple possible sources
-  const dateFrom = rebateDetails?.dateFrom || 
-                  rebateDetails?.rebateDetails?.dateFrom || 
-                  selectedRebate?.from ||
-                  rebateDetails?.rebatePeriod?.dateFrom;
+  // Get the actual quotas from the first customer
+  const firstCustomer = rebateDetails?.customers?.[0];
+  let quotaCount = 0;
   
-  console.log('📅 Determining months from date:', {
-    dateFrom,
-    rebateDetailsDateFrom: rebateDetails?.dateFrom,
-    rebateDetails: rebateDetails?.rebateDetails?.dateFrom,
-    selectedRebate: selectedRebate?.from
-  });
-  
-  if (dateFrom) {
-    try {
-      const startDate = new Date(dateFrom);
-      const startMonth = startDate.getMonth();
-      
-      // Return 3 months starting from the rebate start month
-      const result = [
-        months[startMonth % 12],
-        months[(startMonth + 1) % 12],
-        months[(startMonth + 2) % 12]
-      ];
-      
-      console.log('📅 Determined months:', {
-        startMonth,
-        startMonthName: months[startMonth],
-        result
-      });
-      
-      return result;
-    } catch (error) {
-      console.error('Error parsing date:', error);
-      // Fallback to first 3 months
-      return ['January', 'February', 'March'];
-    }
+  // Determine quota count from the actual data
+  if (Array.isArray(firstCustomer?.quotas)) {
+    quotaCount = firstCustomer.quotas.length;
+  } else if (typeof firstCustomer?.quotas === 'object' && firstCustomer?.quotas) {
+    quotaCount = Object.keys(firstCustomer.quotas).length;
   }
   
-  console.log('📅 No date found, using default months');
-  // Default to first 3 months
-  return ['January', 'February', 'March'];
+  // If no quotas found, use default based on frequency
+  if (quotaCount === 0) {
+    quotaCount = 3;
+  }
+
+  if (!dateFrom) {
+    return Array.from({ length: quotaCount }, (_, i) => ({
+      name: `Period ${i + 1}`,
+      dates: `Period ${i + 1}`,
+      shortLabel: `P${i + 1}`,
+      isMonthly: frequency === 'Monthly',
+      isQuarterly: frequency === 'Quarterly'
+    }));
+  }
+
+  const addMonths = (date, n) => {
+    const d = new Date(date);
+    const day = d.getDate();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + n);
+    const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    d.setDate(Math.min(day, last));
+    return d;
+  };
+
+  const fmtShort = (d) =>
+    d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const fmtFull = (d) =>
+    d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  const start = new Date(dateFrom);
+  const labels = [];
+
+  // Calculate periods based on frequency
+  for (let i = 0; i < quotaCount; i++) {
+    let sliceStart, sliceEnd;
+    
+    if (frequency === 'Quarterly') {
+      // ─── QUARTERLY: Each period is 1 MONTH (monthly breakdown) ──
+      // The quotaCount represents the number of months (3 for a quarter)
+      sliceStart = addMonths(start, i);
+      const nextStart = addMonths(start, i + 1);
+      sliceEnd = new Date(nextStart);
+      sliceEnd.setDate(sliceEnd.getDate() - 1);
+    } else {
+      // ─── MONTHLY: each period is 1 month ─────────────────────────
+      sliceStart = addMonths(start, i);
+      const nextStart = addMonths(start, i + 1);
+      sliceEnd = new Date(nextStart);
+      sliceEnd.setDate(sliceEnd.getDate() - 1);
+    }
+
+    // Format the date range
+    // Quarterly: "Jul 1 – Jul 31, 2024"
+    // Monthly:   "Jul 1 – Jul 31, 2024"
+    const dateRange = `${fmtShort(sliceStart)} – ${fmtFull(sliceEnd)}`;
+
+    labels.push({
+      name: dateRange,
+      dates: dateRange,
+      shortLabel: dateRange,
+      monthName: sliceStart.toLocaleDateString('en-US', { month: 'long' }),
+      year: sliceStart.getFullYear(),
+      isMonthly: frequency === 'Monthly',
+      isQuarterly: frequency === 'Quarterly',
+      index: i,
+      startDate: sliceStart,
+      endDate: sliceEnd
+    });
+  }
+
+  return labels;
 };
 
     const quotaMonths = getQuotaMonthNames();
 
-// Helper to get quota value safely - CORRECTED for percentage
-const getQuotaValue = (customer, monthIndex) => {
-  if (!customer.quotas) return 0;
-  
-  const monthName = quotaMonths[monthIndex];
-  
-  if (Array.isArray(customer.quotas)) {
-    // If quotas is an array, use the index directly
-    return customer.quotas[monthIndex] || 0;
-  } else if (typeof customer.quotas === 'object') {
-    // If quotas is an object, check multiple possible formats
-    // Try exact month name first
-    if (customer.quotas[monthName] !== undefined) {
-      return customer.quotas[monthName] || 0;
+  // Helper to get quota value safely - CORRECTED for percentage
+  const getQuotaValue = (customer, monthIndex) => {
+    if (!customer.quotas) return 0;
+
+    const monthName = typeof quotaMonths[monthIndex] === 'object'
+      ? quotaMonths[monthIndex].name
+      : quotaMonths[monthIndex];
+
+    if (Array.isArray(customer.quotas)) {
+      return customer.quotas[monthIndex] || 0;
+    } else if (typeof customer.quotas === 'object') {
+      if (customer.quotas[monthName] !== undefined) return customer.quotas[monthName] || 0;
+      const numericKey = monthIndex + 1;
+      if (customer.quotas[numericKey] !== undefined) return customer.quotas[numericKey] || 0;
+      const monthKey = `Month${numericKey}`;
+      if (customer.quotas[monthKey] !== undefined) return customer.quotas[monthKey] || 0;
     }
-    // Try numeric index (1, 2, 3, etc.)
-    const numericKey = monthIndex + 1;
-    if (customer.quotas[numericKey] !== undefined) {
-      return customer.quotas[numericKey] || 0;
-    }
-    // Try "Month1", "Month2", etc.
-    const monthKey = `Month${numericKey}`;
-    if (customer.quotas[monthKey] !== undefined) {
-      return customer.quotas[monthKey] || 0;
-    }
-  }
-  
-  return 0;
-};
+    return 0;
+  };
+
 if (isMonthly) {
-    return (
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className={`sticky top-0 border-b ${
-            isDark 
-              ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
-              : 'bg-gray-50 border-gray-200'
-          }`}>
-            <tr>
-              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[250px] ${
+  // Get all month names dynamically
+  const quotaMonths = getQuotaMonthNames();
+  
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead className={`sticky top-0 border-b ${
+          isDark 
+            ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
+            : 'bg-gray-50 border-gray-200'
+        }`}>
+          <tr>
+            <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Customer</th>
+            <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Code</th>
+            
+            {/* Dynamic Month Columns with Date Ranges */}
+            {quotaMonths.map((month, index) => (
+              <th key={index} className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[130px] ${
                 isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Customer</th>
-              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[150px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Code</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>QTR Rebate</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Actions</th>
-            </tr>
-          </thead>
-          <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-            {rebateDetails.customers.map((customer, index) => {
-              const customerCode = customer.code || `CUST-${index}`;
-              const isEditing = editingCustomers[customerCode] || false;
-              
-              return (
-                <tr key={index} className={`transition-colors duration-150 ${
-                  isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
-                }`}>
-                  {/* Customer Name */}
-                  <td className="px-3 py-2 align-top">
-                    <div className="flex items-center gap-2 w-full">
-                      <div 
-                        className="w-5 h-5 rounded-md text-white flex items-center justify-center font-medium text-xs flex-shrink-0 shadow-sm"
-                        style={{ backgroundColor: customer.color || '#10b981' }}
-                      >
-                        {customer.name ? customer.name.charAt(0).toUpperCase() : '?'}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
-                          isDark ? 'text-gray-200' : 'text-gray-800'
-                        }`}>
-                          {customer.name || 'Unknown Customer'}
-                        </div>
+              }`}>
+                <div className="font-bold text-sm">
+                  {month.dates || month.name || `Month ${index + 1}`}
+                </div>
+              </th>
+            ))}
+            
+            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>QTR Rebate</th>
+            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>Actions</th>
+          </tr>
+        </thead>
+        <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
+          {rebateDetails.customers.map((customer, index) => {
+            const customerCode = customer.code || `CUST-${index}`;
+            const isEditing = editingCustomers[customerCode] || false;
+            
+            return (
+              <tr key={index} className={`transition-colors duration-150 ${
+                isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
+              }`}>
+                <td className="px-3 py-2 align-top">
+                  <div className="flex items-center gap-2 w-full">
+                    <div 
+                      className="w-5 h-5 rounded-md text-white flex items-center justify-center font-medium text-xs flex-shrink-0 shadow-sm"
+                      style={{ backgroundColor: customer.color || '#10b981' }}
+                    >
+                      {customer.name ? customer.name.charAt(0).toUpperCase() : '?'}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
+                        isDark ? 'text-gray-200' : 'text-gray-800'
+                      }`}>
+                        {customer.name || 'Unknown Customer'}
                       </div>
                     </div>
-                  </td>
+                  </div>
+                </td>
+                
+                <td className="px-3 py-2 align-top">
+                  <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
+                    isDark 
+                      ? 'bg-gray-800 text-gray-300' 
+                      : 'bg-gray-100 text-gray-700'
+                  }`}>
+                    {customerCode}
+                  </code>
+                </td>
+                
+                {/* Dynamic Month Columns */}
+                {quotaMonths.map((month, idx) => {
+                  const quotaValue = getQuotaValue(customer, idx);
                   
-                  {/* Customer Code */}
-                  <td className="px-3 py-2 align-top">
-                    <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
-                      isDark 
-                        ? 'bg-gray-800 text-gray-300' 
-                        : 'bg-gray-100 text-gray-700'
-                    }`}>
-                      {customerCode}
-                    </code>
-                  </td>
-                  
-                  {/* QTR Rebate */}
-                  <td className="px-3 py-2 text-center align-top">
-                    {isEditing ? (
-                      <div className="flex items-center justify-center gap-0.5">
-                        <span className={`text-xs ${
-                          isDark ? 'text-gray-300' : 'text-gray-700'
-                        }`}>₱</span>
+                  return (
+                    <td key={idx} className="px-3 py-2 text-center align-top">
+                      {isEditing ? (
                         <input
                           type="number"
-                          value={customer.qtrRebate || 0}
-                          onChange={(e) => handleCustomerQtrRebateChange(customerCode, e.target.value)}
+                          value={quotaValue}
+                          onChange={(e) => handleCustomerQuotaChange(customerCode, idx, e.target.value)}
                           className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
                             isDark 
                               ? 'bg-gray-800 text-gray-100' 
                               : 'bg-white text-gray-800'
                           }`}
                           min="0"
-                          step="0.01"
+                          step="1"
                         />
-                      </div>
-                    ) : (
-                      <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                        customer.qtrRebate > 0
-                          ? isDark 
-                            ? 'bg-blue-500/80 text-white' 
-                            : 'bg-blue-500 text-white'
-                          : isDark
-                            ? 'bg-gray-700 text-gray-400'
-                            : 'bg-gray-200 text-gray-600'
-                      }`}>
-                        ₱{parseFloat(customer.qtrRebate || 0).toFixed(2)}
-                      </span>
-                    )}
-                  </td>
+                      ) : (
+                        <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
+                          quotaValue > 0 
+                            ? isDark 
+                              ? 'bg-emerald-500/80 text-white' 
+                              : 'bg-emerald-500 text-white'
+                            : isDark
+                              ? 'bg-gray-700 text-gray-400'
+                              : 'bg-gray-200 text-gray-600'
+                        }`}>
+                          {quotaValue}
+                        </span>
+                      )}
+                    </td>
+                  );
+                })}
+                
+                <td className="px-3 py-2 text-center align-top">
+                  {isEditing ? (
+                    <div className="flex items-center justify-center gap-0.5">
+                      <span className={`text-xs ${
+                        isDark ? 'text-gray-300' : 'text-gray-700'
+                      }`}>₱</span>
+                      <input
+                        type="number"
+                        value={customer.qtrRebate || 0}
+                        onChange={(e) => handleCustomerQtrRebateChange(customerCode, e.target.value)}
+                        className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
+                          isDark 
+                            ? 'bg-gray-800 text-gray-100' 
+                            : 'bg-white text-gray-800'
+                        }`}
+                        min="0"
+                        step="0.01"
+                      />
+                    </div>
+                  ) : (
+                    <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
+                      customer.qtrRebate > 0
+                        ? isDark 
+                          ? 'bg-blue-500/80 text-white' 
+                          : 'bg-blue-500 text-white'
+                        : isDark
+                          ? 'bg-gray-700 text-gray-400'
+                          : 'bg-gray-200 text-gray-600'
+                    }`}>
+                      ₱{parseFloat(customer.qtrRebate || 0).toFixed(2)}
+                    </span>
+                  )}
+                </td>
 
-                  {/* Actions */}
-                  <td className="px-3 py-2 text-center align-top">
-                    {isEditing ? (
-                      <div className="flex gap-1 justify-center">
-                        <button
-                          onClick={() => handleSaveCustomer(customerCode)}
-                          className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
-                          title="Save"
-                        >
-                          <Check size={10} />
-                        </button>
-                        <button
-                          onClick={() => handleCancelEditCustomer(customerCode)}
-                          className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
-                          title="Cancel"
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
-                    ) : (
+                <td className="px-3 py-2 text-center align-top">
+                  {isEditing ? (
+                    <div className="flex gap-1 justify-center">
                       <button
-                        onClick={() => handleEditCustomer(customerCode)}
-                        className="p-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
-                        title="Edit"
+                        onClick={() => handleSaveCustomer(customerCode)}
+                        className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
+                        title="Save"
                       >
-                        <Edit size={10} />
+                        <Check size={10} />
                       </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    );
-  }
+                      <button
+                        onClick={() => handleCancelEditCustomer(customerCode)}
+                        className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+                        title="Cancel"
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => handleEditCustomer(customerCode)}
+                      className="p-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+                      title="Edit"
+                    >
+                      <Edit size={10} />
+                    </button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 
     return (

@@ -42,69 +42,76 @@ useEffect(() => {
   setLocalQuotas(initialQuotas);
 }, [customer, importedQuotas, quotaPeriods]);
 
-  const getMonthlyPeriodsFromQuotaPeriods = () => {
-    const monthlyPeriods = [];
-    
-    quotaPeriods.forEach((quarterPeriod) => {
-      if (quarterPeriod.startDate && quarterPeriod.endDate) {
-        const startDate = new Date(quarterPeriod.startDate);
-        const endDate = new Date(quarterPeriod.endDate);
-        
-        let currentDate = new Date(startDate);
-        
-        while (currentDate <= endDate) {
-          const monthStart = new Date(currentDate);
-          const monthEnd = new Date(currentDate);
-          monthEnd.setMonth(monthEnd.getMonth() + 1);
-          monthEnd.setDate(0);
-          
-          const actualEnd = monthEnd > endDate ? endDate : monthEnd;
-          
-          const monthName = monthStart.toLocaleDateString('en-US', { month: 'long' });
-          const year = monthStart.getFullYear();
-          
-          monthlyPeriods.push({
-            period: `${monthName} ${year}`,
-            label: monthName,
-            startDate: new Date(monthStart),
-            endDate: new Date(actualEnd),
-            dates: `${monthStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${actualEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
-            month: monthName,
-            year: year,
-            quarter: quarterPeriod.quarter,
-            quarterPeriod: quarterPeriod.period
-          });
-          
-          currentDate.setMonth(currentDate.getMonth() + 1);
-          currentDate.setDate(1);
-        }
-      } else {
-        const quarterNames = ["Q1", "Q2", "Q3", "Q4"];
-        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-        
-        const quarterIndex = quarterNames.indexOf(quarterPeriod.quarter);
-        const startMonth = quarterIndex * 3;
-        
-        for (let i = 0; i < 3; i++) {
-          const monthIndex = startMonth + i;
-          const monthName = monthNames[monthIndex];
-          const year = new Date().getFullYear();
-          
-          monthlyPeriods.push({
-            period: `${monthName} ${year}`,
-            label: monthName,
-            month: monthName,
-            year: year,
-            quarter: quarterPeriod.quarter,
-            quarterPeriod: quarterPeriod.period,
-            dates: `${monthName} ${year}`
-          });
-        }
+const addMonths = (date, n) => {
+  const d = new Date(date);
+  const day = d.getDate();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + n);
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, last));
+  return d;
+};
+
+const getMonthlyPeriodsFromQuotaPeriods = () => {
+  const monthlyPeriods = [];
+  const fmt = (d, opts) => d.toLocaleDateString('en-US', opts);
+  const sOpt = { month: 'short', day: 'numeric' };
+  const lOpt = { month: 'short', day: 'numeric', year: 'numeric' };
+
+  quotaPeriods.forEach((qp) => {
+    if (!qp.startDate || !qp.endDate) {
+      // fallback: no dates, use quarter name
+      const quarterNames = ["Q1","Q2","Q3","Q4"];
+      const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+      const quarterIndex = quarterNames.indexOf(qp.quarter);
+      const startMonth = quarterIndex * 3;
+      for (let i = 0; i < 3; i++) {
+        const mn = monthNames[startMonth + i];
+        const yr = new Date().getFullYear();
+        monthlyPeriods.push({
+          period: `${mn} ${yr}`, label: mn, month: mn, year: yr,
+          quarter: qp.quarter, quarterPeriod: qp.period,
+          dates: `${mn} ${yr}`
+        });
       }
-    });
-    
-    return monthlyPeriods;
-  };
+      return;
+    }
+
+    const ed = new Date(qp.endDate);
+    let mStart = new Date(qp.startDate);
+
+    while (mStart <= ed) {
+      // stop if we've landed exactly on the end date (previous slice closed it)
+      if (mStart.getTime() === ed.getTime()) break;
+
+      const mNext = addMonths(mStart, 1);
+      const isLast = mNext >= ed;
+      const mEnd = isLast
+        ? new Date(ed)
+        : (() => { const d = new Date(mNext); d.setDate(d.getDate() - 1); return d; })();
+
+      const mn = fmt(mStart, { month: 'long' });
+      const yr = mStart.getFullYear();
+
+      monthlyPeriods.push({
+        period:        `${mn} ${yr}`,
+        label:         mn,
+        startDate:     new Date(mStart),
+        endDate:       new Date(mEnd),
+        dates:         `${fmt(mStart, sOpt)} - ${fmt(mEnd, lOpt)}`,
+        month:         mn,
+        year:          yr,
+        quarter:       qp.quarter,
+        quarterPeriod: qp.period,
+      });
+
+      if (isLast) break;
+      mStart = mNext;
+    }
+  });
+
+  return monthlyPeriods;
+};
 
   const handleQuotaChange = (periodIndex, value) => {
     if (value === "" || /^-?\d*\.?\d*$/.test(value)) {

@@ -49,16 +49,31 @@ const getPageNums = (current, total) => {
 };
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
-const TypeBadge = ({ type }) => {
+const TypeBadge = ({ type, isDark = false }) => {
   const map = {
-    Fixed:       "bg-blue-50 text-blue-700 border-blue-200",
-    Incremental: "bg-violet-50 text-violet-700 border-violet-200",
-    Percentage:  "bg-amber-50 text-amber-700 border-amber-200",
+    Fixed: {
+      light: "bg-blue-50 text-blue-700 border-blue-200",
+      dark: "bg-blue-900/40 text-blue-300 border-blue-700/50"
+    },
+    Incremental: {
+      light: "bg-violet-50 text-violet-700 border-violet-200",
+      dark: "bg-violet-900/40 text-violet-300 border-violet-700/50"
+    },
+    Percentage: {
+      light: "bg-amber-50 text-amber-700 border-amber-200",
+      dark: "bg-amber-900/40 text-amber-300 border-amber-700/50"
+    }
   };
+  
+  const styles = map[type] || {
+    light: "bg-slate-50 text-slate-600 border-slate-200",
+    dark: "bg-slate-800/60 text-slate-400 border-slate-700/50"
+  };
+  
   return (
     <span
       className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide border ${
-        map[type] || "bg-slate-50 text-slate-600 border-slate-200"
+        isDark ? styles.dark : styles.light
       }`}
     >
       {type}
@@ -68,9 +83,9 @@ const TypeBadge = ({ type }) => {
 
 const Chip = ({ label, color, isDark, onRemove }) => {
   const colors = {
-    blue:    isDark ? "bg-blue-900/30 text-blue-300 border-blue-700"          : "bg-blue-50 text-blue-700 border-blue-200",
-    emerald: isDark ? "bg-emerald-900/30 text-emerald-300 border-emerald-700" : "bg-emerald-50 text-emerald-700 border-emerald-200",
-    violet:  isDark ? "bg-violet-900/30 text-violet-300 border-violet-700"    : "bg-violet-50 text-violet-700 border-violet-200",
+    blue:    isDark ? "bg-blue-900/40 text-blue-300 border-blue-700/50"          : "bg-blue-50 text-blue-700 border-blue-200",
+    emerald: isDark ? "bg-emerald-900/40 text-emerald-300 border-emerald-700/50" : "bg-emerald-50 text-emerald-700 border-emerald-200",
+    violet:  isDark ? "bg-violet-900/40 text-violet-300 border-violet-700/50"    : "bg-violet-50 text-violet-700 border-violet-200",
   };
   return (
     <span
@@ -296,17 +311,17 @@ const StatusDropdown = ({ active, isDark, canUpdate, onRequestChange }) => {
           className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide border cursor-not-allowed ${
             active
               ? isDark
-                ? "bg-emerald-900/20 text-emerald-400 border-emerald-800"
+                ? "bg-emerald-900/30 text-emerald-300 border-emerald-700/50"
                 : "bg-emerald-50 text-emerald-600 border-emerald-200"
               : isDark
-                ? "bg-slate-800 text-slate-500 border-slate-700"
+                ? "bg-slate-800/50 text-slate-400 border-slate-700/50"
                 : "bg-slate-100 text-slate-400 border-slate-200"
           }`}
           title="You don't have permission to change the status"
         >
           <span
             className={`w-1.5 h-1.5 rounded-full inline-block ${
-              active ? "bg-emerald-500" : "bg-slate-400"
+              active ? "bg-emerald-500" : "bg-slate-500"
             }`}
           />
           {active ? "Active" : "Inactive"}
@@ -315,8 +330,8 @@ const StatusDropdown = ({ active, isDark, canUpdate, onRequestChange }) => {
             size={9}
             className={`ml-0.5 ${
               active
-                ? isDark ? "text-emerald-600" : "text-emerald-400"
-                : isDark ? "text-slate-600"   : "text-slate-300"
+                ? isDark ? "text-emerald-600/70" : "text-emerald-400"
+                : isDark ? "text-slate-500"   : "text-slate-300"
             }`}
           />
         </span>
@@ -332,13 +347,17 @@ const StatusDropdown = ({ active, isDark, canUpdate, onRequestChange }) => {
         onClick={handleOpen}
         className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide border transition-colors ${
           active
-            ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-            : "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
+            ? isDark
+              ? "bg-emerald-900/30 text-emerald-300 border-emerald-700/50 hover:bg-emerald-800/40"
+              : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+            : isDark
+              ? "bg-slate-800/50 text-slate-400 border-slate-700/50 hover:bg-slate-700/50"
+              : "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
         }`}
       >
         <span
           className={`w-1.5 h-1.5 rounded-full inline-block ${
-            active ? "bg-emerald-500 animate-pulse" : "bg-slate-400"
+            active ? "bg-emerald-500 animate-pulse" : "bg-slate-500"
           }`}
         />
         {active ? "Active" : "Inactive"}
@@ -366,11 +385,15 @@ const StatusDropdown = ({ active, isDark, canUpdate, onRequestChange }) => {
                 }}
                 className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors ${
                   opt.value === active
-                    ? isDark ? "text-blue-400 bg-slate-700" : "text-blue-600 bg-blue-50"
-                    : isDark ? "text-slate-300 hover:bg-slate-700" : "text-slate-700 hover:bg-slate-50"
+                    ? isDark 
+                      ? "text-emerald-300 bg-emerald-900/20" 
+                      : "text-blue-600 bg-blue-50"
+                    : isDark 
+                      ? "text-slate-300 hover:bg-slate-700/70" 
+                      : "text-slate-700 hover:bg-slate-50"
                 }`}
               >
-                <span className={`w-1.5 h-1.5 rounded-full ${opt.value ? "bg-emerald-500" : "bg-slate-400"}`} />
+                <span className={`w-1.5 h-1.5 rounded-full ${opt.value ? "bg-emerald-500" : "bg-slate-500"}`} />
                 {opt.label}
                 {opt.value === active && <CheckCircle2 size={10} className="ml-auto" />}
               </button>
@@ -643,7 +666,7 @@ const RebateProgramList = ({
                           title="You don't have permission to change status"
                           className={`ml-1 inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-semibold border ${
                             isDark
-                              ? "bg-slate-700 text-slate-400 border-slate-600"
+                              ? "bg-slate-700/50 text-slate-400 border-slate-600/50"
                               : "bg-slate-100 text-slate-400 border-slate-200"
                           }`}
                         >
@@ -686,7 +709,7 @@ const RebateProgramList = ({
                     {/* Type */}
                     {columnVisibility.type && (
                       <td className="px-4 py-2.5">
-                        <TypeBadge type={r.type} />
+                        <TypeBadge type={r.type} isDark={isDark} />
                       </td>
                     )}
                     {/* Status — passes canUpdate so the dropdown knows its mode */}
