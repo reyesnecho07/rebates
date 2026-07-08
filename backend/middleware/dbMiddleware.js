@@ -37,3 +37,10 @@ export const dbMiddleware = async (req, res, next) => {
     });
   }
 };
+
+export const userMiddleware = (req, res, next) => {
+    // Get user from header (assuming your frontend sends it)
+    const user = req.headers['x-user-id'] || req.headers['x-user-name'] || 'SYSTEM';
+    req.user = user;
+    next();
+};

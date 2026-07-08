@@ -17,6 +17,7 @@ import {
   RefreshCw,
   BanknoteArrowUp,
 } from "lucide-react";
+import DashboardHeader from '../components/Dashboard/DashboardHeader';
 import { useLocation, Link } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
 import vcpLogo from "../assets/vcp.png";
@@ -6193,73 +6194,14 @@ const renderPercentageItemsTable = ({ access } = {}) => {
             : 'bg-gradient-to-br from-slate-50 to-blue-50'
         }`}>
           <div className={`p-8 w-full max-w-[1600px] mx-auto mt-6 `}>
-            <div className="mb-8">
-              <div className="flex items-center justify-between gap-4">
-
-                {/* Left: title + icon */}
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm border ${
-                    theme === 'dark'
-                      ? 'bg-gradient-to-br from-blue-600 to-indigo-700 border-blue-700/40'
-                      : 'bg-gradient-to-br from-blue-600 to-indigo-700 border-blue-400/30'
-                  }`}>
-                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                        d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                    </svg>
-                  </div>
-                  <div className="min-w-0">
-                    <h1 className={`text-sm font-bold leading-none ${
-                      theme === 'dark' ? 'text-slate-100' : 'text-slate-800'
-                    }`}>
-                      Rebate Analytics Dashboard
-                    </h1>
-                    <p className={`text-[11px] mt-0.5 ${
-                      theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
-                    }`}>
-                      Welcome back, <span className={`font-semibold ${theme === 'dark' ? 'text-slate-200' : 'text-slate-700'}`}>{userName}</span>
-                    </p>
-                  </div>
-                </div>
-
-                {/* Right: meta info + date */}
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {/* Current date */}
-                  <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] ${
-                    theme === 'dark'
-                      ? 'bg-slate-800 border-slate-700 text-slate-400'
-                      : 'bg-white border-slate-200 text-slate-500'
-                  }`}>
-                    <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                    </svg>
-                    <span className="tabular-nums">
-                      {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                    </span>
-                  </div>
-
-                  {/* Divider */}
-                  <div className={`h-6 w-px ${theme === 'dark' ? 'bg-slate-700' : 'bg-slate-200'}`} />
-
-                  {/* Refresh button */}
-                  <button
-                    onClick={handleRefresh}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-all ${
-                      theme === 'dark'
-                        ? 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
-                        : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700'
-                    }`}
-                  >
-                    <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    Refresh
-                  </button>
-                </div>
-              </div>
-            </div>
+            <DashboardHeader
+              title="Rebate Analytics Dashboard"
+              userName={userName}
+              userCode={userCode}
+              onRefresh={handleRefresh}
+              showRefresh={true}
+              theme={theme}
+            />
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
               <MetricCard

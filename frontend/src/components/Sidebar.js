@@ -947,16 +947,15 @@ const Sidebar = ({ collapsed, setCollapsed, userDbOrder }) => {
       {/* ── Footer ──────────────────────────────────────────────────────────── */}
       <div className={`px-4 py-3 border-t ${isDark ? 'border-slate-700/60' : 'border-slate-200'}`}>
         {!collapsed ? (
-          <div className={`flex flex-col items-center justify-center gap-0.5 py-1 rounded-lg ${isDark ? 'bg-slate-800' : 'bg-slate-50'} px-2`}>
+          <div className="flex flex-col items-center justify-center gap-0.5 py-1 rounded-lg px-2">
             <p className={`text-[10px] font-bold leading-none tracking-wide ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-              Rebate Management System
+              RMS v0.0.1
             </p>
-            <p className={`text-[9px] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>v0.0.1</p>
           </div>
         ) : (
           <div className="flex justify-center">
-            <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-gradient-to-br from-blue-500 to-indigo-600">
-              <span className="text-[10px] font-bold text-white">RMS</span>
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center">
+              <span className={`text-[10px] font-bold ${isDark ? 'text-white' : 'text-slate-700'}`}>RMS</span>
             </div>
           </div>
         )}
