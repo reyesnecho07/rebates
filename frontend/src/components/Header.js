@@ -4,6 +4,13 @@ import { Sun, Moon, Loader2, CheckCircle, X } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import axios from 'axios';
 
+// Shared event name — MUST match the same string used in Settings.jsx.
+// Fired whenever the profile picture changes anywhere in the app, so every
+// mounted component (Header, Settings, etc.) can update instantly even
+// though they're in the same browser tab (native 'storage' events only
+// fire in *other* tabs, never the one that made the change).
+const PROFILE_IMAGE_EVENT = 'profile-image-updated';
+
 const Header = ({ 
   collapsed = false, 
   userName = '', 
@@ -29,7 +36,6 @@ const Header = ({
   const fileInputRef = useRef(null);
   const profileDropdownRef = useRef(null);
   const profileButtonRef = useRef(null);
-
   const API_BASE = 'http://192.168.100.193:3009/api';
   const DB_NAME = 'USER';
 
@@ -39,6 +45,19 @@ const Header = ({
     if (savedImage) {
       setProfileImage(savedImage);
     }
+  }, [userCode]);
+
+  // Same-tab sync: pick up profile picture changes made elsewhere (e.g. the
+  // Settings page) without needing a reload or relying on the 'storage'
+  // event, which only fires in other tabs.
+  useEffect(() => {
+    const handleProfileImageEvent = (e) => {
+      const detail = e.detail || {};
+      if (detail.userCode !== userCode) return; // not for this user, ignore
+      setProfileImage(detail.image || null);
+    };
+    window.addEventListener(PROFILE_IMAGE_EVENT, handleProfileImageEvent);
+    return () => window.removeEventListener(PROFILE_IMAGE_EVENT, handleProfileImageEvent);
   }, [userCode]);
 
   // Click outside handler to close dropdown
@@ -53,7 +72,6 @@ const Header = ({
         setShowProfileDropdown(false);
       }
     };
-
     // Add event listener
     document.addEventListener('mousedown', handleClickOutside);
     
@@ -70,15 +88,12 @@ const Header = ({
       error: false,
       message: "Saving theme..."
     });
-
     try {
       // Update theme in context
       updateTheme(newTheme);
-
       // Get user ID from localStorage
       const storedUser = JSON.parse(localStorage.getItem("currentUser")) || {};
       const userId = storedUser.UserID || storedUser.User_ID;
-
       if (userId) {
         try {
           // Save to database
@@ -87,7 +102,6 @@ const Header = ({
             preferenceKey: 'theme',
             preferenceValue: newTheme.charAt(0).toUpperCase() + newTheme.slice(1)
           });
-
           if (response.data.success) {
             console.log('Theme saved to database:', response.data);
             setThemeSaveStatus({
@@ -116,7 +130,6 @@ const Header = ({
           message: "Theme saved locally"
         });
       }
-
       // Reset status after 3 seconds
       setTimeout(() => {
         setThemeSaveStatus({
@@ -126,7 +139,6 @@ const Header = ({
           message: ""
         });
       }, 3000);
-
     } catch (error) {
       console.error('Error toggling theme:', error);
       setThemeSaveStatus({
@@ -135,7 +147,6 @@ const Header = ({
         error: true,
         message: "Error saving theme"
       });
-
       setTimeout(() => {
         setThemeSaveStatus({
           saving: false,
@@ -150,19 +161,16 @@ const Header = ({
   const handleProfileImageUpload = (event) => {
     const file = event.target.files[0];
     if (!file) return;
-
     // Check file size (5MB max)
     if (file.size > 5 * 1024 * 1024) {
       alert('File size must be less than 5MB');
       return;
     }
-
     // Check file type
     if (!file.type.match('image/(jpeg|png|gif|jpg|webp)')) {
       alert('Only JPG, PNG, GIF, and WebP files are allowed');
       return;
     }
-
     const reader = new FileReader();
     reader.onload = (e) => {
       setUploadPreview(e.target.result);
@@ -187,12 +195,18 @@ const Header = ({
         window.updateUserProfileImage(imageToSave);
       }
       
-      // Optional: Broadcast to other tabs/windows
+      // Broadcast to other tabs/windows (native storage event)
       try {
         localStorage.setItem(`profileImageUpdated_${userCode}`, Date.now().toString());
       } catch (error) {
         console.log('Storage event broadcast failed:', error);
       }
+
+      // Broadcast within this tab so Settings (or any other mounted
+      // component) updates immediately.
+      window.dispatchEvent(new CustomEvent(PROFILE_IMAGE_EVENT, {
+        detail: { userCode, image: imageToSave }
+      }));
       
       console.log('Profile image saved:', imageToSave);
     }
@@ -214,12 +228,18 @@ const Header = ({
       window.updateUserProfileImage(null);
     }
     
-    // Optional: Broadcast to other tabs/windows
+    // Broadcast to other tabs/windows (native storage event)
     try {
       localStorage.setItem(`profileImageRemoved_${userCode}`, Date.now().toString());
     } catch (error) {
       console.log('Storage event broadcast failed:', error);
     }
+
+    // Broadcast within this tab so Settings (or any other mounted
+    // component) updates immediately.
+    window.dispatchEvent(new CustomEvent(PROFILE_IMAGE_EVENT, {
+      detail: { userCode, image: null }
+    }));
     
     console.log('Profile image removed');
   };
@@ -240,7 +260,6 @@ const Header = ({
         setProfileImage(null);
       }
     };
-
     window.addEventListener('storage', handleStorageChange);
     
     return () => {
@@ -260,13 +279,11 @@ const Header = ({
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
     </svg>
   );
-
   const UploadIcon = ({ className }) => (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
     </svg>
   );
-
   const CameraIcon = ({ className }) => (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
@@ -312,7 +329,6 @@ const Header = ({
             />
         </div>
         </div>
-
         {/* User Profile Section */}
         <div className="flex items-center gap-3 ml-auto">
           <div className="relative">
@@ -384,7 +400,6 @@ const Header = ({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
             </button>
-
             {showProfileDropdown && (
               <div 
                 ref={profileDropdownRef}
@@ -440,7 +455,6 @@ const Header = ({
                     </div>
                   </div>
                 </div>
-
                 {/* Menu Items */}
                 <div className="py-1">
                   {/* Theme Toggle Section - ADDED HERE */}
@@ -501,7 +515,6 @@ const Header = ({
                       </button>
                     </div>
                   </div>
-
                   {/* User Preference Link */}
                   <Link
                     to="/settings"
@@ -518,7 +531,6 @@ const Header = ({
                     </svg>
                     <span>User Preference</span>
                   </Link>
-
                   <Link
                     to="/login"
                     onClick={(e) => {
@@ -546,7 +558,6 @@ const Header = ({
           </div>
         </div>
       </header>
-
       {/* Profile Picture Upload Modal */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
@@ -572,7 +583,6 @@ const Header = ({
                   <XIcon className={`w-5 h-5 ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
                 </button>
               </div>
-
               <div className="mb-6">
                 <div className="flex justify-center mb-4">
                   <div className={`w-32 h-32 rounded-full overflow-hidden border-4 shadow-lg ${
@@ -597,7 +607,6 @@ const Header = ({
                     )}
                   </div>
                 </div>
-
                 <div className="text-center mb-6">
                   <p className={`text-sm ${
                     isDark ? 'text-gray-300' : 'text-gray-600'
@@ -610,7 +619,6 @@ const Header = ({
                     Max file size: 5MB
                   </p>
                 </div>
-
                 <div className="grid grid-cols-2 gap-3">
                   <label className={`flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${
                     isDark 
@@ -633,7 +641,6 @@ const Header = ({
                       className="hidden"
                     />
                   </label>
-
                   <button
                     onClick={() => {
                       alert("Camera functionality would open here in a real app");
@@ -655,7 +662,6 @@ const Header = ({
                   </button>
                 </div>
               </div>
-
               <div className="flex gap-3">
                 <button
                   onClick={removeProfileImage}
