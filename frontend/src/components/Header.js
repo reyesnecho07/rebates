@@ -4,21 +4,23 @@ import { Sun, Moon, Loader2, CheckCircle, X } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import axios from 'axios';
 
-// Shared event name — MUST match the same string used in Settings.jsx.
-// Fired whenever the profile picture changes anywhere in the app, so every
-// mounted component (Header, Settings, etc.) can update instantly even
-// though they're in the same browser tab (native 'storage' events only
-// fire in *other* tabs, never the one that made the change).
-const PROFILE_IMAGE_EVENT = 'profile-image-updated';
+// ── Shared profile-sync constants ────────────────────────────────────────
+// These MUST match the ones used in Settings.jsx so both components read
+// and write the exact same localStorage key and react to the exact same
+// custom event. This is what keeps the navbar avatar and the Settings page
+// avatar in sync, in the same tab, instantly.
+const PROFILE_UPDATED_EVENT = 'app:profile-updated';
+const getProfileImageKey = (userCode) => `userProfileImage_${userCode}`;
 
-const Header = ({ 
-  collapsed = false, 
-  userName = '', 
+const Header = ({
+  collapsed = false,
+  userName = '',
   userCode = '',
   initials = '',
   logo,
   darkModeLogo, // Dark mode logo (with white text)
-  theme = 'light'
+  theme = 'light',
+  profileImage: profileImageProp, // optional controlled value from a parent (e.g. Settings)
 }) => {
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -30,7 +32,7 @@ const Header = ({
     error: false,
     message: ""
   });
-  
+
   const { theme: currentTheme, updateTheme } = useTheme();
   const isDark = currentTheme === 'dark';
   const fileInputRef = useRef(null);
@@ -39,33 +41,28 @@ const Header = ({
   const API_BASE = 'http://192.168.100.193:3009/api';
   const DB_NAME = 'USER';
 
-  // Load profile image from localStorage on component mount
+  // If a parent (like Settings) passes profileImage as a prop, prefer that
+  // as the source of truth so both places never disagree.
   useEffect(() => {
-    const savedImage = localStorage.getItem(`userProfileImage_${userCode}`);
-    if (savedImage) {
-      setProfileImage(savedImage);
+    if (profileImageProp !== undefined) {
+      setProfileImage(profileImageProp);
     }
-  }, [userCode]);
+  }, [profileImageProp]);
 
-  // Same-tab sync: pick up profile picture changes made elsewhere (e.g. the
-  // Settings page) without needing a reload or relying on the 'storage'
-  // event, which only fires in other tabs.
+  // Load profile image from localStorage on component mount (and whenever
+  // userCode changes, e.g. after login).
   useEffect(() => {
-    const handleProfileImageEvent = (e) => {
-      const detail = e.detail || {};
-      if (detail.userCode !== userCode) return; // not for this user, ignore
-      setProfileImage(detail.image || null);
-    };
-    window.addEventListener(PROFILE_IMAGE_EVENT, handleProfileImageEvent);
-    return () => window.removeEventListener(PROFILE_IMAGE_EVENT, handleProfileImageEvent);
-  }, [userCode]);
+    if (profileImageProp !== undefined) return; // parent is controlling it
+    const savedImage = localStorage.getItem(getProfileImageKey(userCode));
+    setProfileImage(savedImage || null);
+  }, [userCode, profileImageProp]);
 
   // Click outside handler to close dropdown
   useEffect(() => {
     const handleClickOutside = (event) => {
       // If dropdown is open AND click is outside both the dropdown and the profile button
-      if (showProfileDropdown && 
-          profileDropdownRef.current && 
+      if (showProfileDropdown &&
+          profileDropdownRef.current &&
           !profileDropdownRef.current.contains(event.target) &&
           profileButtonRef.current &&
           !profileButtonRef.current.contains(event.target)) {
@@ -74,7 +71,7 @@ const Header = ({
     };
     // Add event listener
     document.addEventListener('mousedown', handleClickOutside);
-    
+
     // Cleanup
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
@@ -178,91 +175,83 @@ const Header = ({
     reader.readAsDataURL(file);
   };
 
+  // Broadcasts the current profile image so every part of the app that
+  // displays it (Header here, Settings page, etc.) updates instantly,
+  // without waiting for a page reload or remount.
+  const broadcastProfileUpdate = (image) => {
+    try {
+      window.dispatchEvent(new CustomEvent(PROFILE_UPDATED_EVENT, {
+        detail: { userCode, profileImage: image, userName, initials }
+      }));
+    } catch {}
+  };
+
   const saveProfileImage = () => {
     let imageToSave = uploadPreview || profileImage;
-    
+
     if (imageToSave) {
-      // Save to localStorage
-      localStorage.setItem(`userProfileImage_${userCode}`, imageToSave);
-      
+      // Save to localStorage (same key Settings.jsx uses)
+      localStorage.setItem(getProfileImageKey(userCode), imageToSave);
+
       // Update state
       if (uploadPreview) {
         setProfileImage(uploadPreview);
       }
-      
+
       // Optional: Sync with parent component or global state
       if (window.updateUserProfileImage) {
         window.updateUserProfileImage(imageToSave);
       }
-      
-      // Broadcast to other tabs/windows (native storage event)
-      try {
-        localStorage.setItem(`profileImageUpdated_${userCode}`, Date.now().toString());
-      } catch (error) {
-        console.log('Storage event broadcast failed:', error);
-      }
 
-      // Broadcast within this tab so Settings (or any other mounted
-      // component) updates immediately.
-      window.dispatchEvent(new CustomEvent(PROFILE_IMAGE_EVENT, {
-        detail: { userCode, image: imageToSave }
-      }));
-      
+      // Sync every other mounted component (Settings page, etc.) immediately
+      broadcastProfileUpdate(imageToSave);
+
       console.log('Profile image saved:', imageToSave);
     }
-    
+
     setShowUploadModal(false);
     setUploadPreview(null);
   };
 
   const removeProfileImage = () => {
     // Remove from localStorage
-    localStorage.removeItem(`userProfileImage_${userCode}`);
-    
+    localStorage.removeItem(getProfileImageKey(userCode));
+
     // Update state
     setProfileImage(null);
     setUploadPreview(null);
-    
+
     // Optional: Sync with parent component or global state
     if (window.updateUserProfileImage) {
       window.updateUserProfileImage(null);
     }
-    
-    // Broadcast to other tabs/windows (native storage event)
-    try {
-      localStorage.setItem(`profileImageRemoved_${userCode}`, Date.now().toString());
-    } catch (error) {
-      console.log('Storage event broadcast failed:', error);
-    }
 
-    // Broadcast within this tab so Settings (or any other mounted
-    // component) updates immediately.
-    window.dispatchEvent(new CustomEvent(PROFILE_IMAGE_EVENT, {
-      detail: { userCode, image: null }
-    }));
-    
+    // Sync every other mounted component (Settings page, etc.) immediately
+    broadcastProfileUpdate(null);
+
     console.log('Profile image removed');
   };
 
-  // Listen for storage events from other tabs/windows
+  // Listen for same-tab updates coming from any other component (e.g. the
+  // Settings page) and cross-tab updates via the native 'storage' event.
   useEffect(() => {
+    const handleProfileUpdated = (e) => {
+      if (!e.detail) return;
+      if (e.detail.userCode !== userCode) return;
+      setProfileImage(e.detail.profileImage || null);
+    };
+
     const handleStorageChange = (e) => {
-      if (e.key === `userProfileImage_${userCode}`) {
-        setProfileImage(e.newValue);
-      }
-      if (e.key === `profileImageUpdated_${userCode}`) {
-        const savedImage = localStorage.getItem(`userProfileImage_${userCode}`);
-        if (savedImage) {
-          setProfileImage(savedImage);
-        }
-      }
-      if (e.key === `profileImageRemoved_${userCode}`) {
-        setProfileImage(null);
+      if (e.key === getProfileImageKey(userCode)) {
+        setProfileImage(e.newValue || null);
       }
     };
+
+    window.addEventListener(PROFILE_UPDATED_EVENT, handleProfileUpdated);
     window.addEventListener('storage', handleStorageChange);
-    
+
     return () => {
+      window.removeEventListener(PROFILE_UPDATED_EVENT, handleProfileUpdated);
       window.removeEventListener('storage', handleStorageChange);
     };
   }, [userCode]);
@@ -293,13 +282,13 @@ const Header = ({
 
   return (
     <>
-      <header 
+      <header
         className={`fixed top-0 right-0 h-16 flex items-center px-8 backdrop-blur-lg border-b z-40 transition-all duration-500 shadow-sm ${
-          isDark 
-            ? 'bg-gray-900/80 border-gray-700/50' 
+          isDark
+            ? 'bg-gray-900/80 border-gray-700/50'
             : 'bg-white/80 border-slate-200/50'
         }`}
-        style={{ 
+        style={{
           left: collapsed ? '80px' : '256px',
           width: collapsed ? 'calc(100% - 80px)' : 'calc(100% - 256px)'
         }}
@@ -307,15 +296,15 @@ const Header = ({
         <div className="absolute left-1/2 transform -translate-x-1/2">
         <div className="relative" style={{ height: "90px" }}>
             {/* Original logo (visible in light mode) */}
-            <img 
-            src={logo} 
-            alt="Company Logo" 
+            <img
+            src={logo}
+            alt="Company Logo"
             style={{ height: "90px", width: "auto" }}
             className={`object-contain ${isDark ? 'opacity-0' : 'opacity-100'}`}
             />
-            
+
             {/* Dark mode version - only black parts become white */}
-            <div 
+            <div
             className={`absolute inset-0 ${isDark ? 'opacity-100' : 'opacity-0'}`}
             style={{
                 maskImage: `url(${logo})`,
@@ -332,14 +321,14 @@ const Header = ({
         {/* User Profile Section */}
         <div className="flex items-center gap-3 ml-auto">
           <div className="relative">
-            <button 
+            <button
               ref={profileButtonRef}
               onClick={() => setShowProfileDropdown(!showProfileDropdown)}
               className={`flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors ${
                 isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-50'
               }`}
             >
-<div 
+<div
   className="relative w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium uppercase overflow-hidden group cursor-pointer"
   onClick={(e) => {
     e.stopPropagation();
@@ -350,9 +339,9 @@ const Header = ({
 >
   {/* Profile Image or Initials */}
   {profileImage ? (
-    <img 
-      src={profileImage} 
-      alt="Profile" 
+    <img
+      src={profileImage}
+      alt="Profile"
       className="w-full h-full object-cover"
       onError={(e) => {
         // If image fails to load, show initials
@@ -361,14 +350,14 @@ const Header = ({
       }}
     />
   ) : null}
-  
+
   {/* Initials fallback */}
   <div className={`w-full h-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center profile-initials ${
     profileImage ? 'hidden' : ''
   }`}>
     {initials}
   </div>
-  
+
   {/* Hover Overlay for Edit Indicator - ONLY when dropdown is open */}
   {showProfileDropdown && (
     <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity duration-200">
@@ -379,7 +368,7 @@ const Header = ({
     </div>
   )}
 </div>
-              
+
               <div className="hidden md:block text-left">
                 <p className={`text-sm font-medium leading-tight ${
                   isDark ? 'text-gray-100' : 'text-gray-800'
@@ -388,24 +377,24 @@ const Header = ({
                   isDark ? 'text-gray-400' : 'text-gray-500'
                 }`}>{userCode}</p>
               </div>
-              
-              <svg 
+
+              <svg
                 className={`w-4 h-4 transition-transform ${showProfileDropdown ? 'rotate-180' : ''} ${
                   isDark ? 'text-gray-400' : 'text-gray-500'
                 }`}
-                fill="none" 
-                stroke="currentColor" 
+                fill="none"
+                stroke="currentColor"
                 viewBox="0 0 24 24"
               >
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
             </button>
             {showProfileDropdown && (
-              <div 
+              <div
                 ref={profileDropdownRef}
                 className={`absolute right-0 top-full mt-2 w-56 rounded-lg shadow-lg z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 ${
-                  isDark 
-                    ? 'bg-gray-800 border-gray-700' 
+                  isDark
+                    ? 'bg-gray-800 border-gray-700'
                     : 'bg-white border-gray-200'
                 } border`}
               >
@@ -414,7 +403,7 @@ const Header = ({
                   isDark ? 'border-gray-700' : 'border-gray-100'
                 }`}>
                   <div className="flex items-center gap-3">
-                    <div 
+                    <div
                       className="relative w-10 h-10 rounded-full overflow-hidden group cursor-pointer"
                       onClick={() => {
                         setShowProfileDropdown(false);
@@ -422,9 +411,9 @@ const Header = ({
                       }}
                     >
                       {profileImage ? (
-                        <img 
-                          src={profileImage} 
-                          alt="Profile" 
+                        <img
+                          src={profileImage}
+                          alt="Profile"
                           className="w-full h-full object-cover"
                           onError={(e) => {
                             e.target.style.display = 'none';
@@ -432,13 +421,13 @@ const Header = ({
                           }}
                         />
                       ) : null}
-                      
+
                       <div className={`w-full h-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white font-medium uppercase dropdown-initials ${
                         profileImage ? 'hidden' : ''
                       }`}>
                         {initials}
                       </div>
-                      
+
                       <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                         <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -457,7 +446,7 @@ const Header = ({
                 </div>
                 {/* Menu Items */}
                 <div className="py-1">
-                  {/* Theme Toggle Section - ADDED HERE */}
+                  {/* Theme Toggle Section */}
                   <div className={`px-4 py-2.5 border-b ${
                     isDark ? 'border-gray-700' : 'border-gray-100'
                   }`}>
@@ -467,7 +456,7 @@ const Header = ({
                       }`}>
                         Theme
                       </span>
-                      
+
                       {/* Status indicator */}
                       {themeSaveStatus.saving && (
                         <div className="flex items-center gap-1 text-xs text-blue-500">
@@ -488,12 +477,12 @@ const Header = ({
                         </div>
                       )}
                     </div>
-                    
+
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleThemeToggle('light')}
                         className={`flex-1 flex items-center justify-center gap-2 py-2 px-2 rounded-lg border transition-all duration-300 text-sm ${
-                          currentTheme === 'light' 
+                          currentTheme === 'light'
                             ? (isDark ? 'bg-blue-900/30 border-blue-700 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-700')
                             : (isDark ? 'bg-gray-700 border-gray-600 text-gray-400 hover:bg-gray-600 hover:text-gray-300' : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100')
                         }`}
@@ -501,11 +490,11 @@ const Header = ({
                         <Sun className="w-4 h-4" />
                         <span>Light</span>
                       </button>
-                      
+
                       <button
                         onClick={() => handleThemeToggle('dark')}
                         className={`flex-1 flex items-center justify-center gap-2 py-2 px-2 rounded-lg border transition-all duration-300 text-sm ${
-                          currentTheme === 'dark' 
+                          currentTheme === 'dark'
                             ? (isDark ? 'bg-blue-900/30 border-blue-700 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-700')
                             : (isDark ? 'bg-gray-700 border-gray-600 text-gray-400 hover:bg-gray-600 hover:text-gray-300' : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100')
                         }`}
@@ -520,8 +509,8 @@ const Header = ({
                     to="/settings"
                     onClick={() => setShowProfileDropdown(false)}
                     className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
-                      isDark 
-                        ? 'text-gray-300 hover:bg-gray-700' 
+                      isDark
+                        ? 'text-gray-300 hover:bg-gray-700'
                         : 'text-gray-700 hover:bg-gray-50'
                     }`}
                   >
@@ -537,13 +526,13 @@ const Header = ({
                       e.preventDefault();
                       setShowProfileDropdown(false);
                       // Clear profile image on logout
-                      localStorage.removeItem(`userProfileImage_${userCode}`);
+                      localStorage.removeItem(getProfileImageKey(userCode));
                       localStorage.clear();
                       window.location.href = "/login";
                     }}
                     className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors border-t ${
-                      isDark 
-                        ? 'text-red-400 hover:bg-gray-700 border-gray-700' 
+                      isDark
+                        ? 'text-red-400 hover:bg-gray-700 border-gray-700'
                         : 'text-red-600 hover:bg-gray-50 border-gray-100'
                     }`}
                   >
@@ -621,8 +610,8 @@ const Header = ({
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <label className={`flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${
-                    isDark 
-                      ? 'border-gray-600 hover:border-blue-400' 
+                    isDark
+                      ? 'border-gray-600 hover:border-blue-400'
                       : 'border-gray-300 hover:border-blue-500'
                   }`}>
                     <UploadIcon className={`w-6 h-6 mb-2 ${
@@ -646,8 +635,8 @@ const Header = ({
                       alert("Camera functionality would open here in a real app");
                     }}
                     className={`flex flex-col items-center justify-center p-4 border-2 rounded-xl cursor-pointer transition-colors ${
-                      isDark 
-                        ? 'border-gray-600 hover:border-blue-400' 
+                      isDark
+                        ? 'border-gray-600 hover:border-blue-400'
                         : 'border-gray-300 hover:border-blue-500'
                     }`}
                   >
