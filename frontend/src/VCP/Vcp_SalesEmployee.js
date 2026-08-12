@@ -76,7 +76,7 @@ function Vcp_SalesEmployee() {
     if (!access.canView) return;
     const fetchEmployees = async () => {
       try {
-        const res  = await fetch("http://192.168.100.193:3009/api/sync/local/sales-employees?db=VCP");
+        const res  = await fetch("http://192.168.100.193:3009/api/vcp/sales-employees?db=VCP");
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const list = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];

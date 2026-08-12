@@ -785,7 +785,7 @@ function Van_RebateSetup() {
   const fetchSalesEmployees = async () => {
     try {
       setLoading(true);
-      const res  = await fetch(`${API_BASE}/sync/local/sales-employees?db=VAN`);
+      const res  = await fetch(`${API_BASE}/van/sales-employees?db=VAN`);
       if (!res.ok) throw new Error("Failed to fetch sales employees");
       const data = await res.json();
       if (Array.isArray(data)) setSalesEmployees(data);
@@ -800,7 +800,7 @@ function Van_RebateSetup() {
   const fetchCustomers = async () => {
     try {
       setLoading(true);
-      const res  = await fetch(`${API_BASE}/sync/local/customers?db=VAN`);
+      const res  = await fetch(`${API_BASE}/van/customer?db=VAN`);
       if (!res.ok) throw new Error("Failed to fetch customers");
       const data = await res.json();
       if (Array.isArray(data)) setCustomersDropdown(data);
@@ -815,7 +815,7 @@ function Van_RebateSetup() {
   const fetchItems = async () => {
     try {
       setLoading(true);
-      const res  = await fetch(`${API_BASE}/sync/local/items?db=VAN`);
+      const res  = await fetch(`${API_BASE}/van/items?db=VAN`);
       if (!res.ok) throw new Error("Failed to fetch items");
       const data = await res.json();
       if (Array.isArray(data)) setItemsDropdown(data);

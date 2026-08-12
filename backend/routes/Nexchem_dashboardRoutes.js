@@ -1789,7 +1789,7 @@ res.json({
 
     if (rebateItemCodes.length > 0) {
       const paramNames = rebateItemCodes.map((_, index) => `@itemCode${index}`).join(', ');
-      sapQuery += ` AND T1.ItemCode IN (${paramNames})`;
+      sapQuery += ` AND T0.ItemCode IN (${paramNames})`;
     }
 
     sapQuery += ` ORDER BY T0.DocDate ASC, T0.DocNum ASC`;

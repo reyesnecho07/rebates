@@ -25,12 +25,16 @@ const getItems = async (req, res) => {
       const result = await pool
         .request()
         .query(`
-          SELECT 
-            ItemCode,
-            ItemName
-            --FrgnName
-          FROM OITM
-          ORDER BY ItemCode
+          SELECT
+            T0.ItemCode,
+            T0.ItemName,
+            T1.ItmsGrpNam
+          FROM
+            OITM T0
+            INNER JOIN OITB T1 ON T0.ItmsGrpCod = T1.ItmsGrpCod
+          WHERE
+            T0.ItemName <> ''
+          ORDER BY T0.ItemName
         `);
       console.log(`🟪 VCP Items: ${result.recordset.length} records`);
       return result.recordset;

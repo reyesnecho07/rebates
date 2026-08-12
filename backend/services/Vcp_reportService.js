@@ -157,7 +157,7 @@ export const getSAPInvoiceTotals = async (customerCode, dateFrom, dateTo, itemCo
     if (itemCodes.length > 0) {
       const params = itemCodes.map((_, i) => `@ic${i}`).join(', ');
       itemCodes.forEach((code, i) => request.input(`ic${i}`, sql.NVarChar(50), code));
-      itemFilter = `AND T1.ItemCode IN (${params})`;
+      itemFilter = `AND T0.ItemCode IN (${params})`;
     }
 
     const result = await request.query(`

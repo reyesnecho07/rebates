@@ -87,7 +87,7 @@ function Vcp_CustomerRecords() {
     if (!access.canView) return;
     const fetchCustomers = async () => {
       try {
-        const res  = await fetch("http://192.168.100.193:3009/api/sync/local/customers?db=VCP");
+        const res  = await fetch("http://192.168.100.193:3009/api/vcp/customer?db=VCP");
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const list = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];

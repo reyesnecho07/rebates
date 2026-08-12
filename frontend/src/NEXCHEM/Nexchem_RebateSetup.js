@@ -755,7 +755,7 @@ function Nexchem_RebateSetup() {
   const fetchSalesEmployees = async () => {
     try {
       setLoading(true);
-      const res  = await fetch(`${API_BASE}/sync/local/sales-employees?db=NEXCHEM`);
+      const res  = await fetch(`${API_BASE}/nexchem/sales-employees?db=NEXCHEM`);
       if (!res.ok) throw new Error("Failed to fetch sales employees");
       const data = await res.json();
       if (Array.isArray(data)) setSalesEmployees(data);
@@ -770,7 +770,7 @@ function Nexchem_RebateSetup() {
   const fetchCustomers = async () => {
     try {
       setLoading(true);
-      const res  = await fetch(`${API_BASE}/sync/local/customers?db=NEXCHEM`);
+      const res  = await fetch(`${API_BASE}/nexchem/customer?db=NEXCHEM`);
       if (!res.ok) throw new Error("Failed to fetch customers");
       const data = await res.json();
       if (Array.isArray(data)) setCustomersDropdown(data);
@@ -785,7 +785,7 @@ function Nexchem_RebateSetup() {
   const fetchItems = async () => {
     try {
       setLoading(true);
-      const res  = await fetch(`${API_BASE}/sync/local/items?db=NEXCHEM`);
+      const res  = await fetch(`${API_BASE}/nexchem/items?db=NEXCHEM`);
       if (!res.ok) throw new Error("Failed to fetch items");
       const data = await res.json();
       if (Array.isArray(data)) setItemsDropdown(data);
