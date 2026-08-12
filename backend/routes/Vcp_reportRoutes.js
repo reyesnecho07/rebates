@@ -23,7 +23,7 @@ router.get('/rebates/:rebateCode/customers', reportCtrl.getCustomersByRebate);
 
 // ── Report generation ─────────────────────────────────────────────────────────
 
-// GET /api/vcp/report/cash-fund?rebateCode=X&dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&db=VCP_OWN
+// GET /api/vcp/report/cash-fund?rebateCode=X&dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&db=VCP
 // Generates the "Cash Fund per Account" report.
 router.post('/cash-fund', reportCtrl.generateCashFundReport);
 

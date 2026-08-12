@@ -9,7 +9,7 @@ import { getAvailableRebates, generateRebateReport } from '../services/Van_repor
  */
 export const listRebates = async (req, res) => {
   try {
-    const db   = req.query.db || 'VAN_OWN';
+    const db   = req.query.db || 'VAN';
     const data = await getAvailableRebates(db);
     res.json({ success: true, data });
   } catch (error) {
@@ -25,7 +25,7 @@ export const listRebates = async (req, res) => {
  */
 export const generateReport = async (req, res) => {
   try {
-    const { rebateCodes, db = 'VAN_OWN' } = req.body;
+    const { rebateCodes, db = 'VAN' } = req.body;
 
     if (!rebateCodes || !Array.isArray(rebateCodes) || !rebateCodes.length) {
       return res.status(400).json({ success: false, message: 'rebateCodes array is required' });
@@ -64,11 +64,11 @@ export const generateReport = async (req, res) => {
 /**
  * GET /api/van/report/rebate/:rebateCode/customers
  * Returns list of customers (CardCode, CardName) assigned to a specific rebate code.
- * Query param: ?db=VAN_OWN (optional, default VAN_OWN)
+ * Query param: ?db=VAN (optional, default VAN)
  */
 export const getCustomersForRebate = async (req, res) => {
   const { rebateCode } = req.params;
-  const db = req.query.db || 'VAN_OWN';
+  const db = req.query.db || 'VAN';
 
   try {
     const pool = getPool(db);

@@ -243,7 +243,7 @@ function Vcp_Dashboard() {
     try {
       const totalAchievedResponse = await fetch(
         `http://192.168.100.193:3009/api/vcp/dashboard/customer/${customer.code}/total-achieved?` +
-        `db=VCP_OWN&rebateCode=${customer.rebateCode}&rebateType=${customer.rebateType}`
+        `db=VCP&rebateCode=${customer.rebateCode}&rebateType=${customer.rebateType}`
       );
       
       if (totalAchievedResponse.ok) {
@@ -775,7 +775,7 @@ const filteredCustomers = customers
 
   const getAutoDateParams = (customerData) => {
     const params = new URLSearchParams({
-      db: 'VCP_OWN',
+      db: 'VCP',
       rebateCode: customerData.rebateCode,
       rebateType: customerData.rebateType
     });
@@ -789,7 +789,7 @@ const filteredCustomers = customers
   try {
     const response = await fetch(
       `http://192.168.100.193:3009/api/vcp/dashboard/customer/${customerCode}/quotas?` +
-      `db=VCP_OWN&rebateCode=${rebateCode}&rebateType=${rebateType}`
+      `db=VCP&rebateCode=${rebateCode}&rebateType=${rebateType}`
     );
     
     if (response.ok) {
@@ -1224,8 +1224,8 @@ const loadDashboardData = async () => {
   try {
     // Load metrics and rebates in PARALLEL - don't await one then the other
     const [metricsResponse, rebatesResponse] = await Promise.all([
-      fetch(`http://192.168.100.193:3009/api/vcp/dashboard/metrics?db=VCP_OWN`),
-      fetch(`http://192.168.100.193:3009/api/vcp/dashboard/rebates?db=VCP_OWN`)
+      fetch(`http://192.168.100.193:3009/api/vcp/dashboard/metrics?db=VCP`),
+      fetch(`http://192.168.100.193:3009/api/vcp/dashboard/rebates?db=VCP`)
     ]);
 
     // Process metrics
@@ -1275,7 +1275,7 @@ const loadDashboardData = async () => {
 const loadCustomerStatus = useCallback(async (forceRefresh = false) => {
   try {
     setCustomersLoading(true);
-    let url = `http://192.168.100.193:3009/api/vcp/dashboard/rebates-summary?db=VCP_OWN`;
+    let url = `http://192.168.100.193:3009/api/vcp/dashboard/rebates-summary?db=VCP`;
 
     const params = new URLSearchParams();
     if (statusSummaryPeriodFrom) params.append('periodFrom', statusSummaryPeriodFrom);
@@ -1368,7 +1368,7 @@ useEffect(() => {
     try {
       console.log('📥 Loading details for:', customerCode, rebateCode, rebateType);
       
-      let url = `http://192.168.100.193:3009/api/vcp/dashboard/customer/${customerCode}/details?db=VCP_OWN`;
+      let url = `http://192.168.100.193:3009/api/vcp/dashboard/customer/${customerCode}/details?db=VCP`;
       
       const params = new URLSearchParams();
       params.append('rebateCode', rebateCode);
@@ -1408,7 +1408,7 @@ useEffect(() => {
   try {
     console.log('🔍 Loading rebate details for:', rebateCode, customerCode ? `customer: ${customerCode}` : '');
     
-    let url = `http://192.168.100.193:3009/api/vcp/dashboard/rebate/${rebateCode}/details?db=VCP_OWN`;
+    let url = `http://192.168.100.193:3009/api/vcp/dashboard/rebate/${rebateCode}/details?db=VCP`;
     
     if (customerCode) {
       url += `&customerCode=${customerCode}`;
@@ -1461,7 +1461,7 @@ useEffect(() => {
     try {
       console.log('📊 Fetching monthly quota data for:', { customerCode, rebateCode, rebateType });
       
-      let url = `http://192.168.100.193:/api/vcp/dashboard/customer/${customerCode}/quota-summary?db=VCP_OWN&rebateCode=${rebateCode}&rebateType=${rebateType}`;
+      let url = `http://192.168.100.193:/api/vcp/dashboard/customer/${customerCode}/quota-summary?db=VCP&rebateCode=${rebateCode}&rebateType=${rebateType}`;
       
       if (useAutoDates) {
         url += '&useRebatePeriod=true';
@@ -1517,7 +1517,7 @@ const loadDetailedTransactionsData = async (autoLoad = true) => {
     let url = `http://192.168.100.193:3009/api/vcp/dashboard/customer/${modalCustomer.code}/transactions`;
     
     const params = new URLSearchParams({
-      db: 'VCP_OWN',
+      db: 'VCP',
       rebateCode: modalCustomer.rebateCode,
       rebateType: modalCustomer.rebateType
     });
@@ -2262,7 +2262,7 @@ const loadDetailedTransactionsData = async (autoLoad = true) => {
       const url = `http://192.168.100.193:3009/api/vcp/payouts/customer/${modalCustomer.code}/payouts`;
       
       const params = new URLSearchParams({
-        db: 'VCP_OWN',
+        db: 'VCP',
         rebateCode: modalCustomer.rebateCode,
         rebateType: modalCustomer.rebateType
       });
@@ -2356,7 +2356,7 @@ const loadDetailedTransactionsData = async (autoLoad = true) => {
     console.log('🧪 Testing transaction API...');
     
     const url = `http://192.168.100.193:3009/api/vcp/dashboard/customer/${modalCustomer.code}/transactions?` +
-      `db=VCP_OWN&rebateCode=${modalCustomer.rebateCode}&rebateType=${modalCustomer.rebateType}&useRebatePeriod=true`;
+      `db=VCP&rebateCode=${modalCustomer.rebateCode}&rebateType=${modalCustomer.rebateType}&useRebatePeriod=true`;
     
     console.log('API URL:', url);
     
@@ -2481,7 +2481,7 @@ const loadIncrementalRangeData = async (rebateCode, customerCode) => {
     }
     
     // Method 2: Try to load from customer-specific endpoint
-    const customerRangeUrl = `http://192.168.100.193:3009/api/vcp/dashboard/customer/${customerCode}/ranges?db=VCP_OWN&rebateCode=${rebateCode}`;
+    const customerRangeUrl = `http://192.168.100.193:3009/api/vcp/dashboard/customer/${customerCode}/ranges?db=VCP&rebateCode=${rebateCode}`;
     console.log('🌐 Trying customer-specific range endpoint:', customerRangeUrl);
     
     try {
@@ -2683,7 +2683,7 @@ useEffect(() => {
       }
       
       const payload = {
-        db: 'VCP_OWN',
+        db: 'VCP',
         status: newStatus,
         amountReleased: amountReleased
       };
@@ -2772,7 +2772,7 @@ useEffect(() => {
       setDetailedPayouts(updatedPayouts);
       
       const payload = {
-        db: 'VCP_OWN',
+        db: 'VCP',
         status: newStatus,
         amountReleased: validatedAmount
       };
@@ -2849,7 +2849,7 @@ useEffect(() => {
       }
 
       const payload = {
-        db: 'VCP_OWN',
+        db: 'VCP',
         status: status,
         amountReleased: amountReleased
       };
@@ -3131,7 +3131,7 @@ useEffect(() => {
 
   const handleSaveCustomer = async (customerCode) => {
     try {
-      const currentDatabase = 'VCP_OWN';
+      const currentDatabase = 'VCP';
       const customerToUpdate = rebateDetails.customers.find(c => c.code === customerCode);
       
       if (!customerToUpdate) {
@@ -3295,7 +3295,7 @@ const handleItemChange = (itemCode, field, newValue) => {
 
 const handleSaveItem = async (itemCode) => {
   try {
-    const currentDatabase = 'VCP_OWN';
+    const currentDatabase = 'VCP';
     const itemToUpdate = rebateDetails.items.find(i => i.code === itemCode);
     
     if (!itemToUpdate) {
@@ -3367,7 +3367,7 @@ const handleSaveItem = async (itemCode) => {
   // In Van_Dashboard.js - ensure this function exists and is connected
   const handleStatusToggle = async (rebateCode, statusValue) => {
     try { 
-      const currentDatabase = 'VCP_OWN';
+      const currentDatabase = 'VCP';
       // Ensure statusValue is numeric (1 or 0)
       const numericStatus = typeof statusValue === 'string' 
         ? (statusValue === 'Active' ? 1 : 0)

@@ -557,7 +557,7 @@ function Nexchem_Reports() {
     const fetchRebateCodes = async () => {
       setRebateCodesLoading(true);
       try {
-        const res  = await fetch(`${API_BASE}/rebate-program/all-codes?db=NEXCHEM_OWN`);
+        const res  = await fetch(`${API_BASE}/rebate-program/all-codes?db=NEXCHEM`);
         const data = await res.json();
         if (data.success) setRebateCodes(data.codes || []);
       } catch (e) {
@@ -603,7 +603,7 @@ function Nexchem_Reports() {
 
     setCustomersLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/nexchem/rebate/${code}/customers?db=NEXCHEM_OWN`);
+      const res = await fetch(`${API_BASE}/nexchem/rebate/${code}/customers?db=NEXCHEM`);
       const data = await res.json();
       if (data.success && data.customers) {
         const customers = data.customers.map(c => ({ CardCode: c.CardCode, CardName: c.CardName }));

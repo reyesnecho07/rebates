@@ -68,7 +68,7 @@ const NexchemQuotaPerformance = ({
     try {
       const response = await fetch(
         `http://192.168.100.193:3009/api/nexchem/dashboard/customer/${modalCustomer.code}/daily-transactions?` +
-        `db=NEXCHEM_OWN&rebateCode=${modalCustomer.rebateCode}&rebateType=${modalCustomer.rebateType}&` +
+        `db=NEXCHEM&rebateCode=${modalCustomer.rebateCode}&rebateType=${modalCustomer.rebateType}&` +
         `periodFrom=${periodFrom}&periodTo=${periodTo}`
       );
       if (response.ok) {

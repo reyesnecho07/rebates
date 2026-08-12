@@ -1,19 +1,31 @@
 import express from 'express';
-import { 
-  refreshData, 
-  getLocalSalesEmployees, 
-  getLocalCustomers, 
-  getLocalItems,
-  getSyncStatus 
+import {
+  getAvailableDatabases,
+  getSalesEmployees,
+  getCustomers,
+  getItems,
+  getSyncStatus,
+  getAllSyncStatus,
+  getAllSalesEmployees,
+  getAllCustomers,
+  getAllItems
 } from '../controllers/syncController.js';
-import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = express.Router();
 
-router.post('/refresh-data', asyncHandler(refreshData));
-router.get('/local/sales-employees', asyncHandler(getLocalSalesEmployees));
-router.get('/local/customers', asyncHandler(getLocalCustomers));
-router.get('/local/items', asyncHandler(getLocalItems));
-router.get('/status', asyncHandler(getSyncStatus));
+// Info
+router.get('/databases', getAvailableDatabases);
+
+// Single-database reads (?db=VAN|NEXCHEM|VCP or ?system=van|nexchem|vcp)
+router.get('/sales-employees', getSalesEmployees);
+router.get('/customers', getCustomers);
+router.get('/items', getItems);
+router.get('/status', getSyncStatus);
+
+// All-databases-at-once reads
+router.get('/status/all', getAllSyncStatus);
+router.get('/sales-employees/all', getAllSalesEmployees);
+router.get('/customers/all', getAllCustomers);
+router.get('/items/all', getAllItems);
 
 export default router;

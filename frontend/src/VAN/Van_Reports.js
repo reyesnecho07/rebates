@@ -20,7 +20,7 @@ import vanLogo from '../assets/van.png';
 
 const API_BASE  = 'http://192.168.100.193:3009/api';
 const DB_NAME   = 'USER';
-const REPORT_DB = 'VAN_OWN';
+const REPORT_DB = 'VAN';
 
 
 

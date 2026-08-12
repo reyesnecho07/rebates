@@ -71,7 +71,7 @@ const NexchemPayoutHistory = ({
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
           body: JSON.stringify({
-            db: 'NEXCHEM_OWN',
+            db: 'NEXCHEM',
             rebateCode: modalCustomer?.rebateCode,
             periodFrom: modalCustomer?.dateRange?.periodFrom,
             periodTo:   modalCustomer?.dateRange?.periodTo,

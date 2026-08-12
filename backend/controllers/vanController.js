@@ -50,10 +50,8 @@ const getCustomers = async (req, res) => {
         .query(`
           SELECT
             CardCode,
-            CardName,
-            CardType
+            CardName
           FROM OCRD
-          WHERE CardType = 'C'
         `);
       console.log(`🟩 VAN Customers: ${result.recordset.length} records`);
       return result.recordset;
@@ -77,22 +75,19 @@ const getInvoices = async (req, res) => {
             T0.DocNum,
             T0.CardName,
             T0.Docdate,
-            T1.ItemCode,
-            T1.Dscription,
-            T1.Quantity,
-            T1.LineTotal,
-            T1.PriceAfVAt
+            T0.ItemCode,
+            T0.Dscription,
+            T0.Quantity,
+            T0.LineTotal,
+            T0.PriceAfVAt
           FROM
             OINV T0
-            INNER JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
-            LEFT JOIN OITM T2 ON T1.ItemCode = T2.ItemCode
           WHERE
-            T1.TreeType <> 'S'
+            T0.TreeType <> 'S'
             AND T0.DocType = 'I'
-            AND T2.InvntItem = 'Y'
-            AND T1.Dscription NOT LIKE '%Free%'
-            AND T1.Dscription NOT LIKE '%Discount%'
-            AND T1.Dscription NOT LIKE '%fee%'
+            AND T0.Dscription NOT LIKE '%Free%'
+            AND T0.Dscription NOT LIKE '%Discount%'
+            AND T0.Dscription NOT LIKE '%fee%'
         `);
       console.log(`🟩 VAN Invoices: ${result.recordset.length} records`);
       return result.recordset;

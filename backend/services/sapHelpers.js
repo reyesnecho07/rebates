@@ -152,21 +152,21 @@ export const fetchAllSAPTransactionsForCustomer = async (customerCode) => {
     // ── JE ────────────────────────────────────────────────────
     const jeQuery = `
       SELECT 'JE' AS SourceType,
-             BP.ShortName  AS CardCode, OCRD.CardName,
+             T0.ShortName  AS CardCode, 
+             T0.CardName,
              T0.RefDate    AS DocDate,
-             T0.TransId    AS DocNum,  NULL AS BaseRef,
-             T1.Account,  T3.AcctName,
-             T1.Debit,    T1.Credit,
-             T0.Memo,     T1.LineMemo,
+             T0.TransId    AS DocNum,  
+             NULL AS BaseRef,
+             T0.Account,  
+             T0.AcctName,
+             T0.Debit,    
+             T0.Credit,
+             T0.Memo,    
+             T0.LineMemo,
              T0.RefDate
       FROM OJDT T0
-      INNER JOIN JDT1 T1 ON T0.TransId = T1.TransId
-      INNER JOIN JDT1 BP ON T0.TransId = BP.TransId
-        AND BP.ShortName IN (SELECT CardCode FROM OCRD)
-      LEFT JOIN OCRD    ON BP.ShortName = OCRD.CardCode
-      LEFT JOIN OACT T3 ON T1.Account  = T3.AcctCode
-      WHERE BP.ShortName   = @customerCode
-        AND T3.AcctName LIKE '%Rebate%'
+      WHERE T0.ShortName   = @customerCode
+        AND T0.AcctName LIKE '%Rebate%'
     `;
  
     // ── AR ────────────────────────────────────────────────────
@@ -192,34 +192,38 @@ export const fetchAllSAPTransactionsForCustomer = async (customerCode) => {
     const apQuery = `
       SELECT 'AP' AS SourceType,
              T0.U_BP_Code AS CardCode,
-             T1.AcctCode,
-             T0.DocDate,  T1.LineTotal
+             T0.AcctCode,
+             T0.DocDate,  
+             T0.LineTotal
       FROM OPCH T0
-      LEFT JOIN PCH1 T1 ON T0.DocEntry = T1.DocEntry
-      WHERE T1.AcctCode    = '611902'
+      WHERE T0.AcctCode    = '611902'
         AND T0.U_BP_Code   = @customerCode
     `;
  
     // ── ARCM ──────────────────────────────────────────────────
     const arcmQuery = `
       SELECT 'ARCM' AS SourceType,
-             T0.CardCode, T0.CardName,
-             T0.DocDate,  T0.DocNum, T0.DocEntry,
-             T1.ItemCode, T1.GTotal
+             T0.CardCode, 
+             T0.CardName,
+             T0.DocDate,  
+             T0.DocNum, 
+             T0.DocEntry,
+             T0.ItemCode, 
+             T0.GTotal
       FROM ORIN T0
-      INNER JOIN RIN1 T1 ON T0.DocEntry = T1.DocEntry
       WHERE T0.CardCode = @customerCode
-        AND T1.ItemCode = 'NT-0018'
+        AND T0.ItemCode = 'NT-0018'
     `;
  
     // ── APCM ──────────────────────────────────────────────────
     const apcmQuery = `
       SELECT 'APCM' AS SourceType,
              T0.U_BP_Code AS CardCode,
-             T0.DocDate,  T0.DocNum, T0.DocEntry,
-             T1.GTotal
+             T0.DocDate,  
+             T0.DocNum, 
+             T0.DocEntry,
+             T0T1.GTotal
       FROM ORPC T0
-      LEFT JOIN RPC1 T1 ON T0.DocEntry = T1.DocEntry
       WHERE T0.U_BP_Code = @customerCode
     `;
  

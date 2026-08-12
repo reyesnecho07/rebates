@@ -24,9 +24,9 @@ const getDatabasePool = (databaseName) => {
 const getPoolWithFallback = async (databaseName) => {
   const pool = getDatabasePool(databaseName);
   
-  if (!pool && databaseName !== 'NEXCHEM_OWN') {
-    console.log(`⚠️ Database ${databaseName} not available, trying NEXCHEM_OWN...`);
-    const fallbackPool = getDatabasePool('NEXCHEM_OWN');
+  if (!pool && databaseName !== 'NEXCHEM') {
+    console.log(`⚠️ Database ${databaseName} not available, trying NEXCHEM...`);
+    const fallbackPool = getDatabasePool('NEXCHEM');
     return fallbackPool;
   }
   
@@ -40,7 +40,7 @@ router.route('/rebates')
     let pool;
     try {
       const { db } = req.query;
-      const databaseToUse = db || 'NEXCHEM_OWN';
+      const databaseToUse = db || 'NEXCHEM';
 
       console.log('🗄️ GET Rebates - Using database:', databaseToUse);
 
@@ -143,7 +143,7 @@ router.route('/rebates')
         });
       }
 
-      const databaseToUse = db || 'NEXCHEM_OWN';
+      const databaseToUse = db || 'NEXCHEM';
       
       pool = getPool(databaseToUse);
       
@@ -365,7 +365,7 @@ router.get('/rebate/:rebateCode/details', async (req, res) => {
     const { rebateCode } = req.params;
     const { db } = req.query;
     
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
 
     pool = await getPoolWithFallback(databaseToUse);
     
@@ -744,7 +744,7 @@ router.put('/rebate/customer', async (req, res) => {
     const { db } = req.query;
     const { rebateCode, customerCode, qtrRebate, quotas, ranges } = req.body;
     
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
 
     pool = await getPoolWithFallback(databaseToUse);
     
@@ -1256,7 +1256,7 @@ router.put('/rebate/item', async (req, res) => {
       rebateType: 'Need to fetch from DB'
     });
 
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
 
     pool = await getPoolWithFallback(databaseToUse);
     
@@ -1461,7 +1461,7 @@ router.get('/customer/:customerCode/transactions', async (req, res) => {
       });
     }
 
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
     const ownPool = await getPoolWithFallback(databaseToUse);
     const sapPool = getDatabasePool('NEXCHEM');
     
@@ -1771,16 +1771,15 @@ res.json({
     let sapQuery = `
       SELECT
         CONVERT(VARCHAR(10), T0.DocDate, 120) as Date,
-        T1.ItemCode,
-        T1.Dscription as Item,
-        T1.Quantity as ActualSales,
+        T0.ItemCode,
+        T0.Dscription as Item,
+        T0.Quantity as ActualSales,
         T0.DocEntry,
         T0.DocNum as InvoiceNumber,
-        T0.NumAtCard as CustomerReference,
+        --T0.NumAtCard as CustomerReference,
         T0.CardName as CustomerName
       FROM
         OINV T0
-        LEFT JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
       WHERE
         T0.CardCode = @customerCode
         AND T0.DocType = 'I'
@@ -2292,12 +2291,11 @@ router.get('/test-sap-connection/:customerCode', async (req, res) => {
         T0.CardCode,
         T0.CardName,
         CONVERT(VARCHAR(10), T0.DocDate, 120) as Date,
-        T1.ItemCode,
-        T1.Dscription as Item,
-        T1.Quantity
+        T0.ItemCode,
+        T0.Dscription as Item,
+        T0.Quantity
       FROM
         OINV T0
-        LEFT JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
       WHERE
         T0.CardCode = @customerCode
         AND T0.DocType = 'I'
@@ -2390,16 +2388,15 @@ router.get('/test-customer-sap/:customerCode', async (req, res) => {
     // Get sample invoices for customer
     const invoiceQuery = `
       SELECT TOP 5
-        T0.DocEntry,
+        --T0.DocEntry,
         T0.DocNum,
         CONVERT(VARCHAR(10), T0.DocDate, 120) as DocDate,
         T0.CardCode,
         T0.CardName,
-        T1.ItemCode,
-        T1.Dscription as ItemDescription,
-        T1.Quantity
+        T0.ItemCode,
+        T0.Dscription as ItemDescription,
+        T0.Quantity
       FROM OINV T0
-      LEFT JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
       WHERE T0.CardCode = @customerCode
         AND T0.DocType = 'I'
 
@@ -2452,7 +2449,7 @@ router.get('/debug/rebate/:rebateCode/incremental-data', async (req, res) => {
     const { rebateCode } = req.params;
     const { db } = req.query;
     
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
     pool = await getPoolWithFallback(databaseToUse);
     
     if (!pool) {
@@ -2560,7 +2557,7 @@ router.get('/debug/rebate/:rebateCode/incremental-data', async (req, res) => {
 router.get('/test-item-matching/:customerCode/:rebateCode', async (req, res) => {
   try {
     const { customerCode, rebateCode } = req.params;
-    const ownPool = await getPoolWithFallback('NEXCHEM_OWN');
+    const ownPool = await getPoolWithFallback('NEXCHEM');
     const sapPool = getDatabasePool('NEXCHEM');
     
     if (!ownPool || !sapPool) {
@@ -2587,10 +2584,9 @@ router.get('/test-item-matching/:customerCode/:rebateCode', async (req, res) => 
     // Get SAP items for customer
     const sapItemsQuery = `
       SELECT DISTINCT
-        T1.ItemCode,
-        T1.Dscription as ItemName
+        T0.ItemCode,
+        T0.Dscription as ItemName
       FROM OINV T0
-      LEFT JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
       WHERE T0.CardCode = @customerCode
         AND T0.DocType = 'I'
     `;
@@ -2681,7 +2677,7 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
       });
     }
 
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
     const ownPool = await getPoolWithFallback(databaseToUse);
     
     if (!ownPool) {
@@ -3022,7 +3018,7 @@ router.put('/payouts/:payoutId/status', async (req, res) => {
       });
     }
 
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
     const ownPool = await getPoolWithFallback(databaseToUse);
     
     if (!ownPool) {
@@ -3106,7 +3102,7 @@ router.post('/payouts/save', async (req, res) => {
       });
     }
 
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
     const ownPool = await getPoolWithFallback(databaseToUse);
     
     if (!ownPool) {
@@ -3202,7 +3198,7 @@ router.get('/customer/:customerCode/total-achieved', async (req, res) => {
     const { customerCode } = req.params;
     const { db, rebateCode, rebateType } = req.query;
     
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
     const ownPool = await getPoolWithFallback(databaseToUse);
     
     if (!ownPool) {
@@ -3298,18 +3294,17 @@ router.get('/customer/:customerCode/total-achieved', async (req, res) => {
     
     const sapQuery = `
       SELECT
-        T1.Quantity as ActualSales,
-        T1.Dscription as Item,
+        T0.Quantity as ActualSales,
+        T0.Dscription as Item,
         T0.DocDate
       FROM
         OINV T0
-        LEFT JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
       WHERE
         T0.CardCode = @customerCode
         AND T0.DocType = 'I'
         AND T0.DocDate >= @startDate
         AND T0.DocDate <= @endDate
-        AND T1.ItemCode IN (${paramNames})
+        AND T0.ItemCode IN (${paramNames})
       ORDER BY T0.DocDate
     `;
 
@@ -3368,7 +3363,7 @@ router.get('/rebates-summary', async (req, res) => {
   try {
     const { db, periodFrom, periodTo, agent } = req.query;
     
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
     pool = await getPoolWithFallback(databaseToUse);
     
     if (!pool) {
@@ -3950,7 +3945,7 @@ router.get('/rebate/:rebateCode/items', async (req, res) => {
     const { rebateCode } = req.params;
     const { db } = req.query;
     
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
 
     pool = await getPoolWithFallback(databaseToUse);
     
@@ -4026,7 +4021,7 @@ router.get('/metrics', async (req, res) => {
   try {
     const { db } = req.query;
     
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
     
     pool = await getPoolWithFallback(databaseToUse);
     
@@ -4181,7 +4176,7 @@ router.get('/customer/:customerCode/daily-transactions', async (req, res) => {
     const { customerCode } = req.params;
     const { db, rebateCode, rebateType, useRebatePeriod } = req.query;
     
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
     const ownPool = await getPoolWithFallback(databaseToUse);
     
     if (!ownPool) {
@@ -4262,22 +4257,21 @@ router.get('/customer/:customerCode/daily-transactions', async (req, res) => {
       sapQuery = `
         SELECT
           CONVERT(VARCHAR(10), T0.DocDate, 120) as Date,
-          T1.Dscription as Item,
-          T1.ItemCode,
-          SUM(T1.Quantity) as ActualSales
+          T0.Dscription as Item,
+          T0.ItemCode,
+          SUM(T0.Quantity) as ActualSales
         FROM
           OINV T0
-          LEFT JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
         WHERE
           T0.CardCode = @customerCode
           AND T0.DocType = 'I'
           AND T0.DocDate >= @startDate
           AND T0.DocDate <= @endDate
-          AND T1.ItemCode IN (${paramNames})
+          AND T0.ItemCode IN (${paramNames})
         GROUP BY 
           CONVERT(VARCHAR(10), T0.DocDate, 120),
-          T1.Dscription,
-          T1.ItemCode
+          T0.Dscription,
+          T0.ItemCode
         ORDER BY 
           CONVERT(VARCHAR(10), T0.DocDate, 120) ASC
       `;
@@ -4285,12 +4279,11 @@ router.get('/customer/:customerCode/daily-transactions', async (req, res) => {
       sapQuery = `
         SELECT
           CONVERT(VARCHAR(10), T0.DocDate, 120) as Date,
-          T1.Dscription as Item,
-          T1.ItemCode,
-          SUM(T1.Quantity) as ActualSales
+          T0.Dscription as Item,
+          T0.ItemCode,
+          SUM(T0.Quantity) as ActualSales
         FROM
           OINV T0
-          LEFT JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
         WHERE
           T0.CardCode = @customerCode
           AND T0.DocType = 'I'
@@ -4298,8 +4291,8 @@ router.get('/customer/:customerCode/daily-transactions', async (req, res) => {
           AND T0.DocDate <= @endDate
         GROUP BY 
           CONVERT(VARCHAR(10), T0.DocDate, 120),
-          T1.Dscription,
-          T1.ItemCode
+          T0.Dscription,
+          T0.ItemCode
         ORDER BY 
           CONVERT(VARCHAR(10), T0.DocDate, 120) ASC
       `;
@@ -4412,7 +4405,7 @@ router.get('/customer/:customerCode/details', async (req, res) => {
     const { customerCode } = req.params;
     const { db, periodFrom, periodTo, rebateCode, rebateType, useRebatePeriod } = req.query;
     
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
     const ownPool = await getPoolWithFallback(databaseToUse);
     
     if (!ownPool) {
@@ -4597,7 +4590,7 @@ router.get('/debug/rebate/:rebateCode', async (req, res) => {
   try {
     const { rebateCode } = req.params;
     const { db } = req.query;
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
 
     pool = await getPoolWithFallback(databaseToUse);
     
@@ -4660,7 +4653,7 @@ router.get('/debug/rebates', async (req, res) => {
   let pool;
   try {
     const { db } = req.query;
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
 
     pool = await getPoolWithFallback(databaseToUse);
     
@@ -4704,7 +4697,7 @@ router.get('/debug/databases', async (req, res) => {
   try {
     console.log('🔍 [DEBUG] Checking all database connections...');
     
-    const databases = ['NEXCHEM', 'NEXCHEM_OWN'];
+    const databases = ['NEXCHEM', 'NEXCHEM'];
     const results = {};
     
     for (const dbName of databases) {
@@ -4771,7 +4764,7 @@ router.get('/debug/databases', async (req, res) => {
         sapDatabase: sapTest,
         configCheck: {
           hasNEXCHEMConfig: !!getDatabasePool('NEXCHEM'),
-          hasNEXCHEM_OWNConfig: !!getDatabasePool('NEXCHEM_OWN'),
+          //hasNEXCHEMConfig: !!getDatabasePool('NEXCHEM'),
           currentTime: new Date().toISOString()
         }
       }
@@ -4803,20 +4796,19 @@ const adjustForARCM = async (sapPool, customerCode, originalTransactions, startD
     const arcmQuery = `
       SELECT
         T0.DocNum as CreditMemoNumber,
-        T1.BaseRef as OriginalDocNum,  -- This references the original invoice
-        T1.ItemCode,
-        T1.Dscription as Item,
-        ABS(T1.Quantity) as ReturnQuantity,
-        T1.BaseType
+        T0.BaseRef as OriginalDocNum,  -- This references the original invoice
+        T0.ItemCode,
+        T0.Dscription as Item,
+        ABS(T0.Quantity) as ReturnQuantity,
+        T0.BaseType
       FROM
         ORIN T0  -- Returns/Credit Memos
-        LEFT JOIN RIN1 T1 ON T0.DocEntry = T1.DocEntry
       WHERE
         T0.CardCode = @customerCode
         AND T0.DocDate >= @startDate
         AND T0.DocDate <= @endDate
-        AND T1.BaseRef IS NOT NULL  -- Only those that reference original documents
-        AND T1.BaseType = 13  -- 13 is the type for AR Invoice
+        AND T0.BaseRef IS NOT NULL  -- Only those that reference original documents
+        AND T0.BaseType = 13  -- 13 is the type for AR Invoice
     `;
 
     const arcmResult = await sapPool.request()

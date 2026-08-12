@@ -40,7 +40,7 @@ export const debugDatabases = async (req, res) => {
         const usersCount = await pool.request().query("SELECT COUNT(*) as count FROM OUSR");
         const salesEmployeesCount = await pool.request().query("SELECT COUNT(*) as count FROM OSLP");
         const itemsCount = await pool.request().query("SELECT COUNT(*) as count FROM OITM");
-        const customersCount = await pool.request().query("SELECT COUNT(*) as count FROM OCRD WHERE CardType = 'C'");
+        const customersCount = await pool.request().query("SELECT COUNT(*) as count FROM OCRD");
         
         results[dbName] = {
           status: '✅ Connected',

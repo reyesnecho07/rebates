@@ -242,7 +242,7 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
   useEffect(() => {
     if (!isOpen || !canView) return;
     setCodesLoading(true);
-    fetch('http://192.168.100.193:3009/api/rebate-program/all-codes?db=NEXCHEM_OWN')
+    fetch('http://192.168.100.193:3009/api/rebate-program/all-codes?db=NEXCHEM')
       .then(r => r.json())
       .then(d => { if (d.success) setAllCodes(d.codes || []); })
       .catch(() => {})
@@ -667,7 +667,7 @@ function Nexchem_RebateSetup() {
 
   const generateNextRebateCode = async () => {
     try {
-      const response = await fetch(`${API_BASE}/rebate-program/highest-code?db=NEXCHEM_OWN`);
+      const response = await fetch(`${API_BASE}/rebate-program/highest-code?db=NEXCHEM`);
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.nextCode) return data.nextCode;
@@ -677,7 +677,7 @@ function Nexchem_RebateSetup() {
   };
 
   const getFallbackRebateCode = () => {
-    const storageKey = `lastRebateCode_NEXCHEM_OWN`;
+    const storageKey = `lastRebateCode_NEXCHEM`;
     const lastCode = localStorage.getItem(storageKey);
     let nextNumber = 1;
     if (lastCode && lastCode.startsWith('REB-')) {
@@ -755,7 +755,7 @@ function Nexchem_RebateSetup() {
   const fetchSalesEmployees = async () => {
     try {
       setLoading(true);
-      const res  = await fetch(`${API_BASE}/sync/local/sales-employees?db=NEXCHEM_OWN`);
+      const res  = await fetch(`${API_BASE}/sync/local/sales-employees?db=NEXCHEM`);
       if (!res.ok) throw new Error("Failed to fetch sales employees");
       const data = await res.json();
       if (Array.isArray(data)) setSalesEmployees(data);
@@ -770,7 +770,7 @@ function Nexchem_RebateSetup() {
   const fetchCustomers = async () => {
     try {
       setLoading(true);
-      const res  = await fetch(`${API_BASE}/sync/local/customers?db=NEXCHEM_OWN`);
+      const res  = await fetch(`${API_BASE}/sync/local/customers?db=NEXCHEM`);
       if (!res.ok) throw new Error("Failed to fetch customers");
       const data = await res.json();
       if (Array.isArray(data)) setCustomersDropdown(data);
@@ -785,7 +785,7 @@ function Nexchem_RebateSetup() {
   const fetchItems = async () => {
     try {
       setLoading(true);
-      const res  = await fetch(`${API_BASE}/sync/local/items?db=NEXCHEM_OWN`);
+      const res  = await fetch(`${API_BASE}/sync/local/items?db=NEXCHEM`);
       if (!res.ok) throw new Error("Failed to fetch items");
       const data = await res.json();
       if (Array.isArray(data)) setItemsDropdown(data);
@@ -804,7 +804,7 @@ function Nexchem_RebateSetup() {
       const response = await fetch(`${API_BASE}/sync/refresh-data`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceDatabase: 'NEXCHEM', targetDatabase: 'NEXCHEM_OWN', tables: ['salesEmployees', 'customers', 'items'] }),
+        body: JSON.stringify({ sourceDatabase: 'NEXCHEM', targetDatabase: 'NEXCHEM', tables: ['salesEmployees', 'customers', 'items'] }),
       });
       if (!response.ok) throw new Error('Failed to start refresh');
       setTimeout(async () => {
@@ -828,7 +828,7 @@ function Nexchem_RebateSetup() {
     setSearchLoading(true);
     setSearchError("");
     try {
-      const res = await fetch(`${API_BASE}/rebate-program/by-code/${encodeURIComponent(code)}?db=NEXCHEM_OWN`);
+      const res = await fetch(`${API_BASE}/rebate-program/by-code/${encodeURIComponent(code)}?db=NEXCHEM`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (!data.success || !data.program) {
@@ -846,7 +846,7 @@ function Nexchem_RebateSetup() {
       setSelectedFrequency(prog.Frequency || "");
       setQuotaType(prog.QuotaType === "With Quota" ? "withQuota" : "withoutQuota");
       const custRes = await fetch(
-        `${API_BASE}/rebate-program/customers/${encodeURIComponent(code)}?db=NEXCHEM_OWN&type=${encodeURIComponent(prog.RebateType)}`
+        `${API_BASE}/rebate-program/customers/${encodeURIComponent(code)}?db=NEXCHEM&type=${encodeURIComponent(prog.RebateType)}`
       );
       if (custRes.ok) {
         const custData = await custRes.json();
@@ -881,7 +881,7 @@ function Nexchem_RebateSetup() {
         }
       }
       const itemRes = await fetch(
-        `${API_BASE}/rebate-program/items/${encodeURIComponent(code)}?db=NEXCHEM_OWN&type=${encodeURIComponent(prog.RebateType)}`
+        `${API_BASE}/rebate-program/items/${encodeURIComponent(code)}?db=NEXCHEM&type=${encodeURIComponent(prog.RebateType)}`
       );
       if (itemRes.ok) {
         const itemData = await itemRes.json();
@@ -1522,8 +1522,8 @@ const handleUpdate = async () => {
   const codeToUpdate = loadedRebateCode;
   try {
     // 1️⃣ Fetch existing customers and items with their CreatedDate
-    const existingCustRes = await fetch(`${API_BASE}/rebate-program/customers/${encodeURIComponent(codeToUpdate)}?db=NEXCHEM_OWN&type=${rebateType}`);
-    const existingItemsRes = await fetch(`${API_BASE}/rebate-program/items/${encodeURIComponent(codeToUpdate)}?db=NEXCHEM_OWN&type=${rebateType}`);
+    const existingCustRes = await fetch(`${API_BASE}/rebate-program/customers/${encodeURIComponent(codeToUpdate)}?db=NEXCHEM&type=${rebateType}`);
+    const existingItemsRes = await fetch(`${API_BASE}/rebate-program/items/${encodeURIComponent(codeToUpdate)}?db=NEXCHEM&type=${rebateType}`);
     
     let existingCustomers = [];
     let existingItems = [];
@@ -1547,7 +1547,7 @@ const handleUpdate = async () => {
     const slpCode = salesEmployee ? salesEmployee.SlpCode : null;
     if (!slpCode) throw new Error("Sales employee code not found");
 
-    const progRes = await fetch(`${API_BASE}/rebate-program/${encodeURIComponent(codeToUpdate)}?db=NEXCHEM_OWN`, {
+    const progRes = await fetch(`${API_BASE}/rebate-program/${encodeURIComponent(codeToUpdate)}?db=NEXCHEM`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1558,24 +1558,24 @@ const handleUpdate = async () => {
         DateTo:      selectedDateTo,
         Frequency:   selectedFrequency,
         QuotaType:   quotaType === "withQuota" ? "With Quota" : "Without Quota",
-        db:          'NEXCHEM_OWN',
+        db:          'NEXCHEM',
       }),
     });
     if (!progRes.ok) throw new Error("Failed to update program header");
 
     // 3️⃣ Delete old child records
-    const delRes = await fetch(`${API_BASE}/rebate-program/${encodeURIComponent(codeToUpdate)}/details?db=NEXCHEM_OWN&type=${encodeURIComponent(rebateType)}`, {
+    const delRes = await fetch(`${API_BASE}/rebate-program/${encodeURIComponent(codeToUpdate)}/details?db=NEXCHEM&type=${encodeURIComponent(rebateType)}`, {
       method: 'DELETE',
     });
     if (!delRes.ok) throw new Error("Failed to clear existing details");
 
     // 4️⃣ Re-insert with preserved CreatedDate
     if (rebateType === "Fixed") {
-      await saveFixedRebateData(codeToUpdate, 'NEXCHEM_OWN', customerCreatedMap, itemCreatedMap);
+      await saveFixedRebateData(codeToUpdate, 'NEXCHEM', customerCreatedMap, itemCreatedMap);
     } else if (rebateType === "Incremental") {
-      await saveIncrementalRebateData(codeToUpdate, 'NEXCHEM_OWN', customerCreatedMap, itemCreatedMap);
+      await saveIncrementalRebateData(codeToUpdate, 'NEXCHEM', customerCreatedMap, itemCreatedMap);
     } else if (rebateType === "Percentage") {
-      await savePercentageRebateData(codeToUpdate, 'NEXCHEM_OWN', customerCreatedMap, itemCreatedMap);
+      await savePercentageRebateData(codeToUpdate, 'NEXCHEM', customerCreatedMap, itemCreatedMap);
     }
 
     showToast(`Rebate program "${codeToUpdate}" updated successfully!`, "success");
@@ -1606,7 +1606,7 @@ const handleUpdate = async () => {
       if (!slpCode) throw new Error("Sales employee code not found");
       const dupCheckRes = await fetch(`${API_BASE}/rebate-program/check-duplicate-program`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ RebateType: rebateType, SlpCode: slpCode, DateFrom: selectedDateFrom, DateTo: selectedDateTo, db: 'NEXCHEM_OWN' }),
+        body: JSON.stringify({ RebateType: rebateType, SlpCode: slpCode, DateFrom: selectedDateFrom, DateTo: selectedDateTo, db: 'NEXCHEM' }),
       });
       if (!dupCheckRes.ok) throw new Error(`Server returned status ${dupCheckRes.status}`);
       const dupCheckResult = await dupCheckRes.json();
@@ -1621,7 +1621,7 @@ const handleUpdate = async () => {
         try {
           const res = await fetch(`${API_BASE}/rebate-program/check-item-conflict`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ RebateType: rebateType, SlpCode: slpCode, DateFrom: selectedDateFrom, DateTo: selectedDateTo, Frequency: selectedFrequency, ItemCode: item.code, db: 'NEXCHEM_OWN' }),
+            body: JSON.stringify({ RebateType: rebateType, SlpCode: slpCode, DateFrom: selectedDateFrom, DateTo: selectedDateTo, Frequency: selectedFrequency, ItemCode: item.code, db: 'NEXCHEM' }),
           });
           if (!res.ok) continue;
           const result = await res.json();
@@ -1638,17 +1638,17 @@ const handleUpdate = async () => {
       const rebateProgramData = {
         RebateType: rebateType, SlpCode: slpCode, SlpName: selectedSalesEmployee,
         DateFrom: selectedDateFrom, DateTo: selectedDateTo, Frequency: selectedFrequency,
-        QuotaType: quotaType === "withQuota" ? "With Quota" : "Without Quota", db: 'NEXCHEM_OWN',
+        QuotaType: quotaType === "withQuota" ? "With Quota" : "Without Quota", db: 'NEXCHEM',
       };
-      const programRes = await fetch(`${API_BASE}/rebate-program?db=NEXCHEM_OWN`, {
+      const programRes = await fetch(`${API_BASE}/rebate-program?db=NEXCHEM`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rebateProgramData),
       });
       if (!programRes.ok) { const t = await programRes.text(); throw new Error(`Failed to save rebate program: ${t}`); }
       const programResult = await programRes.json();
       const rebateCodeId  = programResult.rebateCode;
-      if      (rebateType === "Fixed")       await saveFixedRebateData(rebateCodeId, 'NEXCHEM_OWN');
-      else if (rebateType === "Incremental") await saveIncrementalRebateData(rebateCodeId, 'NEXCHEM_OWN');
-      else if (rebateType === "Percentage")  await savePercentageRebateData(rebateCodeId, 'NEXCHEM_OWN');
+      if      (rebateType === "Fixed")       await saveFixedRebateData(rebateCodeId, 'NEXCHEM');
+      else if (rebateType === "Incremental") await saveIncrementalRebateData(rebateCodeId, 'NEXCHEM');
+      else if (rebateType === "Percentage")  await savePercentageRebateData(rebateCodeId, 'NEXCHEM');
       setRebateCode(rebateCodeId);
       showToast(`✅ Rebate setup saved successfully! ID: ${rebateCodeId}`, "success");
       setEditingRows({ customer: { 0: true }, item: { 0: true } });

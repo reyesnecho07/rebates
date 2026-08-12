@@ -242,7 +242,7 @@ const calculateCustomerProgress = async (customer) => {
     // First try to get total achieved from the dashboard endpoint
     const totalAchievedResponse = await fetch(
       `http://192.168.100.193:3009/api/van/dashboard/customer/${customer.code}/total-achieved?` +
-      `db=VAN_OWN&rebateCode=${customer.rebateCode}&rebateType=${customer.rebateType}`
+      `db=VAN&rebateCode=${customer.rebateCode}&rebateType=${customer.rebateType}`
     );
     
     if (totalAchievedResponse.ok) {
@@ -798,7 +798,7 @@ useEffect(() => {
 
   const getAutoDateParams = (customerData) => {
     const params = new URLSearchParams({
-      db: 'VAN_OWN',
+      db: 'VAN',
       rebateCode: customerData.rebateCode,
       rebateType: customerData.rebateType
     });
@@ -812,7 +812,7 @@ useEffect(() => {
   try {
     const response = await fetch(
       `http://192.168.100.193:3009/api/van/dashboard/customer/${customerCode}/quotas?` +
-      `db=VAN_OWN&rebateCode=${rebateCode}&rebateType=${rebateType}`
+      `db=VAN&rebateCode=${rebateCode}&rebateType=${rebateType}`
     );
     
     if (response.ok) {
@@ -1249,7 +1249,7 @@ useEffect(() => {
 const loadCustomerStatus = useCallback(async (forceRefresh = false) => {
   try {
     setCustomersLoading(true);
-    let url = `http://192.168.100.193:3009/api/van/dashboard/rebates-summary?db=VAN_OWN`;
+    let url = `http://192.168.100.193:3009/api/van/dashboard/rebates-summary?db=VAN`;
     const params = new URLSearchParams();
     if (statusSummaryPeriodFrom) params.append('periodFrom', statusSummaryPeriodFrom);
     if (statusSummaryPeriodTo)   params.append('periodTo',   statusSummaryPeriodTo);
@@ -1328,8 +1328,8 @@ const loadCustomerStatus = useCallback(async (forceRefresh = false) => {
     setLoading(true);
     try {
       const [metricsResponse, rebatesResponse] = await Promise.all([
-        fetch(`http://192.168.100.193:3009/api/van/dashboard/metrics?db=VAN_OWN`),
-        fetch(`http://192.168.100.193:3009/api/van/dashboard/rebates?db=VAN_OWN`)
+        fetch(`http://192.168.100.193:3009/api/van/dashboard/metrics?db=VAN`),
+        fetch(`http://192.168.100.193:3009/api/van/dashboard/rebates?db=VAN`)
       ]);
       if (metricsResponse.ok) {
         const metricsData = await metricsResponse.json();
@@ -1372,7 +1372,7 @@ const loadCustomerStatus = useCallback(async (forceRefresh = false) => {
     try {
       console.log('📥 Loading details for:', customerCode, rebateCode, rebateType);
       
-      let url = `http://192.168.100.193:3009/api/van/dashboard/customer/${customerCode}/details?db=VAN_OWN`;
+      let url = `http://192.168.100.193:3009/api/van/dashboard/customer/${customerCode}/details?db=VAN`;
       
       const params = new URLSearchParams();
       params.append('rebateCode', rebateCode);
@@ -1412,7 +1412,7 @@ const loadCustomerStatus = useCallback(async (forceRefresh = false) => {
     try {
       console.log('🔍 Loading rebate details for:', rebateCode, customerCode ? `customer: ${customerCode}` : '');
       
-      let url = `http://192.168.100.193:3009/api/van/dashboard/rebate/${rebateCode}/details?db=VAN_OWN`;
+      let url = `http://192.168.100.193:3009/api/van/dashboard/rebate/${rebateCode}/details?db=VAN`;
       
       if (customerCode) {
         url += `&customerCode=${customerCode}`;
@@ -1469,7 +1469,7 @@ const loadCustomerStatus = useCallback(async (forceRefresh = false) => {
     try {
       console.log('📊 Fetching monthly quota data for:', { customerCode, rebateCode, rebateType });
       
-      let url = `http://192.168.100.193:3009/api/van/dashboard/customer/${customerCode}/quota-summary?db=VAN_OWN&rebateCode=${rebateCode}&rebateType=${rebateType}`;
+      let url = `http://192.168.100.193:3009/api/van/dashboard/customer/${customerCode}/quota-summary?db=VAN&rebateCode=${rebateCode}&rebateType=${rebateType}`;
       
       if (useAutoDates) {
         url += '&useRebatePeriod=true';
@@ -1524,7 +1524,7 @@ const loadCustomerStatus = useCallback(async (forceRefresh = false) => {
       let url = `http://192.168.100.193:3009/api/van/dashboard/customer/${modalCustomer.code}/transactions`;
       
       const params = new URLSearchParams({
-        db: 'VAN_OWN',
+        db: 'VAN',
         rebateCode: modalCustomer.rebateCode,
         rebateType: modalCustomer.rebateType
       });
@@ -2322,7 +2322,7 @@ const loadDetailedPayoutsData = async (autoLoad = true) => {
     const url = `http://192.168.100.193:3009/api/van/payouts/customer/${modalCustomer.code}/payouts`;
     
     const params = new URLSearchParams({
-      db: 'VAN_OWN',
+      db: 'VAN',
       rebateCode: modalCustomer.rebateCode,
       rebateType: modalCustomer.rebateType,
       useRebatePeriod: 'true'
@@ -2489,7 +2489,7 @@ const loadIncrementalRangeData = async (rebateCode, customerCode) => {
     }
     
     // Method 2: Try to load from customer-specific endpoint
-    const customerRangeUrl = `http://192.168.100.193:3009/api/van/dashboard/customer/${customerCode}/ranges?db=VAN_OWN&rebateCode=${rebateCode}`;
+    const customerRangeUrl = `http://192.168.100.193:3009/api/van/dashboard/customer/${customerCode}/ranges?db=VAN&rebateCode=${rebateCode}`;
     console.log('🌐 Trying customer-specific range endpoint:', customerRangeUrl);
     
     try {
@@ -2665,7 +2665,7 @@ useEffect(() => {
       }
       
       const payload = {
-        db: 'VAN_OWN',
+        db: 'VAN',
         status: newStatus,
         amountReleased: amountReleased
       };
@@ -2754,7 +2754,7 @@ useEffect(() => {
       setDetailedPayouts(updatedPayouts);
       
       const payload = {
-        db: 'VAN_OWN',
+        db: 'VAN',
         status: newStatus,
         amountReleased: validatedAmount
       };
@@ -2831,7 +2831,7 @@ useEffect(() => {
       }
 
       const payload = {
-        db: 'VAN_OWN',
+        db: 'VAN',
         status: status,
         amountReleased: amountReleased
       };
@@ -3112,7 +3112,7 @@ useEffect(() => {
 
   const handleSaveCustomer = async (customerCode) => {
     try {
-      const currentDatabase = 'VAN_OWN';
+      const currentDatabase = 'VAN';
       const customerToUpdate = rebateDetails.customers.find(c => c.code === customerCode);
       
       if (!customerToUpdate) {
@@ -3276,7 +3276,7 @@ const handleItemChange = (itemCode, field, newValue) => {
 
 const handleSaveItem = async (itemCode) => {
   try {
-    const currentDatabase = 'VAN_OWN';
+    const currentDatabase = 'VAN';
     const itemToUpdate = rebateDetails.items.find(i => i.code === itemCode);
     
     if (!itemToUpdate) {
@@ -3351,7 +3351,7 @@ const handleSaveItem = async (itemCode) => {
   // In Van_Dashboard.js - ensure this function exists and is connected
   const handleStatusToggle = async (rebateCode, statusValue) => {
     try { 
-      const currentDatabase = 'VAN_OWN';
+      const currentDatabase = 'VAN';
       // Ensure statusValue is numeric (1 or 0)
       const numericStatus = typeof statusValue === 'string' 
         ? (statusValue === 'Active' ? 1 : 0)

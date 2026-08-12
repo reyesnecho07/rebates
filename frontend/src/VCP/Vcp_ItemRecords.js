@@ -85,7 +85,7 @@ function Vcp_ItemRecords() {
     if (!access.canView) return;
     const fetchItems = async () => {
       try {
-        const res  = await fetch("http://192.168.100.193:3009/api/sync/local/items?db=VCP_OWN");
+        const res  = await fetch("http://192.168.100.193:3009/api/sync/local/items?db=VCP");
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const list = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];

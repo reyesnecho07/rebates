@@ -68,7 +68,7 @@ const VcpQuotaPerformance = ({
     try {
       const response = await fetch(
         `http://192.168.100.193:3009/api/vcp/dashboard/customer/${modalCustomer.code}/daily-transactions?` +
-        `db=VCP_OWN&rebateCode=${modalCustomer.rebateCode}&rebateType=${modalCustomer.rebateType}&` +
+        `db=VCP&rebateCode=${modalCustomer.rebateCode}&rebateType=${modalCustomer.rebateType}&` +
         `periodFrom=${periodFrom}&periodTo=${periodTo}`
       );
       if (response.ok) {

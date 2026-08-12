@@ -82,7 +82,7 @@ const VanPayoutHistory = ({
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
           body: JSON.stringify({
-            db: 'VAN_OWN',
+            db: 'VAN',
             rebateCode,
             periodFrom: modalCustomer?.dateRange?.periodFrom,
             periodTo:   modalCustomer?.dateRange?.periodTo,
@@ -178,7 +178,7 @@ const VanPayoutHistory = ({
   const loadPayoutsWithBalances = useCallback(async () => {
     if (!customerCardCode || !rebateType) return;
     try {
-      let url = `http://192.168.100.193:3006/api/van/payouts/customer/${customerCardCode}/payouts?db=VAN_OWN&rebateType=${rebateType}`;
+      let url = `http://192.168.100.193:3006/api/van/payouts/customer/${customerCardCode}/payouts?db=VAN&rebateType=${rebateType}`;
       if (rebateCode) url += `&rebateCode=${rebateCode}`;
       const response = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);

@@ -136,7 +136,7 @@ function Vcp_Reports() {
   const { access, accessLoading } = useAccessControl(routePath);
 
   const API_BASE = 'http://192.168.100.193:3009/api';
-  const DB_NAME  = 'VCP_OWN';
+  const DB_NAME  = 'VCP';
 
   useComponentRegistration({
     name: 'Vcp_Reports',

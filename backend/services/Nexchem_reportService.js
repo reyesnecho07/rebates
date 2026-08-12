@@ -23,8 +23,6 @@ export const getCustomers = async () => {
       T0.CardCode,
       T0.CardName
     FROM OCRD T0
-    WHERE T0.CardType = 'C'
-    AND T0.validFor = 'Y'
     ORDER BY T0.CardName
   `;
 
@@ -35,7 +33,7 @@ export const getCustomers = async () => {
 // ─── getRebatePrograms ────────────────────────────────────────────────────────
 // Source: GET /nexchem/rebate-programs
 export const getRebatePrograms = async () => {
-  const ownPool = getPool('NEXCHEM_OWN');
+  const ownPool = getPool('NEXCHEM');
 
   const query = `
     SELECT
@@ -75,7 +73,7 @@ export const generateReport = async ({ selectedCustomer, dateFrom, dateTo }) => 
   console.log('Generating report for:', { selectedCustomer, dateFrom, dateTo });
 
   const sapPool = getPool('NEXCHEM');
-  const ownPool = getPool('NEXCHEM_OWN');
+  const ownPool = getPool('NEXCHEM');
 
   const rebateQuery = `
     SELECT
@@ -113,22 +111,19 @@ export const generateReport = async ({ selectedCustomer, dateFrom, dateTo }) => 
       T0.CardCode,
       T0.CardName,
       T0.DocDate,
-      T1.ItemCode,
-      T1.Dscription,
-      T1.Quantity,
-      T1.LineTotal,
-      T1.PriceAfVAT
+      T0.ItemCode,
+      T0.Dscription,
+      T0.Quantity,
+      T0.LineTotal,
+      T0.PriceAfVAT
     FROM
       OINV T0
-      INNER JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
-      LEFT JOIN OITM T2 ON T1.ItemCode = T2.ItemCode
     WHERE
-      T1.TreeType <> 'S'
+      T0.TreeType <> 'S'
       AND T0.DocType = 'I'
-      AND T2.InvntItem = 'Y'
-      AND T1.Dscription NOT LIKE '%Free%'
-      AND T1.Dscription NOT LIKE '%Discount%'
-      AND T1.Dscription NOT LIKE '%fee%'
+      AND T0.Dscription NOT LIKE '%Free%'
+      AND T0.Dscription NOT LIKE '%Discount%'
+      AND T0.Dscription NOT LIKE '%fee%'
       AND T0.CardCode = @CardCode
   `;
 
@@ -193,7 +188,7 @@ export const generateMultiCustomerReport = async ({ customerCodes, dateFrom, dat
   console.log('Generating report for multiple customers:', { customerCodes, dateFrom, dateTo });
 
   const sapPool = getPool('NEXCHEM');
-  const ownPool = getPool('NEXCHEM_OWN');
+  const ownPool = getPool('NEXCHEM');
 
   const placeholders = customerCodes.map((_, index) => `@CardCode${index}`).join(',');
 
@@ -234,22 +229,19 @@ export const generateMultiCustomerReport = async ({ customerCodes, dateFrom, dat
       T0.CardCode,
       T0.CardName,
       T0.DocDate,
-      T1.ItemCode,
-      T1.Dscription,
-      T1.Quantity,
-      T1.LineTotal,
-      T1.PriceAfVAT
+      T0.ItemCode,
+      T0.Dscription,
+      T0.Quantity,
+      T0.LineTotal,
+      T0.PriceAfVAT
     FROM
       OINV T0
-      INNER JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
-      LEFT JOIN OITM T2 ON T1.ItemCode = T2.ItemCode
     WHERE
-      T1.TreeType <> 'S'
+      T0.TreeType <> 'S'
       AND T0.DocType = 'I'
-      AND T2.InvntItem = 'Y'
-      AND T1.Dscription NOT LIKE '%Free%'
-      AND T1.Dscription NOT LIKE '%Discount%'
-      AND T1.Dscription NOT LIKE '%fee%'
+      AND T0.Dscription NOT LIKE '%Free%'
+      AND T0.Dscription NOT LIKE '%Discount%'
+      AND T0.Dscription NOT LIKE '%fee%'
       AND T0.CardCode IN (${placeholders})
   `;
 
@@ -312,7 +304,7 @@ export const generateMultiCustomerReport = async ({ customerCodes, dateFrom, dat
 // ─── getCustomersByRebateCode ─────────────────────────────────────────────────
 // Used by the rebate-code dropdown flow to resolve customer list
 export const getCustomersByRebateCode = async (rebateCode) => {
-  const ownPool = getPool('NEXCHEM_OWN');
+  const ownPool = getPool('NEXCHEM');
 
   const typeRes = await ownPool.request()
     .input('rebateCode', rebateCode)

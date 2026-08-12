@@ -268,7 +268,7 @@ const getFilteredPayoutsHelper = () => {
 
       const totalAchievedResponse = await fetch(
         `http://192.168.100.193:3009/api/nexchem/dashboard/customer/${customer.code}/total-achieved?` +
-        `db=NEXCHEM_OWN&rebateCode=${customer.rebateCode}&rebateType=${customer.rebateType}`
+        `db=NEXCHEM&rebateCode=${customer.rebateCode}&rebateType=${customer.rebateType}`
       );
       
       if (totalAchievedResponse.ok) {
@@ -820,7 +820,7 @@ const getFilteredPayoutsHelper = () => {
 
   const getAutoDateParams = (customerData) => {
     const params = new URLSearchParams({
-      db: 'NEXCHEM_OWN',
+      db: 'NEXCHEM',
       rebateCode: customerData.rebateCode,
       rebateType: customerData.rebateType
     });
@@ -834,7 +834,7 @@ const getFilteredPayoutsHelper = () => {
   try {
     const response = await fetch(
       `http://192.168.100.193:3009/api/nexchem/dashboard/customer/${customerCode}/quotas?` +
-      `db=NEXCHEM_OWN&rebateCode=${rebateCode}&rebateType=${rebateType}`
+      `db=NEXCHEM&rebateCode=${rebateCode}&rebateType=${rebateType}`
     );
     
     if (response.ok) {
@@ -1268,8 +1268,8 @@ const loadDashboardData = async () => {
   try {
     // Run all three fetches IN PARALLEL instead of sequentially
     const [metricsRes, rebatesRes] = await Promise.all([
-      fetch(`http://192.168.100.193:3009/api/nexchem/dashboard/metrics?db=NEXCHEM_OWN`),
-      fetch(`http://192.168.100.193:3009/api/nexchem/dashboard/rebates?db=NEXCHEM_OWN`),
+      fetch(`http://192.168.100.193:3009/api/nexchem/dashboard/metrics?db=NEXCHEM`),
+      fetch(`http://192.168.100.193:3009/api/nexchem/dashboard/rebates?db=NEXCHEM`),
     ]);
 
     if (metricsRes.ok) {
@@ -1310,7 +1310,7 @@ const loadDashboardData = async () => {
 const loadCustomerStatus = useCallback(async (forceRefresh = false) => {
   try {
     setCustomersLoading(true);
-      let url = `http://192.168.100.193:3009/api/nexchem/dashboard/rebates-summary?db=NEXCHEM_OWN`;
+      let url = `http://192.168.100.193:3009/api/nexchem/dashboard/rebates-summary?db=NEXCHEM`;
       
       const params = new URLSearchParams();
       if (statusSummaryPeriodFrom) params.append('periodFrom', statusSummaryPeriodFrom);
@@ -1396,7 +1396,7 @@ useEffect(() => {
     try {
       console.log('📥 Loading details for:', customerCode, rebateCode, rebateType);
       
-      let url = `http://192.168.100.193:3009/api/nexchem/dashboard/customer/${customerCode}/details?db=NEXCHEM_OWN`;
+      let url = `http://192.168.100.193:3009/api/nexchem/dashboard/customer/${customerCode}/details?db=NEXCHEM`;
       
       const params = new URLSearchParams();
       params.append('rebateCode', rebateCode);
@@ -1436,7 +1436,7 @@ useEffect(() => {
   try {
     console.log('🔍 Loading rebate details for:', rebateCode, customerCode ? `customer: ${customerCode}` : '');
     
-    let url = `http://192.168.100.193:3009/api/nexchem/dashboard/rebate/${rebateCode}/details?db=NEXCHEM_OWN`;
+    let url = `http://192.168.100.193:3009/api/nexchem/dashboard/rebate/${rebateCode}/details?db=NEXCHEM`;
     
     if (customerCode) {
       url += `&customerCode=${customerCode}`;
@@ -1489,7 +1489,7 @@ useEffect(() => {
     try {
       console.log('📊 Fetching monthly quota data for:', { customerCode, rebateCode, rebateType });
       
-      let url = `http://192.168.100.193:3009/api/nexchem/dashboard/customer/${customerCode}/quota-summary?db=NEXCHEM_OWN&rebateCode=${rebateCode}&rebateType=${rebateType}`;
+      let url = `http://192.168.100.193:3009/api/nexchem/dashboard/customer/${customerCode}/quota-summary?db=NEXCHEM&rebateCode=${rebateCode}&rebateType=${rebateType}`;
       
       if (useAutoDates) {
         url += '&useRebatePeriod=true';
@@ -1545,7 +1545,7 @@ useEffect(() => {
       let url = `http://192.168.100.193:3009/api/nexchem/dashboard/customer/${modalCustomer.code}/transactions`;
       
       const params = new URLSearchParams({
-        db: 'NEXCHEM_OWN',
+        db: 'NEXCHEM',
         rebateCode: modalCustomer.rebateCode,
         rebateType: modalCustomer.rebateType
       });
@@ -1621,7 +1621,7 @@ const loadDetailedPayoutsData = async (autoLoad = true) => {
       const url = `http://192.168.100.193:3009/api/nexchem/payouts/customer/${modalCustomer.code}/payouts`;
       
       const params = new URLSearchParams({
-        db: 'NEXCHEM_OWN',
+        db: 'NEXCHEM',
         rebateCode: modalCustomer.rebateCode,
         rebateType: modalCustomer.rebateType
       });
@@ -1983,7 +1983,7 @@ const processPayoutData = (payouts) => {
         }
         
         const payload = {
-          db: 'NEXCHEM_OWN',
+          db: 'NEXCHEM',
           status: newStatus,
           amountReleased: amountReleased
         };
@@ -2059,7 +2059,7 @@ const processPayoutData = (payouts) => {
       setDetailedPayouts(updatedPayouts);
       
       const payload = {
-        db: 'NEXCHEM_OWN',
+        db: 'NEXCHEM',
         status: newStatus,
         amountReleased: validatedAmount
       };
@@ -2136,7 +2136,7 @@ const processPayoutData = (payouts) => {
       }
 
       const payload = {
-        db: 'NEXCHEM_OWN',
+        db: 'NEXCHEM',
         status: status,
         amountReleased: amountReleased
       };
@@ -2219,7 +2219,7 @@ const handleSaveAmountReleased = async (payoutId) => {
     }
     
     const payload = {
-      db: 'NEXCHEM_OWN',
+      db: 'NEXCHEM',
       status: newStatus,
       amountReleased: amount
     };
@@ -2479,7 +2479,7 @@ const handleSaveAmountReleased = async (payoutId) => {
 
   const handleSaveCustomer = async (customerCode) => {
     try {
-      const currentDatabase = 'NEXCHEM_OWN';
+      const currentDatabase = 'NEXCHEM';
       const customerToUpdate = rebateDetails.customers.find(c => c.code === customerCode);
       
       if (!customerToUpdate) {
@@ -2643,7 +2643,7 @@ const handleItemChange = (itemCode, field, newValue) => {
 
 const handleSaveItem = async (itemCode) => {
   try {
-    const currentDatabase = 'NEXCHEM_OWN';
+    const currentDatabase = 'NEXCHEM';
     const itemToUpdate = rebateDetails.items.find(i => i.code === itemCode);
     if (!itemToUpdate) {
       setSaveMessage("Item not found!");
@@ -2714,7 +2714,7 @@ const handleSaveItem = async (itemCode) => {
   // In Van_Dashboard.js - ensure this function exists and is connected
   const handleStatusToggle = async (rebateCode, statusValue) => {
     try { 
-      const currentDatabase = 'NEXCHEM_OWN';
+      const currentDatabase = 'NEXCHEM';
       // Ensure statusValue is numeric (1 or 0)
       const numericStatus = typeof statusValue === 'string' 
         ? (statusValue === 'Active' ? 1 : 0)

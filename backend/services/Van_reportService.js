@@ -58,16 +58,15 @@ const fetchActualSales = async (sapPool, cardCode, itemCodes, startDate, endDate
   const q = `
     SELECT
       MONTH(T0.DocDate) AS Month,
-      T1.ItemCode,
-      SUM(T1.Quantity) AS TotalQty
+      T0.ItemCode,
+      SUM(T0.Quantity) AS TotalQty
     FROM OINV T0
-    LEFT JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
     WHERE T0.CardCode = @cardCode
       AND T0.DocType  = 'I'
       AND T0.DocDate >= @startDate
       AND T0.DocDate <= @endDate
-      AND T1.ItemCode IN (${paramNames})
-    GROUP BY MONTH(T0.DocDate), T1.ItemCode
+      AND T0.ItemCode IN (${paramNames})
+    GROUP BY MONTH(T0.DocDate), T0.ItemCode
   `;
   const req = sapPool.request()
     .input('cardCode',  sql.NVarChar(50), cardCode)
@@ -92,15 +91,14 @@ const fetchActualSalesWithARCM = async (sapPool, cardCode, itemCodes, startDate,
   const rq = `
     SELECT
       MONTH(T0.DocDate) AS Month,
-      T1.ItemCode,
-      SUM(ABS(T1.Quantity)) AS ReturnQty
+      T0.ItemCode,
+      SUM(ABS(T0.Quantity)) AS ReturnQty
     FROM ORIN T0
-    LEFT JOIN RIN1 T1 ON T0.DocEntry = T1.DocEntry
     WHERE T0.CardCode = @cardCode
       AND T0.DocDate >= @startDate
       AND T0.DocDate <= @endDate
-      AND T1.ItemCode IN (${paramNames})
-    GROUP BY MONTH(T0.DocDate), T1.ItemCode
+      AND T0.ItemCode IN (${paramNames})
+    GROUP BY MONTH(T0.DocDate), T0.ItemCode
   `;
   const req = sapPool.request()
     .input('cardCode',  sql.NVarChar(50), cardCode)
@@ -118,7 +116,7 @@ const fetchActualSalesWithARCM = async (sapPool, cardCode, itemCodes, startDate,
 };
 
 // ─── Get available rebates for selector ───────────────────────────────────────
-export const getAvailableRebates = async (db = 'VAN_OWN') => {
+export const getAvailableRebates = async (db = 'VAN') => {
   const pool = getPool(db);
   if (!pool) throw new Error('Database pool not available');
   const q = `
@@ -140,7 +138,7 @@ export const getAvailableRebates = async (db = 'VAN_OWN') => {
 };
 
 // ─── Core report generation (aggregated items) ────────────────────────────────
-export const generateRebateReport = async (rebateCodes, db = 'VAN_OWN') => {
+export const generateRebateReport = async (rebateCodes, db = 'VAN') => {
   const ownPool = getPool(db);
   const sapPool = getPool('VAN');
   if (!ownPool || !sapPool) throw new Error('Database pools not available');

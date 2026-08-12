@@ -19,8 +19,6 @@ router.get('/nexchem/customer', async (req, res) => {
         T0.CardCode,
         T0.CardName
       FROM OCRD T0
-      WHERE T0.CardType = 'C'
-      AND T0.validFor = 'Y'
       ORDER BY T0.CardName
     `;
     
@@ -35,7 +33,7 @@ router.get('/nexchem/customer', async (req, res) => {
 // Get rebate programs (kitanex rates) from OWN database
 router.get('/nexchem/rebate-programs', async (req, res) => {
   try {
-    const ownPool = getPool('NEXCHEM_OWN');
+    const ownPool = getPool('NEXCHEM');
     
     const query = `
       SELECT
@@ -86,7 +84,7 @@ router.post('/nexchem/generate-report', async (req, res) => {
     const sapPool = getPool('NEXCHEM');
     
     // Get own pool for rebate data
-    const ownPool = getPool('NEXCHEM_OWN');
+    const ownPool = getPool('NEXCHEM');
     
     // Fetch rebate programs for the customer
     const rebateQuery = `
@@ -127,22 +125,19 @@ router.post('/nexchem/generate-report', async (req, res) => {
         T0.CardCode,
         T0.CardName,
         T0.DocDate,
-        T1.ItemCode,
-        T1.Dscription,
-        T1.Quantity,
-        T1.LineTotal,
-        T1.PriceAfVAT
+        T0.ItemCode,
+        T0.Dscription,
+        T0.Quantity,
+        T0.LineTotal,
+        T0.PriceAfVAT
       FROM
         OINV T0
-        INNER JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
-        LEFT JOIN OITM T2 ON T1.ItemCode = T2.ItemCode
       WHERE
-        T1.TreeType <> 'S'
+        T0.TreeType <> 'S'
         AND T0.DocType = 'I'
-        AND T2.InvntItem = 'Y'
-        AND T1.Dscription NOT LIKE '%Free%'
-        AND T1.Dscription NOT LIKE '%Discount%'
-        AND T1.Dscription NOT LIKE '%fee%'
+        AND T0.Dscription NOT LIKE '%Free%'
+        AND T0.Dscription NOT LIKE '%Discount%'
+        AND T0.Dscription NOT LIKE '%fee%'
         AND T0.CardCode = @CardCode
     `;
     
@@ -249,7 +244,7 @@ router.post('/nexchem/generate-multi-customer-report', async (req, res) => {
     const sapPool = getPool('NEXCHEM');
     
     // Get own pool for rebate data
-    const ownPool = getPool('NEXCHEM_OWN');
+    const ownPool = getPool('NEXCHEM');
     
     // Fetch rebate programs for all customers
     const placeholders = customerCodes.map((_, index) => `@CardCode${index}`).join(',');
@@ -297,22 +292,19 @@ router.post('/nexchem/generate-multi-customer-report', async (req, res) => {
         T0.CardCode,
         T0.CardName,
         T0.DocDate,
-        T1.ItemCode,
-        T1.Dscription,
-        T1.Quantity,
-        T1.LineTotal,
-        T1.PriceAfVAT
+        T0.ItemCode,
+        T0.Dscription,
+        T0.Quantity,
+        T0.LineTotal,
+        T0.PriceAfVAT
       FROM
         OINV T0
-        INNER JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
-        LEFT JOIN OITM T2 ON T1.ItemCode = T2.ItemCode
       WHERE
-        T1.TreeType <> 'S'
+        T0.TreeType <> 'S'
         AND T0.DocType = 'I'
-        AND T2.InvntItem = 'Y'
-        AND T1.Dscription NOT LIKE '%Free%'
-        AND T1.Dscription NOT LIKE '%Discount%'
-        AND T1.Dscription NOT LIKE '%fee%'
+        AND T0.Dscription NOT LIKE '%Free%'
+        AND T0.Dscription NOT LIKE '%Discount%'
+        AND T0.Dscription NOT LIKE '%fee%'
         AND T0.CardCode IN (${placeholders})
     `;
     
@@ -415,7 +407,7 @@ router.get('/nexchem/rebate/:rebateCode/customers', async (req, res) => {
     const { rebateCode } = req.params;
     const { db } = req.query;
     
-    const databaseToUse = db || 'NEXCHEM_OWN';
+    const databaseToUse = db || 'NEXCHEM';
     const ownPool = getPool(databaseToUse);
     
     if (!ownPool) {

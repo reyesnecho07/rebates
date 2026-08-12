@@ -27,8 +27,8 @@ const getItems = async (req, res) => {
         .query(`
           SELECT 
             ItemCode,
-            ItemName,
-            FrgnName
+            ItemName
+            --FrgnName
           FROM OITM
           ORDER BY ItemCode
         `);
@@ -58,7 +58,6 @@ const getCustomers = async (req, res) => {
             OCRD T0  
             INNER JOIN OCRG T1 ON T0.GroupCode = T1.GroupCode 
             INNER JOIN OSLP T2 ON T0.SlpCode = T2.SlpCode
-          WHERE CardType = 'C'
         `);
       console.log(`🟪 VCP Customers: ${result.recordset.length} records`);
       return result.recordset;
@@ -82,17 +81,16 @@ const getInvoices = async (req, res) => {
             T0.DocNum,
             T0.CardName,
             T0.Docdate,
-            T1.ItemCode,
-            T1.Dscription,
-            T1.Quantity,
-            T1.LineTotal,
-            T1.PriceAfVAt,
-            T1.Treetype
+            T0.ItemCode,
+            T0.Dscription,
+            T0.Quantity,
+            T0.LineTotal,
+            T0.PriceAfVAt,
+            T0.Treetype
           FROM
             OINV T0
-            INNER JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
           WHERE
-            T1.TreeType <> 'S'
+            T0.TreeType <> 'S'
         `);
       console.log(`🟪 VCP Invoices: ${result.recordset.length} records`);
       return result.recordset;

@@ -25,7 +25,7 @@ const INTERNAL_API_BASE = process.env.INTERNAL_API_BASE || 'http://localhost:300
 /**
  * List all active Percentage rebate programs for the dropdown.
  */
-export const getActiveRebates = async (db = 'VCP_OWN') => {
+export const getActiveRebates = async (db = 'VCP') => {
   const pool = getPool(db);
   if (!pool) throw new Error(`Database pool for ${db} not available`);
 
@@ -49,7 +49,7 @@ export const getActiveRebates = async (db = 'VCP_OWN') => {
 /**
  * Single rebate program header row.
  */
-export const getRebateInfo = async (rebateCode, db = 'VCP_OWN') => {
+export const getRebateInfo = async (rebateCode, db = 'VCP') => {
   const pool = getPool(db);
   if (!pool) throw new Error(`Database pool for ${db} not available`);
 
@@ -72,7 +72,7 @@ export const getRebateInfo = async (rebateCode, db = 'VCP_OWN') => {
  * Get all customers enrolled in a Percentage rebate.
  * Mirrors the query used in Vcp_dashboardRoutes /rebates-summary.
  */
-export const getCustomersByRebate = async (rebateCode, db = 'VCP_OWN') => {
+export const getCustomersByRebate = async (rebateCode, db = 'VCP') => {
   const pool = getPool(db);
   if (!pool) throw new Error(`Database pool for ${db} not available`);
 
@@ -115,7 +115,7 @@ export const getCustomersByRebate = async (rebateCode, db = 'VCP_OWN') => {
 /**
  * Item codes that belong to a Percentage rebate (for SAP invoice filter).
  */
-export const getItemCodesByRebate = async (rebateCode, db = 'VCP_OWN') => {
+export const getItemCodesByRebate = async (rebateCode, db = 'VCP') => {
   const pool = getPool(db);
   if (!pool) return [];
 
@@ -162,10 +162,9 @@ export const getSAPInvoiceTotals = async (customerCode, dateFrom, dateTo, itemCo
 
     const result = await request.query(`
       SELECT
-        ISNULL(SUM(T1.Quantity), 0) AS TotalCTNs,
-        ISNULL(SUM(T1.GTotal),   0) AS TotalPValue
+        ISNULL(SUM(T0.Quantity), 0) AS TotalCTNs,
+        ISNULL(SUM(T0.GTotal),   0) AS TotalPValue
       FROM OINV T0
-        INNER JOIN INV1 T1 ON T0.DocEntry = T1.DocEntry
       WHERE T0.CardCode  = @customerCode
         AND T0.DocType   = 'I'
         AND T0.DocDate  >= @dateFrom
@@ -193,7 +192,7 @@ export const getSAPInvoiceTotals = async (customerCode, dateFrom, dateTo, itemCo
  * as defined in Vcp_payoutRoutes — no duplication of that logic here.
  */
 export const fetchPayoutsViaPayoutRoute = async (
-  customerCode, rebateCode, dateFrom, dateTo, db = 'VCP_OWN'
+  customerCode, rebateCode, dateFrom, dateTo, db = 'VCP'
 ) => {
   try {
     const qs = new URLSearchParams({
@@ -230,7 +229,7 @@ export const fetchPayoutsViaPayoutRoute = async (
  *   balance        = SUM(BaseAmount) - SUM(AmountReleased)
  *   amountReleased = SUM(AmountReleased)
  */
-export const getPayoutSummaryFromDB = async (customerCode, rebateCode, db = 'VCP_OWN') => {
+export const getPayoutSummaryFromDB = async (customerCode, rebateCode, db = 'VCP') => {
   try {
     const pool = getPool(db);
     if (!pool) return { totalAmount: 0, balance: 0, amountReleased: 0, sapReleased: 0, recordCount: 0 };
@@ -286,7 +285,7 @@ export const getPayoutSummaryFromDB = async (customerCode, rebateCode, db = 'VCP
 // 4.  Optional pre-sync (call before generating report for freshest data)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const syncPayoutsForRebate = async ({ rebateCode, dateFrom, dateTo, db = 'VCP_OWN' }) => {
+export const syncPayoutsForRebate = async ({ rebateCode, dateFrom, dateTo, db = 'VCP' }) => {
   const rawRows  = await getCustomersByRebate(rebateCode, db);
   const customers = [
     ...new Map(rawRows.filter(r => r.CardCode).map(r => [r.CardCode, r])).values()
@@ -321,7 +320,7 @@ export const syncPayoutsForRebate = async ({ rebateCode, dateFrom, dateTo, db = 
  *
  * @param {{ rebateCode, dateFrom, dateTo, db }} params
  */
-  export const generateCashFundReport = async ({ rebateCode, customerCodes, dateFrom, dateTo, db = 'VCP_OWN' }) => {
+  export const generateCashFundReport = async ({ rebateCode, customerCodes, dateFrom, dateTo, db = 'VCP' }) => {
   console.log(`📊 [Report] Cash Fund — rebate=${rebateCode}  ${dateFrom} → ${dateTo}`);
 
   // 1.  Rebate program header
@@ -472,7 +471,7 @@ export const getPriorRebateCarryOver = async (
   customerCode,
   currentRebateCode,
   currentRebateDateFrom, // the DateFrom of the rebate being reported
-  db = 'VCP_OWN'
+  db = 'VCP'
 ) => {
   try {
     const pool = getPool(db);

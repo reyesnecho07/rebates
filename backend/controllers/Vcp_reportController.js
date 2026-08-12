@@ -9,7 +9,7 @@ import * as reportService from '../services/Vcp_reportService.js';
 export const getActiveRebates = async (req, res) => {
   try {
     const { db } = req.query;
-    const data   = await reportService.getActiveRebates(db || 'VCP_OWN');
+    const data   = await reportService.getActiveRebates(db || 'VCP');
     res.json({ success: true, data });
   } catch (error) {
     console.error('❌ [ReportCtrl] getActiveRebates:', error.message);
@@ -27,7 +27,7 @@ export const getCustomersByRebate = async (req, res) => {
       return res.status(400).json({ success: false, message: 'rebateCode is required' });
     }
 
-    const data = await reportService.getCustomersByRebate(rebateCode, db || 'VCP_OWN');
+    const data = await reportService.getCustomersByRebate(rebateCode, db || 'VCP');
     res.json({ success: true, data });
   } catch (error) {
     console.error('❌ [ReportCtrl] getCustomersByRebate:', error.message);
@@ -52,7 +52,7 @@ export const generateCashFundReport = async (req, res) => {
       customerCodes,
       dateFrom: dateFrom || null,
       dateTo:   dateTo   || null,
-      db:       db       || 'VCP_OWN'
+      db:       db       || 'VCP'
     });
 
     res.json({ success: true, data });
@@ -75,7 +75,7 @@ export const syncPayoutsForReport = async (req, res) => {
       rebateCode,
       dateFrom: dateFrom || null,
       dateTo:   dateTo   || null,
-      db:       db       || 'VCP_OWN'
+      db:       db       || 'VCP'
     });
 
     res.json({ success: true, data: result });
