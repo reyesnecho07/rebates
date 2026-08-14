@@ -56,7 +56,8 @@ router.get('/highest-code', async (req, res) => {
 // ─── CREATE rebate program ───────────────────────────────────────────────────
 router.post('/rebate-program', validateRebateProgram, async (req, res) => {
   try {
-    const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType } = req.body;
+    const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, CreatedBy } = req.body;
+    const createdBy = CreatedBy || 'Unknown';
     console.log(`💾 Saving rebate program to database: ${req.database}`);
 
     const nextCodeResult = await req.db.request().query(`
@@ -80,11 +81,13 @@ router.post('/rebate-program', validateRebateProgram, async (req, res) => {
       .input('DateTo',     sql.Date,     DateTo)
       .input('Frequency',  sql.NVarChar, Frequency  || 'Quarterly')
       .input('QuotaType',  sql.NVarChar, QuotaType  || 'With Quota')
+      .input('CreatedBy',  sql.NVarChar, createdBy)
+      .input('UpdatedBy',  sql.NVarChar, createdBy)
       .query(`
         INSERT INTO RebateProgram
-          (RebateCode, RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, CreatedDate, UpdatedDate)
+          (RebateCode, RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, CreatedBy, UpdatedBy, CreatedDate, UpdatedDate)
         VALUES
-          (@RebateCode, @RebateType, @SlpCode, @SlpName, @DateFrom, @DateTo, @Frequency, @QuotaType, GETDATE(), GETDATE())
+          (@RebateCode, @RebateType, @SlpCode, @SlpName, @DateFrom, @DateTo, @Frequency, @QuotaType, @CreatedBy, @UpdatedBy, GETDATE(), GETDATE())
       `);
 
     console.log(`✅ Rebate program saved. RebateCode: ${nextRebateCode}`);
@@ -755,7 +758,9 @@ router.get('/rebate-program/items/:code', async (req, res) => {
 
 // PUT /api/rebate-program/:code — update program header only (never touch CreatedDate)
 router.put('/rebate-program/:code', async (req, res) => {
-  const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType } = req.body;
+  const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, CreatedBy } = req.body;
+  const createdBy = CreatedBy || 'Unknown';
+  
   await req.db.request()
     .input('c',  sql.NVarChar, req.params.code)
     .input('rt', sql.NVarChar, RebateType)
@@ -765,11 +770,12 @@ router.put('/rebate-program/:code', async (req, res) => {
     .input('dt', sql.Date,     DateTo)
     .input('fr', sql.NVarChar, Frequency)
     .input('qt', sql.NVarChar, QuotaType)
+    .input('ub', sql.NVarChar, UpdatedBy || 'Unknown')
     .query(`
       UPDATE RebateProgram
       SET RebateType = @rt, SlpCode = @sc, SlpName = @sn,
           DateFrom   = @df, DateTo  = @dt, Frequency = @fr,
-          QuotaType  = @qt,
+          QuotaType  = @qt, CreatedBy = @CreatedBy, UpdatedBy = @UpdatedBy,
           UpdatedDate = GETDATE()
           -- CreatedDate is intentionally NOT updated here
       WHERE RebateCode = @c

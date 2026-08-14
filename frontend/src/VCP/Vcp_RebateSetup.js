@@ -1522,6 +1522,7 @@ function Vcp_RebateSetup() {
           DateTo:      selectedDateTo,
           Frequency:   selectedFrequency,
           QuotaType:   quotaType === "withQuota" ? "With Quota" : "Without Quota",
+          UpdatedBy:   userCode || userName,
           db:          'VCP',
         }),
       });
@@ -1596,6 +1597,8 @@ function Vcp_RebateSetup() {
         RebateType: rebateType, SlpCode: slpCode, SlpName: selectedSalesEmployee,
         DateFrom: selectedDateFrom, DateTo: selectedDateTo, Frequency: selectedFrequency,
         QuotaType: quotaType === "withQuota" ? "With Quota" : "Without Quota", db: 'VCP',
+        CreatedBy: userCode || userName,
+        UpdatedBy: userCode || userName,
       };
       const programRes = await fetch(`${API_BASE}/rebate-program?db=VCP`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rebateProgramData),

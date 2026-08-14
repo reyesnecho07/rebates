@@ -65,7 +65,8 @@ router.get('/highest-code', async (req, res) => {
 // SIMPLIFIED - Create rebate program
 router.post('/rebate-program', validateRebateProgram, async (req, res) => {
   try {
-    const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, Name } = req.body;
+    const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, Name, CreatedBy } = req.body;
+    const createdBy = CreatedBy || 'Unknown';
     
     console.log(`💾 Saving rebate program to database: ${req.database}`);
 
@@ -87,8 +88,8 @@ router.post('/rebate-program', validateRebateProgram, async (req, res) => {
 
     // Insert with the generated rebate code and CreatedDate
     const query = `
-      INSERT INTO RebateProgram (RebateCode, RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, Name, CreatedDate)
-      VALUES (@RebateCode, @RebateType, @SlpCode, @SlpName, @DateFrom, @DateTo, @Frequency, @QuotaType, @Name, GETDATE())
+      INSERT INTO RebateProgram (RebateCode, RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, Name, CreatedBy, UpdatedBy, CreatedDate)
+      VALUES (@RebateCode, @RebateType, @SlpCode, @SlpName, @DateFrom, @DateTo, @Frequency, @QuotaType, @Name, @CreatedBy, @UpdatedBy, GETDATE())
     `;
     
     await req.db.request()
@@ -101,6 +102,8 @@ router.post('/rebate-program', validateRebateProgram, async (req, res) => {
       .input('Frequency', sql.NVarChar, Frequency || 'Quarterly')
       .input('QuotaType', sql.NVarChar, QuotaType || 'With Quota')
       .input('Name', sql.NVarChar, Name || '')
+      .input('CreatedBy', sql.NVarChar, createdBy)
+      .input('UpdatedBy', sql.NVarChar, createdBy)
       .query(query);
     
     console.log(`✅ Rebate program saved successfully. RebateCode: ${nextRebateCode}`);
@@ -1319,20 +1322,22 @@ router.get('/rebate-program/items/:code', async (req, res) => {
 
 // PUT /api/rebate-program/:code — update program header
 router.put('/rebate-program/:code', async (req, res) => {
-const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, Name } = req.body;
-await req.db.request()
-  .input('c',  sql.NVarChar, req.params.code)
-  .input('rt', sql.NVarChar, RebateType)
-  .input('sc', sql.Int, SlpCode)
-  .input('sn', sql.NVarChar, SlpName)
-  .input('df', sql.Date, DateFrom)
-  .input('dt', sql.Date, DateTo)
-  .input('fr', sql.NVarChar, Frequency)
-  .input('qt', sql.NVarChar, QuotaType)
-  .input('nm', sql.NVarChar, Name || '')
-  .query(`UPDATE RebateProgram SET RebateType=@rt, SlpCode=@sc, SlpName=@sn,
-    DateFrom=@df, DateTo=@dt, Frequency=@fr, QuotaType=@qt, Name=@nm WHERE RebateCode=@c`);
-res.json({ success: true });
+  const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, Name, UpdatedBy } = req.body;
+  await req.db.request()
+    .input('c',  sql.NVarChar, req.params.code)
+    .input('rt', sql.NVarChar, RebateType)
+    .input('sc', sql.Int, SlpCode)
+    .input('sn', sql.NVarChar, SlpName)
+    .input('df', sql.Date, DateFrom)
+    .input('dt', sql.Date, DateTo)
+    .input('fr', sql.NVarChar, Frequency)
+    .input('qt', sql.NVarChar, QuotaType)
+    .input('nm', sql.NVarChar, Name || '')
+    .input('ub', sql.NVarChar, UpdatedBy || 'Unknown')
+    .query(`UPDATE RebateProgram SET RebateType=@rt, SlpCode=@sc, SlpName=@sn,
+      DateFrom=@df, DateTo=@dt, Frequency=@fr, QuotaType=@qt, Name=@nm, UpdatedBy=@ub, UpdatedDate=GETDATE()
+      WHERE RebateCode=@c`);
+  res.json({ success: true });
 });
 
 // DELETE /api/rebate-program/:code/details?type=Fixed|Incremental|Percentage

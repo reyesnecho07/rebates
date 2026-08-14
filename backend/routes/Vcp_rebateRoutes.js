@@ -128,7 +128,8 @@ router.get('/highest-code', async (req, res) => {
 // SIMPLIFIED - Create rebate program
 router.post('/rebate-program', validateRebateProgram, async (req, res) => {
   try {
-    const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType } = req.body;
+    const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, CreatedBy } = req.body;
+    const createdBy = CreatedBy || 'Unknown';
     
     console.log(`💾 Saving rebate program to database: ${req.database}`);
 
@@ -150,8 +151,8 @@ router.post('/rebate-program', validateRebateProgram, async (req, res) => {
 
     // Insert with the generated rebate code and CreatedDate
     const query = `
-      INSERT INTO RebateProgram (RebateCode, RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, CreatedDate)
-      VALUES (@RebateCode, @RebateType, @SlpCode, @SlpName, @DateFrom, @DateTo, @Frequency, @QuotaType, GETDATE())
+      INSERT INTO RebateProgram (RebateCode, RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, CreatedBy, UpdatedBy, CreatedDate)
+      VALUES (@RebateCode, @RebateType, @SlpCode, @SlpName, @DateFrom, @DateTo, @Frequency, @QuotaType, @CreatedBy, @UpdatedBy, GETDATE())
     `;
     
     await req.db.request()
@@ -163,6 +164,8 @@ router.post('/rebate-program', validateRebateProgram, async (req, res) => {
       .input('DateTo', sql.Date, DateTo)
       .input('Frequency', sql.NVarChar, Frequency || 'Quarterly')
       .input('QuotaType', sql.NVarChar, QuotaType || 'With Quota')
+      .input('CreatedBy', sql.NVarChar, createdBy)
+      .input('UpdatedBy', sql.NVarChar, createdBy)
       .query(query);
     
     console.log(`✅ Rebate program saved successfully. RebateCode: ${nextRebateCode}`);
@@ -1396,7 +1399,8 @@ router.put('/rebate-program/:code', async (req, res) => {
     .input('dt', sql.Date, DateTo).input('fr', sql.NVarChar, Frequency)
     .input('qt', sql.NVarChar, QuotaType)
     .query(`UPDATE RebateProgram SET RebateType=@rt, SlpCode=@sc, SlpName=@sn,
-      DateFrom=@df, DateTo=@dt, Frequency=@fr, QuotaType=@qt WHERE RebateCode=@c`);
+      DateFrom=@df, DateTo=@dt, Frequency=@fr, QuotaType=@qt, UpdatedBy=@ub, UpdatedDate=GETDATE()
+      WHERE RebateCode=@c`);
   res.json({ success: true });
 });
 

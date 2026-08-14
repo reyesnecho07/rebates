@@ -1866,6 +1866,7 @@ const getMonthlyPeriodsFromQuotaPeriods = () => {
           Frequency:   selectedFrequency,
           QuotaType:   quotaType === "withQuota" ? "With Quota" : "Without Quota",
           Name:        selectedName,
+          UpdatedBy:   userCode || userName,
           db:          'VAN',
         }),
       });
@@ -1941,6 +1942,8 @@ const getMonthlyPeriodsFromQuotaPeriods = () => {
         DateFrom: selectedDateFrom, DateTo: selectedDateTo, Frequency: selectedFrequency,
         QuotaType: quotaType === "withQuota" ? "With Quota" : "Without Quota",
         Name: selectedName,
+        CreatedBy: userCode || userName, 
+        UpdatedBy: userCode || userName, 
         db: 'VAN',
       };
       const programRes = await fetch(`${API_BASE}/rebate-program?db=VAN`, {
