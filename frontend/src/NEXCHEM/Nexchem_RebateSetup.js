@@ -145,28 +145,28 @@ const CustomOption = ({ innerRef, innerProps, isFocused, isSelected, children })
 const Toast = ({ message, type, onClose, isDark }) => {
   const styles = {
     success: {
-      bg:   isDark ? "bg-emerald-950 border-emerald-700/50" : "bg-white border-emerald-200",
-      text: isDark ? "text-emerald-300"  : "text-emerald-700",
-      icon: isDark ? "text-emerald-400"  : "text-emerald-500",
-      bar:  "bg-emerald-500",
+      bg:     isDark ? "bg-slate-900" : "bg-white",
+      border: isDark ? "border-emerald-700/50" : "border-emerald-200",
+      text:   isDark ? "text-emerald-400" : "text-emerald-600",
+      icon:   isDark ? "text-emerald-400" : "text-emerald-500",
     },
     error: {
-      bg:   isDark ? "bg-red-950 border-red-700/50" : "bg-white border-red-200",
-      text: isDark ? "text-red-300"  : "text-red-700",
-      icon: isDark ? "text-red-400"  : "text-red-500",
-      bar:  "bg-red-500",
+      bg:     isDark ? "bg-slate-900" : "bg-white",
+      border: isDark ? "border-red-700/50" : "border-red-200",
+      text:   isDark ? "text-red-400" : "text-red-600",
+      icon:   isDark ? "text-red-400" : "text-red-500",
     },
     warning: {
-      bg:   isDark ? "bg-amber-950 border-amber-700/50" : "bg-white border-amber-200",
-      text: isDark ? "text-amber-300"  : "text-amber-700",
-      icon: isDark ? "text-amber-400"  : "text-amber-500",
-      bar:  "bg-amber-500",
+      bg:     isDark ? "bg-slate-900" : "bg-white",
+      border: isDark ? "border-amber-700/50" : "border-amber-200",
+      text:   isDark ? "text-amber-400" : "text-amber-600",
+      icon:   isDark ? "text-amber-400" : "text-amber-500",
     },
     info: {
-      bg:   isDark ? "bg-slate-900 border-slate-700/50" : "bg-white border-blue-200",
-      text: isDark ? "text-slate-300"  : "text-slate-700",
-      icon: isDark ? "text-blue-400"   : "text-blue-500",
-      bar:  "bg-blue-500",
+      bg:     isDark ? "bg-slate-900" : "bg-white",
+      border: isDark ? "border-blue-700/50" : "border-blue-200",
+      text:   isDark ? "text-blue-400" : "text-blue-600",
+      icon:   isDark ? "text-blue-400" : "text-blue-500",
     },
   };
   const s = styles[type] || styles.info;
@@ -177,25 +177,26 @@ const Toast = ({ message, type, onClose, isDark }) => {
     info:    <Info className="w-4 h-4" />,
   };
   return (
-    <div className={`relative flex items-center gap-3 px-4 py-3.5 rounded-xl border shadow-2xl overflow-hidden ${s.bg} animate-slide-in-right`}
-         style={{ backdropFilter: 'blur(12px)', minWidth: '320px' }}>
-      <div className={`absolute bottom-0 left-0 h-0.5 w-full opacity-60 ${s.bar}`} />
-      <div className={`flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center ${s.icon}`}
-           style={{ background: 'rgba(255,255,255,0.06)' }}>
-        {icons[type]}
-      </div>
+    <div
+      className={`flex items-center gap-2.5 pl-3.5 pr-3 py-2.5 rounded-2xl border shadow-lg ${s.bg} ${s.border} animate-slide-in-right`}
+      style={{ minWidth: '300px', maxWidth: '380px' }}
+    >
+      <span className={`flex-shrink-0 ${s.icon}`}>{icons[type]}</span>
       <span className={`text-sm font-medium flex-1 leading-snug ${s.text}`}>{message}</span>
-      <button onClick={onClose} className={`ml-1 hover:opacity-60 transition-opacity flex-shrink-0 ${s.icon}`}>
+      <button
+        onClick={onClose}
+        className={`flex-shrink-0 ${s.icon} hover:opacity-60 transition-opacity`}
+      >
         <X className="w-3.5 h-3.5" />
       </button>
     </div>
   );
 };
 
-const ToastContainer = ({ toasts, removeToast }) => (
-  <div className="fixed bottom-6 right-6 z-50 space-y-2.5 max-w-sm">
+const ToastContainer = ({ toasts, removeToast, isDark }) => (
+  <div className="fixed bottom-6 right-6 z-50 space-y-2 max-w-sm">
     {toasts.map((toast) => (
-      <Toast key={toast.id} message={toast.message} type={toast.type} onClose={() => removeToast(toast.id)} />
+      <Toast key={toast.id} message={toast.message} type={toast.type} onClose={() => removeToast(toast.id)} isDark={isDark} />
     ))}
   </div>
 );
@@ -1650,7 +1651,7 @@ const handleUpdate = async () => {
       else if (rebateType === "Incremental") await saveIncrementalRebateData(rebateCodeId, 'NEXCHEM');
       else if (rebateType === "Percentage")  await savePercentageRebateData(rebateCodeId, 'NEXCHEM');
       setRebateCode(rebateCodeId);
-      showToast(`✅ Rebate setup saved successfully! ID: ${rebateCodeId}`, "success");
+      showToast(`Rebate setup saved successfully! ID: ${rebateCodeId}`, "success");
       setEditingRows({ customer: { 0: true }, item: { 0: true } });
     } catch (error) {
       showToast(`Failed to save rebate setup: ${error.message}`, "error");

@@ -4452,32 +4452,31 @@ const fetchSAPJournalEntries = async (customerCode, periodFrom, periodTo, pool) 
      * ----------------------------------------------------------------*/
     const arQuery = `
       SELECT
-        'AR'                AS SourceType,
-        AR_INV.CardCode,
-        AR_INV.CardName,
-        AR_INV.DocDate,
-        AR_INV.DocNum,
-        AR_JDT.BaseRef,
-        AR_LN.Account,
-        AR_ACCT.AcctName,
-        AR_LN.Debit,
-        AR_LN.Credit,
-        AR_INV.Comments     AS Memo,
-        NULL                AS LineMemo,
-        AR_INV.DocDate      AS RefDate
-      FROM OINV AR_INV
-      LEFT JOIN OJDT AR_JDT
-             ON AR_JDT.BaseRef = CAST(AR_INV.DocNum AS NVARCHAR)
-      LEFT JOIN JDT1 AR_LN
-             ON AR_LN.TransId  = AR_JDT.TransId
-      LEFT JOIN OACT AR_ACCT
-             ON AR_ACCT.AcctCode = AR_LN.Account
-            AND AR_ACCT.AcctName LIKE '%Rebate%'
+        'AR' AS SourceType,
+        T0.CardCode,
+        T0.CardName,
+        T0.DocDate,
+        T0.DocNum,
+        T1.BaseRef,
+        T1.Account,
+        T2.AcctName,
+        T1.Debit,
+        T1.Credit,
+        T0.DocDate AS RefDate
+      FROM	
+        OINV T0
+        LEFT JOIN OJDT T1 ON T1.BaseRef = CAST(T0.DocNum AS NVARCHAR)
+        LEFT JOIN OACT T2 ON T2.AcctCode = T1.Account AND T2.AcctName LIKE '%Rebate%'
       WHERE
-        AR_INV.CardCode   = @customerCode
-        AND AR_ACCT.AcctName IS NOT NULL
-        AND AR_INV.DocDate >= @periodFrom
-        AND AR_INV.DocDate <= @endDate
+        T0.CardCode   = @customerCode
+        AND T2.AcctName IS NOT NULL
+        AND T0.DocDate >= @periodFrom
+        AND T0.DocDate <= @endDate
+      WHERE
+        T0.CardCode   = @customerCode
+        AND T2.AcctName IS NOT NULL
+        AND T0.DocDate >= @periodFrom
+        AND T0.DocDate <= @endDate
     `;
 
     /* ----------------------------------------------------------------
@@ -4529,7 +4528,7 @@ const fetchSAPJournalEntries = async (customerCode, periodFrom, periodTo, pool) 
         T0.DocDate,
         T0.DocNum,
         T0.DocEntry,
-        T1T0.GTotal
+        T0.GTotal
       FROM ORPC T0
       WHERE
         T0.U_BP_Code  = @customerCode

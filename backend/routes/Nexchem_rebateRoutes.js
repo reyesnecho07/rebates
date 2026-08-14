@@ -135,30 +135,57 @@ router.post('/fix-cust-rebate', async (req, res) => {
   }
 });
 
-// ─── FixCustQuota (single) ───────────────────────────────────────────────────
-router.post('/fix-cust-quota', async (req, res) => {
-  try {
-    const { CustRebateId, Month, TargetQty } = req.body;
-    console.log(`💾 Saving fixed customer quota: ${req.database}`, { CustRebateId, Month, TargetQty });
+  // ─── FixCustQuota (single) ───────────────────────────────────────────────────
+  router.post('/fix-cust-quota', async (req, res) => {
+    try {
+      const { CustRebateId, Month, TargetQty, CreatedDate } = req.body;
+      const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
+      const nextId = await getNextId(req.db, 'FixCustQuota');
 
-    const result = await req.db.request()
-      .input('CustRebateId', sql.Int,          CustRebateId)
-      .input('Month',        sql.NVarChar,      Month)
-      .input('TargetQty',    sql.Decimal(18,2), TargetQty || 0)
-      .query(`
-        INSERT INTO FixCustQuota (CustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
-        VALUES (@CustRebateId, @Month, @TargetQty, GETDATE(), GETDATE());
-        SELECT SCOPE_IDENTITY() as NewId;
-      `);
+      const query = `
+        INSERT INTO FixCustQuota (Id, CustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
+        VALUES (@Id, @CustRebateId, @Month, @TargetQty, @CreatedDate, GETDATE())
+      `;
+      await req.db.request()
+        .input('Id', sql.Int, nextId)
+        .input('CustRebateId', sql.Int, CustRebateId)
+        .input('Month', sql.NVarChar, Month)
+        .input('TargetQty', sql.Decimal(18, 2), TargetQty || 0)
+        .input('CreatedDate', sql.DateTime, createdDateValue)
+        .query(query);
 
-    const newId = result.recordset[0].NewId;
-    console.log(`✅ Fixed customer quota saved. ID: ${newId}`);
-    res.json({ success: true, id: newId, database: req.database });
-  } catch (error) {
-    console.error('❌ Error saving fixed customer quota:', error);
-    res.status(500).json({ success: false, error: error.message, database: req.database });
-  }
-});
+      res.json({ success: true, id: nextId, database: req.database });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message, database: req.database });
+    }
+  });
+
+  // ─── FixCustQuota (bulk) — NEW, add this ─────────────────────────────────────
+  router.post('/fix-cust-quotas/bulk', async (req, res) => {
+    try {
+      const { CustRebateId, quotas } = req.body;
+      if (!Array.isArray(quotas) || quotas.length === 0) {
+        return res.status(400).json({ success: false, error: 'No quotas provided', database: req.database });
+      }
+      const results = [];
+      for (const q of quotas) {
+        const createdDateValue = q.CreatedDate ? new Date(q.CreatedDate) : new Date();
+        const nextId = await getNextId(req.db, 'FixCustQuota');
+        await req.db.request()
+          .input('Id', sql.Int, nextId)
+          .input('CustRebateId', sql.Int, CustRebateId)
+          .input('Month', sql.NVarChar, q.Month)
+          .input('TargetQty', sql.Decimal(18, 2), q.TargetQty || 0)
+          .input('CreatedDate', sql.DateTime, createdDateValue)
+          .query(`INSERT INTO FixCustQuota (Id, CustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
+                  VALUES (@Id, @CustRebateId, @Month, @TargetQty, @CreatedDate, GETDATE())`);
+        results.push(nextId);
+      }
+      res.json({ success: true, count: results.length, database: req.database });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message, database: req.database });
+    }
+  });
 
 // ─── FixCustQuota (bulk) ─────────────────────────────────────────────────────
 router.post('/fix-cust-quotas/bulk', async (req, res) => {
@@ -250,33 +277,32 @@ router.post('/inc-cust-rebate', async (req, res) => {
   }
 });
 
-// ─── IncCustRange ────────────────────────────────────────────────────────────
-router.post('/inc-cust-range', async (req, res) => {
-  try {
-    const { IncCustRebateId, RangeNo, MinQty, MaxQty, RebatePerBag } = req.body;
-    console.log(`💾 Saving incremental customer range: ${req.database}`);
+  // ─── IncCustRange ────────────────────────────────────────────────────────────
+  router.post('/inc-cust-range', async (req, res) => {
+    try {
+      const { IncCustRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate } = req.body;
+      const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
+      const nextId = await getNextId(req.db, 'IncCustRange');
 
-    const nextId = await getNextId(req.db, 'IncCustRange');
-
-    await req.db.request()
-      .input('Id',             sql.Int, nextId)
-      .input('IncCustRebateId',sql.Int, IncCustRebateId)
-      .input('RangeNo',        sql.Int, RangeNo)
-      .input('MinQty',         sql.Int, MinQty      || 0)
-      .input('MaxQty',         sql.Int, MaxQty      || 0)
-      .input('RebatePerBag',   sql.Int, RebatePerBag|| 0)
-      .query(`
+      const query = `
         INSERT INTO IncCustRange (Id, IncCustRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate, UpdatedDate)
-        VALUES (@Id, @IncCustRebateId, @RangeNo, @MinQty, @MaxQty, @RebatePerBag, GETDATE(), GETDATE())
-      `);
+        VALUES (@Id, @IncCustRebateId, @RangeNo, @MinQty, @MaxQty, @RebatePerBag, @CreatedDate, GETDATE())
+      `;
+      await req.db.request()
+        .input('Id', sql.Int, nextId)
+        .input('IncCustRebateId', sql.Int, IncCustRebateId)
+        .input('RangeNo', sql.Int, RangeNo)
+        .input('MinQty', sql.Int, MinQty || 0)
+        .input('MaxQty', sql.Int, MaxQty || 0)
+        .input('RebatePerBag', sql.Int, RebatePerBag || 0)
+        .input('CreatedDate', sql.DateTime, createdDateValue)
+        .query(query);
 
-    console.log(`✅ Incremental customer range saved. ID: ${nextId}`);
-    res.json({ success: true, database: req.database });
-  } catch (error) {
-    console.error('❌ Error saving incremental customer range:', error);
-    res.status(500).json({ success: false, error: error.message, database: req.database });
-  }
-});
+      res.json({ success: true, database: req.database });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message, database: req.database });
+    }
+  });
 
 // ─── IncItemRebate ───────────────────────────────────────────────────────────
 router.post('/inc-item-rebate', async (req, res) => {
@@ -306,33 +332,32 @@ router.post('/inc-item-rebate', async (req, res) => {
   }
 });
 
-// ─── IncItemRange ────────────────────────────────────────────────────────────
-router.post('/inc-item-range', async (req, res) => {
-  try {
-    const { ItemRebateId, RangeNo, MinQty, MaxQty, RebatePerBag } = req.body;
-    console.log(`💾 Saving incremental item range: ${req.database}`);
+  // ─── IncItemRange ────────────────────────────────────────────────────────────
+  router.post('/inc-item-range', async (req, res) => {
+    try {
+      const { ItemRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate } = req.body;
+      const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
+      const nextId = await getNextId(req.db, 'IncItemRange');
 
-    const nextId = await getNextId(req.db, 'IncItemRange');
-
-    await req.db.request()
-      .input('Id',           sql.Int, nextId)
-      .input('ItemRebateId', sql.Int, ItemRebateId)
-      .input('RangeNo',      sql.Int, RangeNo)
-      .input('MinQty',       sql.Int, MinQty      || 0)
-      .input('MaxQty',       sql.Int, MaxQty      || 0)
-      .input('RebatePerBag', sql.Int, RebatePerBag|| 0)
-      .query(`
+      const query = `
         INSERT INTO IncItemRange (Id, ItemRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate, UpdatedDate)
-        VALUES (@Id, @ItemRebateId, @RangeNo, @MinQty, @MaxQty, @RebatePerBag, GETDATE(), GETDATE())
-      `);
+        VALUES (@Id, @ItemRebateId, @RangeNo, @MinQty, @MaxQty, @RebatePerBag, @CreatedDate, GETDATE())
+      `;
+      await req.db.request()
+        .input('Id', sql.Int, nextId)
+        .input('ItemRebateId', sql.Int, ItemRebateId)
+        .input('RangeNo', sql.Int, RangeNo)
+        .input('MinQty', sql.Int, MinQty || 0)
+        .input('MaxQty', sql.Int, MaxQty || 0)
+        .input('RebatePerBag', sql.Int, RebatePerBag || 0)
+        .input('CreatedDate', sql.DateTime, createdDateValue)
+        .query(query);
 
-    console.log(`✅ Incremental item range saved. ID: ${nextId}`);
-    res.json({ success: true, database: req.database });
-  } catch (error) {
-    console.error('❌ Error saving incremental item range:', error);
-    res.status(500).json({ success: false, error: error.message, database: req.database });
-  }
-});
+      res.json({ success: true, database: req.database });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message, database: req.database });
+    }
+  });
 
 // ─── PerCustRebate ───────────────────────────────────────────────────────────
 router.post('/per-cust-rebate', async (req, res) => {
@@ -357,27 +382,52 @@ router.post('/per-cust-rebate', async (req, res) => {
   }
 });
 
-// ─── PerCustQuota (single) ───────────────────────────────────────────────────
-router.post('/per-cust-quota', async (req, res) => {
-  try {
-    const { PerCustRebateId, Month, TargetQty } = req.body;
-    console.log(`💾 Saving percentage customer quota: ${req.database}`);
+  // ─── PerCustQuota (single) ───────────────────────────────────────────────────
+  router.post('/per-cust-quota', async (req, res) => {
+    try {
+      const { PerCustRebateId, Month, TargetQty, CreatedDate } = req.body;
+      const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
 
-    const result = await req.db.request()
-      .input('PerCustRebateId', sql.Int,          PerCustRebateId)
-      .input('Month',           sql.NVarChar,      Month)
-      .input('TargetQty',       sql.Decimal(18,2), TargetQty || 0)
-      .query(`
+      const query = `
         INSERT INTO PerCustQuota (PerCustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
-        VALUES (@PerCustRebateId, @Month, @TargetQty, GETDATE(), GETDATE());
+        VALUES (@PerCustRebateId, @Month, @TargetQty, @CreatedDate, GETDATE());
         SELECT SCOPE_IDENTITY() as NewId;
-      `);
+      `;
+      const result = await req.db.request()
+        .input('PerCustRebateId', sql.Int, PerCustRebateId)
+        .input('Month', sql.NVarChar, Month)
+        .input('TargetQty', sql.Decimal(18, 2), TargetQty || 0)
+        .input('CreatedDate', sql.DateTime, createdDateValue)
+        .query(query);
 
-    const newId = result.recordset[0].NewId;
-    console.log(`✅ Percentage customer quota saved. ID: ${newId}`);
-    res.json({ success: true, id: newId, database: req.database });
+      res.json({ success: true, id: result.recordset[0].NewId, database: req.database });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message, database: req.database });
+    }
+  });
+
+  // ─── PerCustQuota (bulk) — NEW, add this ─────────────────────────────────────
+router.post('/per-cust-quotas/bulk', async (req, res) => {
+  try {
+    const { CustRebateId, quotas } = req.body;
+    if (!Array.isArray(quotas) || quotas.length === 0) {
+      return res.status(400).json({ success: false, error: 'No quotas provided', database: req.database });
+    }
+    const results = [];
+    for (const q of quotas) {
+      const createdDateValue = q.CreatedDate ? new Date(q.CreatedDate) : new Date();
+      const result = await req.db.request()
+        .input('PerCustRebateId', sql.Int, CustRebateId)
+        .input('Month', sql.NVarChar, q.Month)
+        .input('TargetQty', sql.Decimal(18, 2), q.TargetQty || 0)
+        .input('CreatedDate', sql.DateTime, createdDateValue)
+        .query(`INSERT INTO PerCustQuota (PerCustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
+                VALUES (@PerCustRebateId, @Month, @TargetQty, @CreatedDate, GETDATE());
+                SELECT SCOPE_IDENTITY() as NewId;`);
+      results.push(result.recordset[0].NewId);
+    }
+    res.json({ success: true, count: results.length, database: req.database });
   } catch (error) {
-    console.error('❌ Error saving percentage customer quota:', error);
     res.status(500).json({ success: false, error: error.message, database: req.database });
   }
 });

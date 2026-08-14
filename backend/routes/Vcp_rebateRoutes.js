@@ -21,66 +21,42 @@ const validateRebateProgram = (req, res, next) => {
   next();
 };
 
-// Bulk save fixed customer quotas
+// ─── FixCustQuota (bulk) ─────────────────────────────────────────────────────
 router.post('/fix-cust-quotas/bulk', async (req, res) => {
   try {
     const { quotas } = req.body;
-    
-    console.log(`💾 Bulk saving ${quotas.length} fixed customer quotas to database: ${req.database}`);
-    
+    console.log(`💾 Bulk saving ${quotas?.length || 0} fixed customer quotas`);
     if (!quotas || quotas.length === 0) {
-      return res.json({
-        success: true,
-        count: 0,
-        message: 'No quotas to save'
-      });
+      return res.json({ success: true, count: 0, message: 'No quotas to save' });
     }
-    
-    // Start a transaction
+
     const transaction = new sql.Transaction(req.db);
     await transaction.begin();
-    
     try {
-      // Insert each quota with its provided Id
       for (const quota of quotas) {
+        const createdDateValue = quota.CreatedDate ? new Date(quota.CreatedDate) : new Date();
         const query = `
-          INSERT INTO FixCustQuota (Id, CustRebateId, Month, TargetQty, CreatedDate)
-          VALUES (@Id, @CustRebateId, @Month, @TargetQty, GETDATE())
+          INSERT INTO FixCustQuota (Id, CustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
+          VALUES (@Id, @CustRebateId, @Month, @TargetQty, @CreatedDate, GETDATE())
         `;
-        
         const request = new sql.Request(transaction);
         await request
           .input('Id', sql.Int, quota.Id)
           .input('CustRebateId', sql.Int, quota.CustRebateId)
           .input('Month', sql.NVarChar, quota.Month)
           .input('TargetQty', sql.Decimal(18, 2), quota.TargetQty || 0)
+          .input('CreatedDate', sql.DateTime, createdDateValue)
           .query(query);
       }
-      
-      // Commit the transaction
       await transaction.commit();
-      
-      console.log(`✅ Successfully saved ${quotas.length} quotas in bulk`);
-      
-      res.json({
-        success: true,
-        count: quotas.length,
-        database: req.database
-      });
-      
+      res.json({ success: true, count: quotas.length, database: req.database });
     } catch (error) {
-      // Rollback transaction on error
       await transaction.rollback();
       throw error;
     }
-    
   } catch (error) {
     console.error('❌ Error bulk saving fixed customer quotas:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      database: req.database
-    });
+    res.status(500).json({ success: false, error: error.message, database: req.database });
   }
 });
 
@@ -216,234 +192,99 @@ const getNextId = async (db, tableName) => {
   }
 };
 
-// Save to PerCustRebate table
+// ─── FixCustRebate ───────────────────────────────────────────────────────────
 router.post('/fix-cust-rebate', async (req, res) => {
   try {
-    const { RebateCode, CardCode, CardName, QtrRebate } = req.body;
-    
-    console.log(`💾 Saving fixed customer rebate to database: ${req.database}`);
-    console.log('📤 FULL REQUEST BODY:', JSON.stringify(req.body, null, 2));
-    console.log('📤 Data received:', { RebateCode, CardCode, CardName, QtrRebate });
-    
-    // Parse QtrRebate value
-    const qtrRebateValue = QtrRebate !== undefined && QtrRebate !== null && QtrRebate !== '' 
-      ? parseFloat(QtrRebate) 
-      : 0;
-    
-    // Get the next ID for FixCustRebate table
+    const { RebateCode, CardCode, CardName, QtrRebate, CreatedDate } = req.body;
+    const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
+    const qtrRebateValue = QtrRebate !== undefined && QtrRebate !== null && QtrRebate !== '' ? parseFloat(QtrRebate) : 0;
     const nextId = await getNextId(req.db, 'FixCustRebate');
-    
-    console.log(`🔢 Next ID for FixCustRebate: ${nextId}`);
-    
-    // UPDATED QUERY - Now includes Id parameter
+
     const query = `
       INSERT INTO FixCustRebate (Id, RebateCode, CardCode, CardName, QtrRebate, CreatedDate, UpdatedDate)
-      VALUES (@Id, @RebateCode, @CardCode, @CardName, @QtrRebate, GETDATE(), GETDATE())
+      VALUES (@Id, @RebateCode, @CardCode, @CardName, @QtrRebate, @CreatedDate, GETDATE())
     `;
-    
-    console.log('🔍 Query to execute:');
-    console.log(query);
-    console.log('🔍 Parameters:');
-    console.log('- Id:', nextId);
-    console.log('- RebateCode:', RebateCode);
-    console.log('- CardCode:', CardCode);
-    console.log('- CardName:', CardName);
-    console.log('- QtrRebate:', qtrRebateValue);
-    
-    // Create request
     const request = req.db.request();
-    
-    // UPDATED: Add Id parameter
     request.input('Id', sql.Int, nextId);
     request.input('RebateCode', sql.NVarChar(50), RebateCode);
     request.input('CardCode', sql.NVarChar(15), CardCode);
     request.input('CardName', sql.NVarChar(100), CardName);
     request.input('QtrRebate', sql.Decimal(19, 6), qtrRebateValue);
-    
-    // Execute
+    request.input('CreatedDate', sql.DateTime, createdDateValue);
     await request.query(query);
-    
-    console.log(`✅ Fixed customer rebate saved successfully. ID: ${nextId}`);
-    
-    res.json({ 
-      success: true, 
-      id: nextId,
-      database: req.database
-    });
+
+    console.log(`✅ Fixed customer rebate saved. ID: ${nextId}, CreatedDate: ${createdDateValue}`);
+    res.json({ success: true, id: nextId, database: req.database });
   } catch (error) {
-    console.error('❌ ERROR DETAILS:');
-    console.error('Message:', error.message);
-    console.error('Error number:', error.number);
-    console.error('Error state:', error.state);
-    console.error('Line number:', error.lineNumber);
-    
-    // Check if there's SQL in the error
-    if (error.sql) {
-      console.error('SQL that caused error:', error.sql);
-    }
-    
-    res.status(500).json({ 
-      success: false, 
-      error: `Database error: ${error.message}`,
-      database: req.database 
-    });
+    console.error('❌ Error saving fixed customer rebate:', error);
+    res.status(500).json({ success: false, error: `Database error: ${error.message}`, database: req.database });
   }
 });
 
+
+// ─── FixCustQuota (single) ───────────────────────────────────────────────────
 router.post('/fix-cust-quota', async (req, res) => {
   try {
-    const { CustRebateId, Month, TargetQty, Id } = req.body;
-    
-    console.log(`💾 Saving fixed customer quota to database: ${req.database}`);
-    console.log('📤 Data received:', { Id, CustRebateId, Month, TargetQty });
-    
-    // Validate required fields
+    const { CustRebateId, Month, TargetQty, Id, CreatedDate } = req.body;
+    const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
+
     if (!CustRebateId) {
-      return res.status(400).json({
-        success: false,
-        error: 'CustRebateId is required and cannot be null',
-        database: req.database
-      });
+      return res.status(400).json({ success: false, error: 'CustRebateId is required', database: req.database });
     }
-    
     if (!Month) {
-      return res.status(400).json({
-        success: false,
-        error: 'Month is required',
-        database: req.database
-      });
+      return res.status(400).json({ success: false, error: 'Month is required', database: req.database });
     }
-    
-    // First, verify that the CustRebateId exists in FixCustRebate table
-    try {
-      const verifyQuery = `SELECT Id FROM FixCustRebate WHERE Id = @CustRebateId`;
-      const verifyResult = await req.db.request()
-        .input('CustRebateId', sql.Int, CustRebateId)
-        .query(verifyQuery);
-      
-      if (!verifyResult.recordset || verifyResult.recordset.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: `CustRebateId ${CustRebateId} does not exist in FixCustRebate table`,
-          database: req.database
-        });
-      }
-    } catch (verifyError) {
-      console.error('❌ Error verifying CustRebateId:', verifyError);
-      return res.status(400).json({
-        success: false,
-        error: `Invalid CustRebateId: ${verifyError.message}`,
-        database: req.database
-      });
+
+    const verifyResult = await req.db.request()
+      .input('CustRebateId', sql.Int, CustRebateId)
+      .query(`SELECT Id FROM FixCustRebate WHERE Id = @CustRebateId`);
+    if (!verifyResult.recordset || verifyResult.recordset.length === 0) {
+      return res.status(400).json({ success: false, error: `CustRebateId ${CustRebateId} does not exist`, database: req.database });
     }
-    
-    let query;
-    
-    if (Id !== undefined && Id !== null) {
-      // Check if this Id already exists to avoid duplicate key errors
-      try {
-        const checkIdQuery = `SELECT Id FROM FixCustQuota WHERE Id = @Id`;
-        const checkResult = await req.db.request()
-          .input('Id', sql.Int, Id)
-          .query(checkIdQuery);
-        
-        if (checkResult.recordset && checkResult.recordset.length > 0) {
-          // Id already exists, get the next available Id
-          const maxIdQuery = `SELECT ISNULL(MAX(Id), 0) as MaxId FROM FixCustQuota`;
-          const maxResult = await req.db.request().query(maxIdQuery);
-          Id = maxResult.recordset[0].MaxId + 1;
-          console.log(`⚠️ Id already exists, using next available Id: ${Id}`);
-        }
-      } catch (checkError) {
-        console.log('ℹ️ Could not check existing Id, continuing with provided Id');
+
+    let useId = Id;
+    if (useId !== undefined && useId !== null) {
+      const checkResult = await req.db.request().input('Id', sql.Int, useId).query(`SELECT Id FROM FixCustQuota WHERE Id = @Id`);
+      if (checkResult.recordset && checkResult.recordset.length > 0) {
+        const maxResult = await req.db.request().query(`SELECT ISNULL(MAX(Id), 0) as MaxId FROM FixCustQuota`);
+        useId = maxResult.recordset[0].MaxId + 1;
       }
-      
-      // Use provided Id
-      query = `
-        INSERT INTO FixCustQuota (Id, CustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
-        VALUES (@Id, @CustRebateId, @Month, @TargetQty, GETDATE(), GETDATE())
-      `;
-      
-      await req.db.request()
-        .input('Id', sql.Int, Id)
-        .input('CustRebateId', sql.Int, CustRebateId)
-        .input('Month', sql.NVarChar, Month)
-        .input('TargetQty', sql.Decimal(18, 2), TargetQty || 0)
-        .query(query);
-      
-      console.log(`✅ Fixed customer quota saved successfully with provided ID: ${Id}`);
-      
-      res.json({ 
-        success: true,
-        id: Id,
-        database: req.database
-      });
     } else {
-      // Get the next available Id
-      const maxIdQuery = `SELECT ISNULL(MAX(Id), 0) as MaxId FROM FixCustQuota`;
-      const maxResult = await req.db.request().query(maxIdQuery);
-      const nextId = maxResult.recordset[0].MaxId + 1;
-      
-      query = `
-        INSERT INTO FixCustQuota (Id, CustRebateId, Month, TargetQty, CreatedDate)
-        VALUES (@Id, @CustRebateId, @Month, @TargetQty, GETDATE())
-      `;
-      
-      await req.db.request()
-        .input('Id', sql.Int, nextId)
-        .input('CustRebateId', sql.Int, CustRebateId)
-        .input('Month', sql.NVarChar, Month)
-        .input('TargetQty', sql.Decimal(18, 2), TargetQty || 0)
-        .query(query);
-      
-      console.log(`✅ Fixed customer quota saved successfully. Generated ID: ${nextId}`);
-      
-      res.json({ 
-        success: true,
-        id: nextId,
-        database: req.database
-      });
+      const maxResult = await req.db.request().query(`SELECT ISNULL(MAX(Id), 0) as MaxId FROM FixCustQuota`);
+      useId = maxResult.recordset[0].MaxId + 1;
     }
+
+    const query = `
+      INSERT INTO FixCustQuota (Id, CustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
+      VALUES (@Id, @CustRebateId, @Month, @TargetQty, @CreatedDate, GETDATE())
+    `;
+    await req.db.request()
+      .input('Id', sql.Int, useId)
+      .input('CustRebateId', sql.Int, CustRebateId)
+      .input('Month', sql.NVarChar, Month)
+      .input('TargetQty', sql.Decimal(18, 2), TargetQty || 0)
+      .input('CreatedDate', sql.DateTime, createdDateValue)
+      .query(query);
+
+    console.log(`✅ Fixed customer quota saved. ID: ${useId}`);
+    res.json({ success: true, id: useId, database: req.database });
   } catch (error) {
     console.error('❌ Error saving fixed customer quota:', error);
-    
-    // Provide more specific error messages
-    let errorMessage = error.message;
-    
-    if (error.message.includes('PRIMARY KEY constraint')) {
-      errorMessage = 'Duplicate Id value. The provided Id already exists in the database.';
-    } else if (error.message.includes('FOREIGN KEY constraint')) {
-      errorMessage = 'Invalid CustRebateId. The customer record does not exist in FixCustRebate table.';
-    } else if (error.message.includes('Cannot insert the value NULL')) {
-      if (error.message.includes('CustRebateId')) {
-        errorMessage = 'CustRebateId cannot be null. Please provide a valid customer record Id.';
-      } else if (error.message.includes('Month')) {
-        errorMessage = 'Month cannot be null. Please provide a month value.';
-      }
-    }
-    
-    res.status(500).json({ 
-      success: false, 
-      error: errorMessage,
-      database: req.database 
-    });
+    res.status(500).json({ success: false, error: error.message, database: req.database });
   }
 });
 
-// Save to FixProdRebate table
+// ─── FixProdRebate ───────────────────────────────────────────────────────────
 router.post('/fix-prod-rebate', async (req, res) => {
   try {
-    const { RebateCode, ItemCode, ItemName, RebatePerBag, UnitPerQty, UnitOfMeasure } = req.body;
-    
-    console.log(`💾 Saving fixed product rebate to database: ${req.database}`);
-    
+    const { RebateCode, ItemCode, ItemName, RebatePerBag, UnitPerQty, UnitOfMeasure, CreatedDate } = req.body;
+    const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
     const nextId = await getNextId(req.db, 'FixProdRebate');
-    
+
     const query = `
-      INSERT INTO FixProdRebate (Id, RebateCode, ItemCode, ItemName, UnitPerQty, RebatePerBag, UnitOfMeasure, CreatedDate)
-      VALUES (@Id, @RebateCode, @ItemCode, @ItemName, @UnitPerQty, @RebatePerBag, @UnitOfMeasure, GETDATE())
+      INSERT INTO FixProdRebate (Id, RebateCode, ItemCode, ItemName, UnitPerQty, RebatePerBag, UnitOfMeasure, CreatedDate, UpdatedDate)
+      VALUES (@Id, @RebateCode, @ItemCode, @ItemName, @UnitPerQty, @RebatePerBag, @UnitOfMeasure, @CreatedDate, GETDATE())
     `;
-    
     await req.db.request()
       .input('Id', sql.Int, nextId)
       .input('RebateCode', sql.NVarChar, RebateCode)
@@ -452,77 +293,56 @@ router.post('/fix-prod-rebate', async (req, res) => {
       .input('UnitPerQty', sql.Decimal(18, 2), UnitPerQty || 0)
       .input('RebatePerBag', sql.Decimal(18, 2), RebatePerBag || 0)
       .input('UnitOfMeasure', sql.NVarChar, UnitOfMeasure || '')
+      .input('CreatedDate', sql.DateTime, createdDateValue)
       .query(query);
-    
-    console.log(`✅ Fixed product rebate saved successfully. ID: ${nextId}`);
-    
-    res.json({ 
-      success: true,
-      database: req.database
-    });
+
+    console.log(`✅ Fixed product rebate saved. ID: ${nextId}`);
+    res.json({ success: true, database: req.database });
   } catch (error) {
     console.error('❌ Error saving fixed product rebate:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      database: req.database 
-    });
+    res.status(500).json({ success: false, error: error.message, database: req.database });
   }
 });
 
-// Save to IncCustRebate table
+// ─── IncCustRebate ───────────────────────────────────────────────────────────
 router.post('/inc-cust-rebate', async (req, res) => {
   try {
-    const { RebateCode, CardCode, CardName, QtrRebate } = req.body;
-    
-    console.log(`💾 Saving incremental customer rebate to database: ${req.database}`);
-    
+    const { RebateCode, CardCode, CardName, QtrRebate, CreatedDate } = req.body;
+    const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
     const nextId = await getNextId(req.db, 'IncCustRebate');
-    
+
     const query = `
-      INSERT INTO IncCustRebate (Id, RebateCode, CardCode, CardName, QtrRebate, CreatedDate)
-      VALUES (@Id, @RebateCode, @CardCode, @CardName, @QtrRebate, GETDATE())
+      INSERT INTO IncCustRebate (Id, RebateCode, CardCode, CardName, QtrRebate, CreatedDate, UpdatedDate)
+      VALUES (@Id, @RebateCode, @CardCode, @CardName, @QtrRebate, @CreatedDate, GETDATE())
     `;
-    
     await req.db.request()
       .input('Id', sql.Int, nextId)
       .input('RebateCode', sql.NVarChar, RebateCode)
       .input('CardCode', sql.NVarChar, CardCode)
       .input('CardName', sql.NVarChar, CardName)
       .input('QtrRebate', sql.Int, QtrRebate || 0)
+      .input('CreatedDate', sql.DateTime, createdDateValue)
       .query(query);
-    
-    console.log(`✅ Incremental customer rebate saved successfully. ID: ${nextId}`);
-    
-    res.json({ 
-      success: true, 
-      id: nextId,
-      database: req.database
-    });
+
+    console.log(`✅ Incremental customer rebate saved. ID: ${nextId}`);
+    res.json({ success: true, id: nextId, database: req.database });
   } catch (error) {
     console.error('❌ Error saving incremental customer rebate:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      database: req.database 
-    });
+    res.status(500).json({ success: false, error: error.message, database: req.database });
   }
 });
 
-// Save to IncCustRange table
+// ─── IncCustRange ────────────────────────────────────────────────────────────
 router.post('/inc-cust-range', async (req, res) => {
   try {
-    const { IncCustRebateId, RangeNo, MinQty, MaxQty, RebatePerBag } = req.body;
-    
-    console.log(`💾 Saving incremental customer range to database: ${req.database}`);
-    
+    const { IncCustRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate } = req.body;
+    const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
     const nextId = await getNextId(req.db, 'IncCustRange');
-    
+
     const query = `
-      INSERT INTO IncCustRange (Id, IncCustRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate)
-      VALUES (@Id, @IncCustRebateId, @RangeNo, @MinQty, @MaxQty, @RebatePerBag, GETDATE())
+      INSERT INTO IncCustRange (Id, IncCustRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate, UpdatedDate)
+      VALUES (@Id, @IncCustRebateId, @RangeNo, @MinQty, @MaxQty, @RebatePerBag, @CreatedDate, GETDATE())
     `;
-    
     await req.db.request()
       .input('Id', sql.Int, nextId)
       .input('IncCustRebateId', sql.Int, IncCustRebateId)
@@ -530,38 +350,28 @@ router.post('/inc-cust-range', async (req, res) => {
       .input('MinQty', sql.Int, MinQty || 0)
       .input('MaxQty', sql.Int, MaxQty || 0)
       .input('RebatePerBag', sql.Int, RebatePerBag || 0)
+      .input('CreatedDate', sql.DateTime, createdDateValue)
       .query(query);
-    
-    console.log(`✅ Incremental customer range saved successfully. ID: ${nextId}`);
-    
-    res.json({ 
-      success: true,
-      database: req.database
-    });
+
+    console.log(`✅ Incremental customer range saved. ID: ${nextId}`);
+    res.json({ success: true, database: req.database });
   } catch (error) {
     console.error('❌ Error saving incremental customer range:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      database: req.database 
-    });
+    res.status(500).json({ success: false, error: error.message, database: req.database });
   }
 });
 
-// Save to IncItemRebate table
+// ─── IncItemRebate ───────────────────────────────────────────────────────────
 router.post('/inc-item-rebate', async (req, res) => {
   try {
-    const { RebateCode, ItemCode, ItemName, UnitPerQty, UnitOfMeasure } = req.body;
-    
-    console.log(`💾 Saving incremental item rebate to database: ${req.database}`);
-    
+    const { RebateCode, ItemCode, ItemName, UnitPerQty, UnitOfMeasure, CreatedDate } = req.body;
+    const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
     const nextId = await getNextId(req.db, 'IncItemRebate');
-    
+
     const query = `
-      INSERT INTO IncItemRebate (Id, RebateCode, ItemCode, ItemName, UnitPerQty, UnitOfMeasure, CreatedDate)
-      VALUES (@Id, @RebateCode, @ItemCode, @ItemName, @UnitPerQty, @UnitOfMeasure, GETDATE())
+      INSERT INTO IncItemRebate (Id, RebateCode, ItemCode, ItemName, UnitPerQty, UnitOfMeasure, CreatedDate, UpdatedDate)
+      VALUES (@Id, @RebateCode, @ItemCode, @ItemName, @UnitPerQty, @UnitOfMeasure, @CreatedDate, GETDATE())
     `;
-    
     await req.db.request()
       .input('Id', sql.Int, nextId)
       .input('RebateCode', sql.NVarChar, RebateCode)
@@ -569,39 +379,29 @@ router.post('/inc-item-rebate', async (req, res) => {
       .input('ItemName', sql.NVarChar, ItemName)
       .input('UnitPerQty', sql.Int, UnitPerQty || 0)
       .input('UnitOfMeasure', sql.NVarChar, UnitOfMeasure || '')
+      .input('CreatedDate', sql.DateTime, createdDateValue)
       .query(query);
-    
-    console.log(`✅ Incremental item rebate saved successfully. ID: ${nextId}`);
-    
-    res.json({ 
-      success: true, 
-      id: nextId,
-      database: req.database
-    });
+
+    console.log(`✅ Incremental item rebate saved. ID: ${nextId}`);
+    res.json({ success: true, id: nextId, database: req.database });
   } catch (error) {
     console.error('❌ Error saving incremental item rebate:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      database: req.database 
-    });
+    res.status(500).json({ success: false, error: error.message, database: req.database });
   }
 });
 
-// Save to IncItemRange table
+
+// ─── IncItemRange ────────────────────────────────────────────────────────────
 router.post('/inc-item-range', async (req, res) => {
   try {
-    const { ItemRebateId, RangeNo, MinQty, MaxQty, RebatePerBag } = req.body;
-    
-    console.log(`💾 Saving incremental item range to database: ${req.database}`);
-    
+    const { ItemRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate } = req.body;
+    const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
     const nextId = await getNextId(req.db, 'IncItemRange');
-    
+
     const query = `
-      INSERT INTO IncItemRange (Id, ItemRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate)
-      VALUES (@Id, @ItemRebateId, @RangeNo, @MinQty, @MaxQty, @RebatePerBag, GETDATE())
+      INSERT INTO IncItemRange (Id, ItemRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate, UpdatedDate)
+      VALUES (@Id, @ItemRebateId, @RangeNo, @MinQty, @MaxQty, @RebatePerBag, @CreatedDate, GETDATE())
     `;
-    
     await req.db.request()
       .input('Id', sql.Int, nextId)
       .input('ItemRebateId', sql.Int, ItemRebateId)
@@ -609,141 +409,98 @@ router.post('/inc-item-range', async (req, res) => {
       .input('MinQty', sql.Int, MinQty || 0)
       .input('MaxQty', sql.Int, MaxQty || 0)
       .input('RebatePerBag', sql.Int, RebatePerBag || 0)
+      .input('CreatedDate', sql.DateTime, createdDateValue)
       .query(query);
-    
-    console.log(`✅ Incremental item range saved successfully. ID: ${nextId}`);
-    
-    res.json({ 
-      success: true,
-      database: req.database
-    });
+
+    console.log(`✅ Incremental item range saved. ID: ${nextId}`);
+    res.json({ success: true, database: req.database });
   } catch (error) {
     console.error('❌ Error saving incremental item range:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      database: req.database 
-    });
+    res.status(500).json({ success: false, error: error.message, database: req.database });
   }
 });
 
 
-// Save to PerCustRebate table
+// ─── PerCustRebate ───────────────────────────────────────────────────────────
 router.post('/per-cust-rebate', async (req, res) => {
   try {
-    const { RebateCode, CardCode, CardName } = req.body;
-    
-    console.log(`💾 Saving percentage customer rebate to database: ${req.database}`);
-    
-    // Don't get next ID for identity column - let SQL Server generate it
+    const { RebateCode, CardCode, CardName, CreatedDate } = req.body;
+    const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
+
     const query = `
-      INSERT INTO PerCustRebate (RebateCode, CardCode, CardName, CreatedDate)
-      VALUES (@RebateCode, @CardCode, @CardName, GETDATE());
-      
+      INSERT INTO PerCustRebate (RebateCode, CardCode, CardName, CreatedDate, UpdatedDate)
+      VALUES (@RebateCode, @CardCode, @CardName, @CreatedDate, GETDATE());
       SELECT SCOPE_IDENTITY() as NewId;
     `;
-    
     const result = await req.db.request()
       .input('RebateCode', sql.NVarChar, RebateCode)
       .input('CardCode', sql.NVarChar, CardCode)
       .input('CardName', sql.NVarChar, CardName)
+      .input('CreatedDate', sql.DateTime, createdDateValue)
       .query(query);
-    
+
     const newId = result.recordset[0].NewId;
-    
-    console.log(`✅ Percentage customer rebate saved successfully. ID: ${newId}`);
-    
-    res.json({ 
-      success: true, 
-      id: newId,
-      database: req.database
-    });
+    console.log(`✅ Percentage customer rebate saved. ID: ${newId}`);
+    res.json({ success: true, id: newId, database: req.database });
   } catch (error) {
     console.error('❌ Error saving percentage customer rebate:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      database: req.database 
-    });
+    res.status(500).json({ success: false, error: error.message, database: req.database });
   }
 });
 
-// Save to PerCustQuota table - UPDATED to handle Id if needed
+// ─── PerCustQuota (single) ───────────────────────────────────────────────────
 router.post('/per-cust-quota', async (req, res) => {
   try {
-    const { PerCustRebateId, Month, TargetQty, Id } = req.body;
-    
-    console.log(`💾 Saving percentage customer quota to database: ${req.database}`);
-    console.log('📤 Data received:', { Id, PerCustRebateId, Month, TargetQty });
-    
+    const { PerCustRebateId, Month, TargetQty, Id, CreatedDate } = req.body;
+    const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
     let query, request;
-    
-    // Check if Id was provided (for non-identity columns)
+
     if (Id !== undefined && Id !== null) {
-      console.log(`🔢 Using provided ID: ${Id}`);
       query = `
-        INSERT INTO PerCustQuota (Id, PerCustRebateId, Month, TargetQty, CreatedDate)
-        VALUES (@Id, @PerCustRebateId, @Month, @TargetQty, GETDATE());
-        
+        INSERT INTO PerCustQuota (Id, PerCustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
+        VALUES (@Id, @PerCustRebateId, @Month, @TargetQty, @CreatedDate, GETDATE());
         SELECT @Id as NewId;
       `;
-      
       request = req.db.request()
         .input('Id', sql.Int, Id)
         .input('PerCustRebateId', sql.Int, PerCustRebateId)
         .input('Month', sql.NVarChar, Month)
-        .input('TargetQty', sql.Decimal(18, 2), TargetQty || 0);
+        .input('TargetQty', sql.Decimal(18, 2), TargetQty || 0)
+        .input('CreatedDate', sql.DateTime, createdDateValue);
     } else {
-      // Assume Id is identity column (auto-increment)
-      console.log(`🔢 Using identity column (auto-increment)`);
       query = `
-        INSERT INTO PerCustQuota (PerCustRebateId, Month, TargetQty, CreatedDate)
-        VALUES (@PerCustRebateId, @Month, @TargetQty, GETDATE());
-        
+        INSERT INTO PerCustQuota (PerCustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
+        VALUES (@PerCustRebateId, @Month, @TargetQty, @CreatedDate, GETDATE());
         SELECT SCOPE_IDENTITY() as NewId;
       `;
-      
       request = req.db.request()
         .input('PerCustRebateId', sql.Int, PerCustRebateId)
         .input('Month', sql.NVarChar, Month)
-        .input('TargetQty', sql.Decimal(18, 2), TargetQty || 0);
+        .input('TargetQty', sql.Decimal(18, 2), TargetQty || 0)
+        .input('CreatedDate', sql.DateTime, createdDateValue);
     }
-    
+
     const result = await request.query(query);
     const newId = result.recordset[0].NewId;
-    
-    console.log(`✅ Percentage customer quota saved successfully. ID: ${newId}`);
-    
-    res.json({ 
-      success: true,
-      id: newId,
-      database: req.database
-    });
+    console.log(`✅ Percentage customer quota saved. ID: ${newId}`);
+    res.json({ success: true, id: newId, database: req.database });
   } catch (error) {
     console.error('❌ Error saving percentage customer quota:', error);
-    console.error('📋 Error details:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      database: req.database 
-    });
+    res.status(500).json({ success: false, error: error.message, database: req.database });
   }
 });
 
-// Save to PerProdRebate table
+// ─── PerProdRebate ───────────────────────────────────────────────────────────
 router.post('/per-prod-rebate', async (req, res) => {
   try {
-    const { RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag, UnitOfMeasure } = req.body;
-    
-    console.log(`💾 Saving percentage product rebate to database: ${req.database}`);
-    
-    // Don't get next ID for identity column - let SQL Server generate it
+    const { RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag, UnitOfMeasure, CreatedDate } = req.body;
+    const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
+
     const query = `
-      INSERT INTO PerProdRebate (RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag, UnitOfMeasure, CreatedDate)
-      VALUES (@RebateCode, @ItemCode, @ItemName, @UnitPerQty, @PercentagePerBag, @UnitOfMeasure, GETDATE());
+      INSERT INTO PerProdRebate (RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag, UnitOfMeasure, CreatedDate, UpdatedDate)
+      VALUES (@RebateCode, @ItemCode, @ItemName, @UnitPerQty, @PercentagePerBag, @UnitOfMeasure, @CreatedDate, GETDATE());
       SELECT SCOPE_IDENTITY() as NewId;
     `;
-    
     const result = await req.db.request()
       .input('RebateCode', sql.NVarChar, RebateCode)
       .input('ItemCode', sql.NVarChar, ItemCode)
@@ -751,24 +508,15 @@ router.post('/per-prod-rebate', async (req, res) => {
       .input('UnitPerQty', sql.Int, UnitPerQty || 0)
       .input('PercentagePerBag', sql.Int, PercentagePerBag || 0)
       .input('UnitOfMeasure', sql.NVarChar, UnitOfMeasure || '')
+      .input('CreatedDate', sql.DateTime, createdDateValue)
       .query(query);
-    
+
     const newId = result.recordset[0].NewId;
-    
-    console.log(`✅ Percentage product rebate saved successfully. ID: ${newId}`);
-    
-    res.json({ 
-      success: true,
-      id: newId,
-      database: req.database
-    });
+    console.log(`✅ Percentage product rebate saved. ID: ${newId}`);
+    res.json({ success: true, id: newId, database: req.database });
   } catch (error) {
     console.error('❌ Error saving percentage product rebate:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      database: req.database 
-    });
+    res.status(500).json({ success: false, error: error.message, database: req.database });
   }
 });
 
@@ -1371,7 +1119,6 @@ router.get('/rebate-program/by-code/:code', async (req, res) => {
   res.json({ success: true, program: result.recordset[0] || null });
 });
 
-// GET /api/rebate-program/customers/:code?type=Fixed|Incremental|Percentage
 router.get('/rebate-program/customers/:code', async (req, res) => {
   const map = { Fixed:'FixCustRebate', Incremental:'IncCustRebate', Percentage:'PerCustRebate' };
   const tbl = map[req.query.type] || 'FixCustRebate';
@@ -1380,7 +1127,6 @@ router.get('/rebate-program/customers/:code', async (req, res) => {
   res.json({ success: true, customers: result.recordset });
 });
 
-// GET /api/rebate-program/items/:code?type=Fixed|Incremental|Percentage
 router.get('/rebate-program/items/:code', async (req, res) => {
   const map = { Fixed:'FixProdRebate', Incremental:'IncItemRebate', Percentage:'PerProdRebate' };
   const tbl = map[req.query.type] || 'FixProdRebate';

@@ -32,11 +32,12 @@ import VanQuotaPerformance from '../components/Dashboard/StatusSummary/VanQuotaP
 import VanTransactionRecords from '../components/Dashboard/StatusSummary/VanTransactionRecords';
 import VanPayoutHistory from "../components/Dashboard/StatusSummary/VanPayoutHistory";
 import { useComponentRegistration } from '../hooks/useComponentRegistration';
+import { ToastContainer, useToast } from "../components/common/Toast";
 
 function Van_Dashboard() {
   const location = useLocation();
   const { theme, updateTheme } = useTheme();
-    
+  const { toasts, showToast, removeToast } = useToast();    
   // State declarations
   const dbType = "VAN";
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
@@ -1245,7 +1246,7 @@ useEffect(() => {
     return Object.values(summary);
   };
 
-// ✅ loadCustomerStatus FIRST
+// loadCustomerStatus FIRST
 const loadCustomerStatus = useCallback(async (forceRefresh = false) => {
   try {
     setCustomersLoading(true);
@@ -1323,7 +1324,7 @@ const loadCustomerStatus = useCallback(async (forceRefresh = false) => {
     loadCustomerStatus();
   }, [loadCustomerStatus]);
 
-  // ✅ loadDashboardData SECOND (can now safely call loadCustomerStatus)
+  // loadDashboardData SECOND (can now safely call loadCustomerStatus)
   const loadDashboardData = async () => {
     setLoading(true);
     try {
@@ -1363,9 +1364,9 @@ const loadCustomerStatus = useCallback(async (forceRefresh = false) => {
       console.error('Error loading dashboard data:', error);
       setRebates([]);
     } finally {
-      setLoading(false); // ✅ page visible immediately
+      setLoading(false); // page visible immediately
     }
-    loadCustomerStatus(); // ✅ now safe — defined above
+    loadCustomerStatus(); // now safe — defined above
   };
 
   const loadCustomerDetails = async (customerCode, rebateCode, rebateType, forceAutoLoad = true) => {
@@ -1390,7 +1391,7 @@ const loadCustomerStatus = useCallback(async (forceRefresh = false) => {
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
-          console.log('✅ Customer details loaded with frequency:', data.data.frequency);
+          console.log('Customer details loaded with frequency:', data.data.frequency);
           
           // Use frequency from backend response
           const frequency = data.data.frequency || 'Quarterly';
@@ -2344,7 +2345,7 @@ const loadDetailedPayoutsData = async (autoLoad = true) => {
     
     if (data.success) {
       if (data.data.payouts && data.data.payouts.length > 0) {
-        console.log('✅ Payouts loaded:', data.data.payouts.length);
+        console.log('Payouts loaded:', data.data.payouts.length);
         
         // Process payouts with carry-over
         const payoutsWithCarryOver = applyBalanceCarryOver(data.data.payouts);
@@ -2448,8 +2449,7 @@ const handleRebateClick = async (rebate) => {
       setOriginalRebateDetails(JSON.parse(JSON.stringify(fallbackData)));
       
       // Show error message to user
-      setSaveMessage("⚠️ Could not load detailed rebate data. Showing basic information.");
-      setTimeout(() => setSaveMessage(null), 3000);
+      showToast("Could not load detailed rebate data. Showing basic information.", "warning");
     }
     
     setActiveTab('customers');
@@ -2471,8 +2471,7 @@ const handleRebateClick = async (rebate) => {
     setRebateDetails(fallbackData);
     setOriginalRebateDetails(JSON.parse(JSON.stringify(fallbackData)));
     
-    setSaveMessage("❌ Error loading rebate details. Please try again.");
-    setTimeout(() => setSaveMessage(null), 3000);
+    showToast("Error loading rebate details. Please try again.", "error");
   }
 };
 
@@ -2484,7 +2483,7 @@ const loadIncrementalRangeData = async (rebateCode, customerCode) => {
     const rebateDetails = await loadRebateDetails(rebateCode);
     
     if (rebateDetails?.ranges?.length > 0) {
-      console.log('✅ Found ranges in rebate details:', rebateDetails.ranges);
+      console.log('Found ranges in rebate details:', rebateDetails.ranges);
       return rebateDetails.ranges;
     }
     
@@ -2497,7 +2496,7 @@ const loadIncrementalRangeData = async (rebateCode, customerCode) => {
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.data?.ranges?.length > 0) {
-          console.log('✅ Found ranges in customer data:', data.data.ranges);
+          console.log('Found ranges in customer data:', data.data.ranges);
           return data.data.ranges;
         }
       }
@@ -2521,7 +2520,7 @@ const loadIncrementalRangeData = async (rebateCode, customerCode) => {
       });
       
       if (itemRanges.length > 0) {
-        console.log('✅ Found ranges in item data:', itemRanges);
+        console.log('Found ranges in item data:', itemRanges);
         // Deduplicate ranges
         const uniqueRanges = [];
         const seen = new Set();
@@ -2587,7 +2586,7 @@ const handleCustomerClick = async (customer) => {
       }
     };
     
-    console.log('✅ Final customer data with frequency:', {
+    console.log('Final customer data with frequency:', {
       frequency: updatedCustomerData.frequency,
       isMonthly: updatedCustomerData.frequency === 'Monthly'
     });
@@ -2620,7 +2619,7 @@ useEffect(() => {
         );
         
         if (ranges.length > 0) {
-          console.log('✅ Loaded incremental ranges:', ranges.length);
+          console.log('Loaded incremental ranges:', ranges.length);
           
           // Update the modalCustomer with the fetched ranges
           setModalCustomer(prev => {
@@ -2681,8 +2680,7 @@ useEffect(() => {
       if (response.ok) {
         const result = await response.json();
         if (result.success) {
-          setSaveMessage(`Status updated to ${newStatus}`);
-          setTimeout(() => setSaveMessage(null), 3000);
+          showToast(`Status updated to ${newStatus}`, "success");
           
           setDetailedPayouts(prev => prev.map(p => 
             p.Id === payoutId ? {
@@ -2709,8 +2707,7 @@ useEffect(() => {
       
     } catch (error) {
       console.error('Error updating status:', error);
-      setSaveMessage('Error updating status');
-      setTimeout(() => setSaveMessage(null), 3000);
+      showToast("Error updating status", "error");
     }
   };
 
@@ -2784,8 +2781,7 @@ useEffect(() => {
       const result = await response.json();
       
       if (result.success) {
-        setSaveMessage(` Amount released updated to ₱${validatedAmount.toFixed(2)}`);
-        setTimeout(() => setSaveMessage(null), 3000);
+        showToast(`Amount released updated to ₱${validatedAmount.toFixed(2)}`, "success");
         
         setDetailedPayouts(prev => prev.map(p => 
           p.Id === payoutId ? {
@@ -2801,8 +2797,7 @@ useEffect(() => {
       
     } catch (error) {
       console.error('❌ Error updating amount released:', error);
-      setSaveMessage(`❌ Error: ${error.message}`);
-      setTimeout(() => setSaveMessage(null), 5000);
+      showToast(`Error: ${error.message}`, "error");
       
       await loadDetailedPayoutsData();
     }
@@ -2861,8 +2856,7 @@ useEffect(() => {
       const result = await response.json();
       
       if (result.success) {
-        setSaveMessage(' Payout saved to database successfully');
-        setTimeout(() => setSaveMessage(null), 3000);
+        showToast("Payout saved to database successfully", "success");
         
         setDetailedPayouts(prev => prev.map(p => 
           p.Id === payoutId ? {
@@ -2878,8 +2872,7 @@ useEffect(() => {
       
     } catch (error) {
       console.error('❌ Save error:', error);
-      setSaveMessage(`❌ Error: ${error.message}`);
-      setTimeout(() => setSaveMessage(null), 5000);
+      showToast(`Error: ${error.message}`, "error");
     }
   };
 
@@ -2909,7 +2902,7 @@ useEffect(() => {
   const applyPeriodFilter = async (tabType) => {
     if (!modalCustomer) return;
     
-    setSaveMessage("Applying filters...");
+    showToast("Applying filters...", "info");
     setUseAutoDates(false);
     
     try {
@@ -2946,11 +2939,9 @@ useEffect(() => {
         await loadDetailedPayoutsData(false);
       }
       
-      setSaveMessage("Period filter applied!");
+      showToast("Period filter applied!", "success");
     } catch (error) {
-      setSaveMessage("Error applying filter");
-    } finally {
-      setTimeout(() => setSaveMessage(null), 2000);
+      showToast("Error applying filter", "error");
     }
   };
 
@@ -2965,14 +2956,12 @@ useEffect(() => {
     setDetailedTransactions([]);
     setDetailedPayouts([]);
     
-    setSaveMessage("Showing all data!");
-    setTimeout(() => setSaveMessage(null), 2000);
+    showToast("Showing all data!", "success");
   };
 
   const handleRefresh = () => {
     loadDashboardData();
-    setSaveMessage("Data refreshed successfully!");
-    setTimeout(() => setSaveMessage(null), 3000);
+    showToast("Data refreshed successfully!", "success");
   };
 
   const clearRebateFilters = () => {
@@ -2982,14 +2971,12 @@ useEffect(() => {
     setRebateDateTo("");
     setRebateSearchTerm("");
     setActiveFilter("all");
-    setSaveMessage("All rebate filters cleared!");
-    setTimeout(() => setSaveMessage(null), 2000);
+    showToast("All rebate filters cleared!", "success");
   };
 
   const applyRebateFilters = () => {
     setShowRebateFilters(false);
-    setSaveMessage("Rebate filters applied successfully!");
-    setTimeout(() => setSaveMessage(null), 2000);
+    showToast("Rebate filters applied successfully!", "success");
   };
 
   const clearAllFilters = () => {
@@ -3002,14 +2989,12 @@ useEffect(() => {
     setStatusSummaryPeriodFrom("");
     setStatusSummaryPeriodTo("");
     setSearchTerm("");
-    setSaveMessage("All filters cleared!");
-    setTimeout(() => setSaveMessage(null), 2000);
+    showToast("All filters cleared!", "success");
   };
 
   const applyFilters = () => {
     setShowFilters(false);
-    setSaveMessage("Filters applied successfully!");
-    setTimeout(() => setSaveMessage(null), 2000);
+    showToast("Filters applied successfully!", "success");
   };
 
   // Customer editing functions
@@ -3116,8 +3101,7 @@ useEffect(() => {
       const customerToUpdate = rebateDetails.customers.find(c => c.code === customerCode);
       
       if (!customerToUpdate) {
-        setSaveMessage("Customer not found!");
-        setTimeout(() => setSaveMessage(null), 3000);
+        showToast("Customer not found!", "error");
         return;
       }
 
@@ -3180,7 +3164,7 @@ useEffect(() => {
           ...prev,
           [customerCode]: false
         }));
-        setSaveMessage("Customer data updated successfully!");
+        showToast("Customer data updated successfully!", "success");
         
         // Reload rebate details
         console.log('🔄 Reloading rebate details...');
@@ -3192,13 +3176,11 @@ useEffect(() => {
           console.warn('⚠️ Could not reload rebate details');
         }
       } else {
-        setSaveMessage(`❌ Failed: ${result.message || "Unknown error"}`);
+        showToast(`Failed: ${result.message || "Unknown error"}`, "error");
       }
     } catch (error) {
       console.error('❌ Error updating customer data:', error);
-      setSaveMessage(`❌ Error: ${error.message}`);
-    } finally {
-      setTimeout(() => setSaveMessage(null), 3000);
+      showToast(`Error: ${error.message}`, "error");
     }
   };
 
@@ -3280,8 +3262,7 @@ const handleSaveItem = async (itemCode) => {
     const itemToUpdate = rebateDetails.items.find(i => i.code === itemCode);
     
     if (!itemToUpdate) {
-      setSaveMessage("Item not found!");
-      setTimeout(() => setSaveMessage(null), 3000);
+      showToast("Item not found!", "error");
       return;
     }
 
@@ -3320,7 +3301,7 @@ const handleSaveItem = async (itemCode) => {
     const result = await response.json();
     if (response.ok && result.success) {
       setEditingItems(prev => ({ ...prev, [itemCode]: false }));
-      setSaveMessage("Item data updated successfully!");
+      showToast("Item data updated successfully!", "success");
       
       const updatedDetails = await loadRebateDetails(selectedRebate.code);
       if (updatedDetails) {
@@ -3328,13 +3309,11 @@ const handleSaveItem = async (itemCode) => {
         setOriginalRebateDetails(JSON.parse(JSON.stringify(updatedDetails)));
       }
     } else {
-      setSaveMessage(result.message || "Failed to update item data");
+      showToast(result.message || "Failed to update item data", "error");
     }
   } catch (error) {
     console.error('❌ Error updating item data:', error);
-    setSaveMessage("Error updating item data: " + error.message);
-  } finally {
-    setTimeout(() => setSaveMessage(null), 3000);
+    showToast("Error updating item data: " + error.message, "error");
   }
 };
 
@@ -3388,16 +3367,13 @@ const handleSaveItem = async (itemCode) => {
           )
         );
         
-        setSaveMessage(`Rebate ${rebateCode} status updated to ${numericStatus === 1 ? 'Active' : 'Inactive'}!`);
-        setTimeout(() => setSaveMessage(null), 3000);
+        showToast(`Rebate ${rebateCode} status updated to ${numericStatus === 1 ? 'Active' : 'Inactive'}!`, "success");
       } else {
-        setSaveMessage(`Failed to update status: ${result.message || 'Unknown error'}`);
-        setTimeout(() => setSaveMessage(null), 3000);
+        showToast(`Failed to update status: ${result.message || 'Unknown error'}`, "error");
       }
     } catch (error) {
       console.error('❌ Error updating rebate status:', error);
-      setSaveMessage(`❌ Error updating status: ${error.message}`);
-      setTimeout(() => setSaveMessage(null), 5000);
+      showToast(`Error updating status: ${error.message}`, "error");
     }
   };
 
@@ -3408,8 +3384,7 @@ const handleSaveItem = async (itemCode) => {
     
     setStatusSummaryPeriodFrom(firstDay.toISOString().split('T')[0]);
     setStatusSummaryPeriodTo(lastDay.toISOString().split('T')[0]);
-    setSaveMessage("Showing all data in status summary!");
-    setTimeout(() => setSaveMessage(null), 2000);
+    showToast("Showing all data in status summary!", "success");
   };
 
   const renderMonthlyTransactionTable = () => {
@@ -6310,28 +6285,7 @@ const renderPercentageItemsTable = ({ access } = {}) => {
   // The JSX return statement
   return (
     <div className="flex min-h-screen w-full bg-gradient-to-br from-slate-50 to-blue-50 font-poppins text-slate-900">
-      {saveMessage && (
-        <div className="fixed bottom-6 right-6 z-[100] animate-in slide-in-from-bottom-8 duration-300">
-          <div className={`px-6 py-3 rounded-xl shadow-2xl border flex items-center gap-3 backdrop-blur-sm ${
-            saveMessage.includes('❌') 
-              ? 'bg-gradient-to-r from-red-500 to-red-600 text-white border-red-400' 
-              : 'bg-gradient-to-r from-emerald-500 to-green-500 text-white border-emerald-400'
-          }`}>
-            <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
-              saveMessage.includes('❌') ? 'bg-red-600/30' : 'bg-emerald-600/30'
-            }`}>
-              {saveMessage.includes('❌') ? (
-                <X size={16} className="text-white" />
-              ) : (
-                <Check size={16} className="text-white" />
-              )}
-            </div>
-            <span className="font-semibold">
-              {saveMessage.replace('❌ ', '')}
-            </span>
-          </div>
-        </div>
-      )}
+      <ToastContainer toasts={toasts} removeToast={removeToast} isDark={theme === 'dark'} />
 
       {loading && <Loading theme={theme} />}
 
@@ -6749,8 +6703,6 @@ const renderPercentageItemsTable = ({ access } = {}) => {
               setEditingPayoutId={setEditingPayoutId}
               editedAmountReleased={editedAmountReleased}
               setEditedAmountReleased={setEditedAmountReleased}
-              saveMessage={saveMessage}
-              setSaveMessage={setSaveMessage}
               handlePayoutStatusChange={handlePayoutStatusChange}
               handleSaveAmountReleased={handleSaveAmountReleased}
               loadDetailedPayoutsData={loadDetailedPayoutsData}

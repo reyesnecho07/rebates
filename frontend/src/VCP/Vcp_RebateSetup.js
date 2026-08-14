@@ -228,7 +228,7 @@ const testUnitDetection = () => {
       console.log(`${status} Input: ${test.input.padEnd(50)} => ${result || '—'}`);
     });
   } else {
-    console.log("\n✅ ALL TESTS PASSED!\n");
+    console.log("\n ALL TESTS PASSED!\n");
     testCases.forEach((test, index) => {
       const result = detectUnitOfMeasure(test.input);
       console.log(`✓ ${test.input.padEnd(50)} => ${result || '—'}`);
@@ -263,28 +263,28 @@ const CustomOption = ({ innerRef, innerProps, isFocused, isSelected, children })
 const Toast = ({ message, type, onClose, isDark }) => {
   const styles = {
     success: {
-      bg:   isDark ? "bg-emerald-950 border-emerald-700/50" : "bg-white border-emerald-200",
-      text: isDark ? "text-emerald-300"  : "text-emerald-700",
-      icon: isDark ? "text-emerald-400"  : "text-emerald-500",
-      bar:  "bg-emerald-500",
+      bg:     isDark ? "bg-slate-900" : "bg-white",
+      border: isDark ? "border-emerald-700/50" : "border-emerald-200",
+      text:   isDark ? "text-emerald-400" : "text-emerald-600",
+      icon:   isDark ? "text-emerald-400" : "text-emerald-500",
     },
     error: {
-      bg:   isDark ? "bg-red-950 border-red-700/50" : "bg-white border-red-200",
-      text: isDark ? "text-red-300"  : "text-red-700",
-      icon: isDark ? "text-red-400"  : "text-red-500",
-      bar:  "bg-red-500",
+      bg:     isDark ? "bg-slate-900" : "bg-white",
+      border: isDark ? "border-red-700/50" : "border-red-200",
+      text:   isDark ? "text-red-400" : "text-red-600",
+      icon:   isDark ? "text-red-400" : "text-red-500",
     },
     warning: {
-      bg:   isDark ? "bg-amber-950 border-amber-700/50" : "bg-white border-amber-200",
-      text: isDark ? "text-amber-300"  : "text-amber-700",
-      icon: isDark ? "text-amber-400"  : "text-amber-500",
-      bar:  "bg-amber-500",
+      bg:     isDark ? "bg-slate-900" : "bg-white",
+      border: isDark ? "border-amber-700/50" : "border-amber-200",
+      text:   isDark ? "text-amber-400" : "text-amber-600",
+      icon:   isDark ? "text-amber-400" : "text-amber-500",
     },
     info: {
-      bg:   isDark ? "bg-slate-900 border-slate-700/50" : "bg-white border-blue-200",
-      text: isDark ? "text-slate-300"  : "text-slate-700",
-      icon: isDark ? "text-blue-400"   : "text-blue-500",
-      bar:  "bg-blue-500",
+      bg:     isDark ? "bg-slate-900" : "bg-white",
+      border: isDark ? "border-blue-700/50" : "border-blue-200",
+      text:   isDark ? "text-blue-400" : "text-blue-600",
+      icon:   isDark ? "text-blue-400" : "text-blue-500",
     },
   };
   const s = styles[type] || styles.info;
@@ -295,15 +295,16 @@ const Toast = ({ message, type, onClose, isDark }) => {
     info:    <Info className="w-4 h-4" />,
   };
   return (
-    <div className={`relative flex items-center gap-3 px-4 py-3.5 rounded-xl border shadow-2xl overflow-hidden ${s.bg} animate-slide-in-right`}
-         style={{ backdropFilter: 'blur(12px)', minWidth: '320px' }}>
-      <div className={`absolute bottom-0 left-0 h-0.5 w-full opacity-60 ${s.bar}`} />
-      <div className={`flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center ${s.icon}`}
-           style={{ background: 'rgba(255,255,255,0.06)' }}>
-        {icons[type]}
-      </div>
+    <div
+      className={`flex items-center gap-2.5 pl-3.5 pr-3 py-2.5 rounded-2xl border shadow-lg ${s.bg} ${s.border} animate-slide-in-right`}
+      style={{ minWidth: '300px', maxWidth: '380px' }}
+    >
+      <span className={`flex-shrink-0 ${s.icon}`}>{icons[type]}</span>
       <span className={`text-sm font-medium flex-1 leading-snug ${s.text}`}>{message}</span>
-      <button onClick={onClose} className={`ml-1 hover:opacity-60 transition-opacity flex-shrink-0 ${s.icon}`}>
+      <button
+        onClick={onClose}
+        className={`flex-shrink-0 ${s.icon} hover:opacity-60 transition-opacity`}
+      >
         <X className="w-3.5 h-3.5" />
       </button>
     </div>
@@ -311,13 +312,12 @@ const Toast = ({ message, type, onClose, isDark }) => {
 };
 
 const ToastContainer = ({ toasts, removeToast, isDark }) => (
-  <div className="fixed bottom-6 right-6 z-50 space-y-2.5 max-w-sm">
+  <div className="fixed bottom-6 right-6 z-50 space-y-2 max-w-sm">
     {toasts.map((toast) => (
       <Toast key={toast.id} message={toast.message} type={toast.type} onClose={() => removeToast(toast.id)} isDark={isDark} />
     ))}
   </div>
 );
-
 // ─── Confirmation Modal ───────────────────────────────────────────────────────
 const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
   if (!isOpen) return null;
@@ -1506,11 +1506,24 @@ function Vcp_RebateSetup() {
     setLoading(true);
     const codeToUpdate = loadedRebateCode;
     try {
+      // Fetch existing customers/items BEFORE deleting, to preserve CreatedDate
+      const existingCustRes  = await fetch(`${API_BASE}/rebate-program/customers/${encodeURIComponent(codeToUpdate)}?db=VCP&type=${encodeURIComponent(rebateType)}`);
+      const existingItemsRes = await fetch(`${API_BASE}/rebate-program/items/${encodeURIComponent(codeToUpdate)}?db=VCP&type=${encodeURIComponent(rebateType)}`);
+      let existingCustomers = [], existingItems = [];
+      if (existingCustRes.ok)  existingCustomers = (await existingCustRes.json()).customers || [];
+      if (existingItemsRes.ok) existingItems     = (await existingItemsRes.json()).items || [];
+
+      const customerCreatedMap = {};
+      existingCustomers.forEach(c => { customerCreatedMap[c.CardCode] = c.CreatedDate; });
+      const itemCreatedMap = {};
+      existingItems.forEach(i => { itemCreatedMap[i.ItemCode] = i.CreatedDate; });
+
       const salesEmployee = Array.isArray(salesEmployees)
         ? salesEmployees.find(emp => emp.SlpName === selectedSalesEmployee)
         : null;
       const slpCode = salesEmployee ? salesEmployee.SlpCode : null;
       if (!slpCode) throw new Error("Sales employee code not found");
+
       const progRes = await fetch(`${API_BASE}/rebate-program/${encodeURIComponent(codeToUpdate)}?db=VCP`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -1527,17 +1540,17 @@ function Vcp_RebateSetup() {
         }),
       });
       if (!progRes.ok) { const t = await progRes.text(); throw new Error(`Failed to update program header: ${t}`); }
+
       const delRes = await fetch(`${API_BASE}/rebate-program/${encodeURIComponent(codeToUpdate)}/details?db=VCP&type=${encodeURIComponent(rebateType)}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
       });
-      if (!delRes.ok) {
-        const t = await delRes.text();
-        throw new Error(`Failed to clear existing details: ${t}`);
-      }
-      if      (rebateType === "Fixed")       await saveFixedRebateData(codeToUpdate, 'VCP');
-      else if (rebateType === "Incremental") await saveIncrementalRebateData(codeToUpdate, 'VCP');
-      else if (rebateType === "Percentage")  await savePercentageRebateData(codeToUpdate, 'VCP');
+      if (!delRes.ok) { const t = await delRes.text(); throw new Error(`Failed to clear existing details: ${t}`); }
+
+      if      (rebateType === "Fixed")       await saveFixedRebateData(codeToUpdate, 'VCP', customerCreatedMap, itemCreatedMap);
+      else if (rebateType === "Incremental") await saveIncrementalRebateData(codeToUpdate, 'VCP', customerCreatedMap, itemCreatedMap);
+      else if (rebateType === "Percentage")  await savePercentageRebateData(codeToUpdate, 'VCP', customerCreatedMap, itemCreatedMap);
+
       showToast(`Rebate program "${codeToUpdate}" updated successfully!`, "success");
       setEditingRows({ customer: {}, item: {} });
     } catch (error) {
@@ -1610,19 +1623,20 @@ function Vcp_RebateSetup() {
       else if (rebateType === "Incremental") await saveIncrementalRebateData(rebateCodeId, 'VCP');
       else if (rebateType === "Percentage")  await savePercentageRebateData(rebateCodeId, 'VCP');
       setRebateCode(rebateCodeId);
-      showToast(`✅ Rebate setup saved successfully! ID: ${rebateCodeId}`, "success");
+      showToast(`Rebate setup saved successfully! ID: ${rebateCodeId}`, "success");
       setEditingRows({ customer: { 0: true }, item: { 0: true } });
     } catch (error) {
       showToast(`Failed to save rebate setup: ${error.message}`, "error");
     } finally { setLoading(false); }
   };
 
-  const saveFixedRebateData = async (rebateCodeId, database) => {
+  const saveFixedRebateData = async (rebateCodeId, database, customerCreatedMap = {}, itemCreatedMap = {}) => {
     for (const customer of customers) {
       if (!customer.code || !customer.name) continue;
+      const originalCreated = customerCreatedMap[customer.code] || null;
       const custRes = await fetch(`${API_BASE}/fix-cust-rebate?db=${database}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ RebateCode: rebateCodeId, CardCode: customer.code, CardName: customer.name, QtrRebate: customer.qtrRebate || 0, db: 'VCP' }),
+        body: JSON.stringify({ RebateCode: rebateCodeId, CardCode: customer.code, CardName: customer.name, QtrRebate: customer.qtrRebate || 0, CreatedDate: originalCreated, db: 'VCP' }),
       });
       if (!custRes.ok) { const t = await custRes.text(); throw new Error(`Failed to save customer ${customer.code}: ${t}`); }
       const custResult   = await custRes.json();
@@ -1648,19 +1662,22 @@ function Vcp_RebateSetup() {
     }
     for (const item of items) {
       if (!item.code || !item.name) continue;
+      const originalCreated = itemCreatedMap[item.code] || null;
       const ir = await fetch(`${API_BASE}/fix-prod-rebate?db=${database}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseFloat(item.unitPerQty) || 0, RebatePerBag: parseFloat(item.rebatePerBag) || 0, UnitOfMeasure: item.unitOfMeasure || '', db: 'VCP' }),      });
+        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseFloat(item.unitPerQty) || 0, RebatePerBag: parseFloat(item.rebatePerBag) || 0, UnitOfMeasure: item.unitOfMeasure || '', CreatedDate: originalCreated, db: 'VCP' }),
+      });
       if (!ir.ok) { const t = await ir.text(); throw new Error(`Failed to save item ${item.code}: ${t}`); }
     }
   };
 
-  const saveIncrementalRebateData = async (rebateCodeId, database) => {
+  const saveIncrementalRebateData = async (rebateCodeId, database, customerCreatedMap = {}, itemCreatedMap = {}) => {
     for (const customer of customers) {
       if (!customer.code || !customer.name) continue;
+      const originalCreated = customerCreatedMap[customer.code] || null;
       const custRes = await fetch(`${API_BASE}/inc-cust-rebate?db=${database}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ RebateCode: rebateCodeId, CardCode: customer.code, CardName: customer.name, QtrRebate: customer.qtrRebate || 0, db: 'VCP' }),
+        body: JSON.stringify({ RebateCode: rebateCodeId, CardCode: customer.code, CardName: customer.name, QtrRebate: customer.qtrRebate || 0, CreatedDate: originalCreated, db: 'VCP' }),
       });
       if (!custRes.ok) { const t = await custRes.text(); throw new Error(`Failed: ${t}`); }
       const custResult      = await custRes.json();
@@ -1681,9 +1698,10 @@ function Vcp_RebateSetup() {
     }
     for (const item of items) {
       if (!item.code || !item.name) continue;
+      const originalCreated = itemCreatedMap[item.code] || null;
       const ir = await fetch(`${API_BASE}/inc-item-rebate?db=${database}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseInt(item.unitPerQty) || 0, UnitOfMeasure: item.unitOfMeasure || '', db: 'VCP' }),
+        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseInt(item.unitPerQty) || 0, UnitOfMeasure: item.unitOfMeasure || '', CreatedDate: originalCreated, db: 'VCP' }),
       });
       if (!ir.ok) { const t = await ir.text(); throw new Error(`Failed item: ${t}`); }
       const iResult      = await ir.json();
@@ -1704,12 +1722,13 @@ function Vcp_RebateSetup() {
     }
   };
 
-  const savePercentageRebateData = async (rebateCodeId, database) => {
+  const savePercentageRebateData = async (rebateCodeId, database, customerCreatedMap = {}, itemCreatedMap = {}) => {
     for (const customer of customers) {
       if (!customer.code || !customer.name) continue;
+      const originalCreated = customerCreatedMap[customer.code] || null;
       const custRes = await fetch(`${API_BASE}/per-cust-rebate?db=${database}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ RebateCode: rebateCodeId, CardCode: customer.code, CardName: customer.name, db: 'VCP' }),
+        body: JSON.stringify({ RebateCode: rebateCodeId, CardCode: customer.code, CardName: customer.name, CreatedDate: originalCreated, db: 'VCP' }),
       });
       if (!custRes.ok) { const t = await custRes.text(); throw new Error(`Failed: ${t}`); }
       const custResult      = await custRes.json();
@@ -1743,9 +1762,10 @@ function Vcp_RebateSetup() {
     }
     for (const item of items) {
       if (!item.code || !item.name) continue;
+      const originalCreated = itemCreatedMap[item.code] || null;
       const ir = await fetch(`${API_BASE}/per-prod-rebate?db=${database}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseFloat(item.unitPerQty) || 0, PercentagePerBag: parseFloat(item.percentagePerBag) || 0, UnitOfMeasure: item.unitOfMeasure || '', db: 'VCP' }),
+        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseFloat(item.unitPerQty) || 0, PercentagePerBag: parseFloat(item.percentagePerBag) || 0, UnitOfMeasure: item.unitOfMeasure || '', CreatedDate: originalCreated, db: 'VCP' }),
       });
       if (!ir.ok) { const t = await ir.text(); throw new Error(`Failed item: ${t}`); }
     }
@@ -2632,24 +2652,24 @@ function Vcp_RebateSetup() {
       onClose={() => setCancelModal(false)}
       onConfirm={() => { resetForm(); setCancelModal(false); }}
       theme={theme}
-    />
-    <RemoveRow 
-      isOpen={removeCustomerModal.isOpen}
-      onClose={() => setRemoveCustomerModal({ isOpen: false, index: null, name: "" })}
-      onConfirm={confirmDeleteCustomer}
-      title="Delete Customer"
-      message={`Are you sure you want to delete "${removeCustomerModal.name}"? This action cannot be undone.`}
-      theme={theme}
-    />
+      />
+      <RemoveRow 
+        isOpen={removeCustomerModal.isOpen}
+        onClose={() => setRemoveCustomerModal({ isOpen: false, index: null, name: "" })}
+        onConfirm={confirmDeleteCustomer}
+        title="Delete Customer"
+        message={`Are you sure you want to delete "${removeCustomerModal.name}"? This action cannot be undone.`}
+        theme={theme}
+      />
 
-    <RemoveRow 
-      isOpen={removeItemModal.isOpen}
-      onClose={() => setRemoveItemModal({ isOpen: false, index: null, name: "" })}
-      onConfirm={confirmDeleteItem}
-      title="Delete Item"
-      message={`Are you sure you want to delete "${removeItemModal.name}"? This action cannot be undone.`}
-      theme={theme}
-    />
+      <RemoveRow 
+        isOpen={removeItemModal.isOpen}
+        onClose={() => setRemoveItemModal({ isOpen: false, index: null, name: "" })}
+        onConfirm={confirmDeleteItem}
+        title="Delete Item"
+        message={`Are you sure you want to delete "${removeItemModal.name}"? This action cannot be undone.`}
+        theme={theme}
+      />
    </div>
   );
 }

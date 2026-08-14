@@ -125,7 +125,7 @@ class PermissionWebSocket {
     };
   }
 
-  // ✅ Manual reconnect with reset
+  // Manual reconnect with reset
   forceReconnect(token) {
     console.log('🔄 Force reconnecting WebSocket...');
     this.reconnectAttempts = 0;
@@ -135,12 +135,12 @@ class PermissionWebSocket {
     }, 100);
   }
 
-  // ✅ NEW: Get connection status
+  // NEW: Get connection status
   isConnected() {
     return this.connected && this.socket?.readyState === WebSocket.OPEN;
   }
 
-  // ✅ NEW: Get current WebSocket URL (for debugging)
+  // NEW: Get current WebSocket URL (for debugging)
   getCurrentUrl() {
     return this.getWebSocketUrl('').replace(/\?token=$/, '');
   }

@@ -155,28 +155,28 @@ const CustomOption = ({ innerRef, innerProps, isFocused, isSelected, children })
 const Toast = ({ message, type, onClose, isDark }) => {
   const styles = {
     success: {
-      bg:   isDark ? "bg-emerald-950 border-emerald-700/50" : "bg-white border-emerald-200",
-      text: isDark ? "text-emerald-300"  : "text-emerald-700",
-      icon: isDark ? "text-emerald-400"  : "text-emerald-500",
-      bar:  "bg-emerald-500",
+      bg:     isDark ? "bg-slate-900" : "bg-white",
+      border: isDark ? "border-emerald-700/50" : "border-emerald-200",
+      text:   isDark ? "text-emerald-400" : "text-emerald-600",
+      icon:   isDark ? "text-emerald-400" : "text-emerald-500",
     },
     error: {
-      bg:   isDark ? "bg-red-950 border-red-700/50" : "bg-white border-red-200",
-      text: isDark ? "text-red-300"  : "text-red-700",
-      icon: isDark ? "text-red-400"  : "text-red-500",
-      bar:  "bg-red-500",
+      bg:     isDark ? "bg-slate-900" : "bg-white",
+      border: isDark ? "border-red-700/50" : "border-red-200",
+      text:   isDark ? "text-red-400" : "text-red-600",
+      icon:   isDark ? "text-red-400" : "text-red-500",
     },
     warning: {
-      bg:   isDark ? "bg-amber-950 border-amber-700/50" : "bg-white border-amber-200",
-      text: isDark ? "text-amber-300"  : "text-amber-700",
-      icon: isDark ? "text-amber-400"  : "text-amber-500",
-      bar:  "bg-amber-500",
+      bg:     isDark ? "bg-slate-900" : "bg-white",
+      border: isDark ? "border-amber-700/50" : "border-amber-200",
+      text:   isDark ? "text-amber-400" : "text-amber-600",
+      icon:   isDark ? "text-amber-400" : "text-amber-500",
     },
     info: {
-      bg:   isDark ? "bg-slate-900 border-slate-700/50" : "bg-white border-blue-200",
-      text: isDark ? "text-slate-300"  : "text-slate-700",
-      icon: isDark ? "text-blue-400"   : "text-blue-500",
-      bar:  "bg-blue-500",
+      bg:     isDark ? "bg-slate-900" : "bg-white",
+      border: isDark ? "border-blue-700/50" : "border-blue-200",
+      text:   isDark ? "text-blue-400" : "text-blue-600",
+      icon:   isDark ? "text-blue-400" : "text-blue-500",
     },
   };
   const s = styles[type] || styles.info;
@@ -187,25 +187,26 @@ const Toast = ({ message, type, onClose, isDark }) => {
     info:    <Info className="w-4 h-4" />,
   };
   return (
-    <div className={`relative flex items-center gap-3 px-4 py-3.5 rounded-xl border shadow-2xl overflow-hidden ${s.bg} animate-slide-in-right`}
-         style={{ backdropFilter: 'blur(12px)', minWidth: '320px' }}>
-      <div className={`absolute bottom-0 left-0 h-0.5 w-full opacity-60 ${s.bar}`} />
-      <div className={`flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center ${s.icon}`}
-           style={{ background: 'rgba(255,255,255,0.06)' }}>
-        {icons[type]}
-      </div>
+    <div
+      className={`flex items-center gap-2.5 pl-3.5 pr-3 py-2.5 rounded-2xl border shadow-lg ${s.bg} ${s.border} animate-slide-in-right`}
+      style={{ minWidth: '300px', maxWidth: '380px' }}
+    >
+      <span className={`flex-shrink-0 ${s.icon}`}>{icons[type]}</span>
       <span className={`text-sm font-medium flex-1 leading-snug ${s.text}`}>{message}</span>
-      <button onClick={onClose} className={`ml-1 hover:opacity-60 transition-opacity flex-shrink-0 ${s.icon}`}>
+      <button
+        onClick={onClose}
+        className={`flex-shrink-0 ${s.icon} hover:opacity-60 transition-opacity`}
+      >
         <X className="w-3.5 h-3.5" />
       </button>
     </div>
   );
 };
 
-const ToastContainer = ({ toasts, removeToast }) => (
-  <div className="fixed bottom-6 right-6 z-50 space-y-2.5 max-w-sm">
+const ToastContainer = ({ toasts, removeToast, isDark }) => (
+  <div className="fixed bottom-6 right-6 z-50 space-y-2 max-w-sm">
     {toasts.map((toast) => (
-      <Toast key={toast.id} message={toast.message} type={toast.type} onClose={() => removeToast(toast.id)} />
+      <Toast key={toast.id} message={toast.message} type={toast.type} onClose={() => removeToast(toast.id)} isDark={isDark} />
     ))}
   </div>
 );
@@ -1849,11 +1850,23 @@ const getMonthlyPeriodsFromQuotaPeriods = () => {
     setLoading(true);
     const codeToUpdate = loadedRebateCode;
     try {
+      const existingCustRes  = await fetch(`${API_BASE}/rebate-program/customers/${encodeURIComponent(codeToUpdate)}?db=VAN&type=${encodeURIComponent(rebateType)}`);
+      const existingItemsRes = await fetch(`${API_BASE}/rebate-program/items/${encodeURIComponent(codeToUpdate)}?db=VAN&type=${encodeURIComponent(rebateType)}`);
+      let existingCustomers = [], existingItems = [];
+      if (existingCustRes.ok)  existingCustomers = (await existingCustRes.json()).customers || [];
+      if (existingItemsRes.ok) existingItems     = (await existingItemsRes.json()).items || [];
+
+      const customerCreatedMap = {};
+      existingCustomers.forEach(c => { customerCreatedMap[c.CardCode] = c.CreatedDate; });
+      const itemCreatedMap = {};
+      existingItems.forEach(i => { itemCreatedMap[i.ItemCode] = i.CreatedDate; });
+
       const salesEmployee = Array.isArray(salesEmployees)
         ? salesEmployees.find(emp => emp.SlpName === selectedSalesEmployee)
         : null;
       const slpCode = salesEmployee ? salesEmployee.SlpCode : null;
       if (!slpCode) throw new Error("Sales employee code not found");
+
       const progRes = await fetch(`${API_BASE}/rebate-program/${encodeURIComponent(codeToUpdate)}?db=VAN`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -1871,17 +1884,17 @@ const getMonthlyPeriodsFromQuotaPeriods = () => {
         }),
       });
       if (!progRes.ok) { const t = await progRes.text(); throw new Error(`Failed to update program header: ${t}`); }
+
       const delRes = await fetch(`${API_BASE}/rebate-program/${encodeURIComponent(codeToUpdate)}/details?db=VAN&type=${encodeURIComponent(rebateType)}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
       });
-      if (!delRes.ok) {
-        const t = await delRes.text();
-        throw new Error(`Failed to clear existing details: ${t}`);
-      }
-      if      (rebateType === "Fixed")       await saveFixedRebateData(codeToUpdate, 'VAN');
-      else if (rebateType === "Incremental") await saveIncrementalRebateData(codeToUpdate, 'VAN');
-      else if (rebateType === "Percentage")  await savePercentageRebateData(codeToUpdate, 'VAN');
+      if (!delRes.ok) { const t = await delRes.text(); throw new Error(`Failed to clear existing details: ${t}`); }
+
+      if      (rebateType === "Fixed")       await saveFixedRebateData(codeToUpdate, 'VAN', customerCreatedMap, itemCreatedMap);
+      else if (rebateType === "Incremental") await saveIncrementalRebateData(codeToUpdate, 'VAN', customerCreatedMap, itemCreatedMap);
+      else if (rebateType === "Percentage")  await savePercentageRebateData(codeToUpdate, 'VAN', customerCreatedMap, itemCreatedMap);
+
       showToast(`Rebate program "${codeToUpdate}" updated successfully!`, "success");
       setEditingRows({ customer: {}, item: {} });
     } catch (error) {
@@ -1963,75 +1976,54 @@ const getMonthlyPeriodsFromQuotaPeriods = () => {
     } finally { setLoading(false); }
   };
 
-const saveFixedRebateData = async (rebateCodeId, database) => {
-  for (const customer of customers) {
-    if (!customer.code || !customer.name) continue;
-    const custRes = await fetch(`${API_BASE}/fix-cust-rebate?db=${database}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        RebateCode: rebateCodeId, 
-        CardCode: customer.code, 
-        CardName: customer.name, 
-        QtrRebate: customer.qtrRebate || 0, 
-        db: 'VAN' 
-      }),
-    });
-    if (!custRes.ok) { const t = await custRes.text(); throw new Error(`Failed to save customer ${customer.code}: ${t}`); }
-    const custResult   = await custRes.json();
-    const custRebateId = custResult.id;
-    if (quotaType === "withQuota" && customer.quotas && customer.quotas.length > 0) {
-      const monthlyPeriods = getMonthlyPeriodsFromQuotaPeriods();
-      let nextQuotaId = 1;
-      for (let i = 0; i < monthlyPeriods.length; i++) {
-        const monthName = monthlyPeriods[i]?.label || `Month ${i + 1}`;
-        const targetQty = customer.quotas[i] || "";
-        if (targetQty !== "" && targetQty !== null) {
-          const val = parseFloat(targetQty);
-          if (!isNaN(val)) {
-            const qr = await fetch(`${API_BASE}/fix-cust-quota?db=${database}`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                Id: nextQuotaId++, 
-                CustRebateId: custRebateId, 
-                Month: monthName, 
-                TargetQty: val, 
-                db: 'VAN' 
-              }),
-            });
-            if (!qr.ok) console.error(`Failed to save quota for ${monthName}`);
+  const saveFixedRebateData = async (rebateCodeId, database, customerCreatedMap = {}, itemCreatedMap = {}) => {
+    for (const customer of customers) {
+      if (!customer.code || !customer.name) continue;
+      const originalCreated = customerCreatedMap[customer.code] || null;
+      const custRes = await fetch(`${API_BASE}/fix-cust-rebate?db=${database}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ RebateCode: rebateCodeId, CardCode: customer.code, CardName: customer.name, QtrRebate: customer.qtrRebate || 0, CreatedDate: originalCreated, db: 'VAN' }),
+      });
+      if (!custRes.ok) { const t = await custRes.text(); throw new Error(`Failed to save customer ${customer.code}: ${t}`); }
+      const custResult   = await custRes.json();
+      const custRebateId = custResult.id;
+      if (quotaType === "withQuota" && customer.quotas && customer.quotas.length > 0) {
+        const monthlyPeriods = getMonthlyPeriodsFromQuotaPeriods();
+        let nextQuotaId = 1;
+        for (let i = 0; i < monthlyPeriods.length; i++) {
+          const monthName = monthlyPeriods[i]?.label || `Month ${i + 1}`;
+          const targetQty = customer.quotas[i] || "";
+          if (targetQty !== "" && targetQty !== null) {
+            const val = parseFloat(targetQty);
+            if (!isNaN(val)) {
+              const qr = await fetch(`${API_BASE}/fix-cust-quota?db=${database}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ Id: nextQuotaId++, CustRebateId: custRebateId, Month: monthName, TargetQty: val, db: 'VAN' }),
+              });
+              if (!qr.ok) console.error(`Failed to save quota for ${monthName}`);
+            }
           }
         }
       }
     }
-  }
+    for (const item of items) {
+      if (!item.code || !item.name) continue;
+      const originalCreated = itemCreatedMap[item.code] || null;
+      const ir = await fetch(`${API_BASE}/fix-prod-rebate?db=${database}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseFloat(item.unitPerQty) || 0, RebatePerBag: parseFloat(item.rebatePerBag) || 0, UnitOfMeasure: item.unitOfMeasure || '', CreatedDate: originalCreated, db: 'VAN' }),
+      });
+      if (!ir.ok) { const t = await ir.text(); throw new Error(`Failed to save item ${item.code}: ${t}`); }
+    }
+  };
 
-  for (const item of items) {
-    if (!item.code || !item.name) continue;
-    
-    // ✅ FIX: Include UnitOfMeasure in the request
-    const ir = await fetch(`${API_BASE}/fix-prod-rebate?db=${database}`, {
-      method: 'POST', 
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        RebateCode: rebateCodeId, 
-        ItemCode: item.code, 
-        ItemName: item.name, 
-        UnitPerQty: parseFloat(item.unitPerQty) || 0, 
-        RebatePerBag: parseFloat(item.rebatePerBag) || 0,
-        UnitOfMeasure: item.unitOfMeasure || '',  // ← ADD THIS LINE
-        db: 'VAN' 
-      }),
-    });
-    if (!ir.ok) { const t = await ir.text(); throw new Error(`Failed to save item ${item.code}: ${t}`); }
-  }
-};
-
-  const saveIncrementalRebateData = async (rebateCodeId, database) => {
+  const saveIncrementalRebateData = async (rebateCodeId, database, customerCreatedMap = {}, itemCreatedMap = {}) => {
     for (const customer of customers) {
       if (!customer.code || !customer.name) continue;
+      const originalCreated = customerCreatedMap[customer.code] || null;
       const custRes = await fetch(`${API_BASE}/inc-cust-rebate?db=${database}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ RebateCode: rebateCodeId, CardCode: customer.code, CardName: customer.name, QtrRebate: customer.qtrRebate || 0, db: 'VAN' }),
+        body: JSON.stringify({ RebateCode: rebateCodeId, CardCode: customer.code, CardName: customer.name, QtrRebate: customer.qtrRebate || 0, CreatedDate: originalCreated, db: 'VAN' }),
       });
       if (!custRes.ok) { const t = await custRes.text(); throw new Error(`Failed: ${t}`); }
       const custResult      = await custRes.json();
@@ -2052,9 +2044,11 @@ const saveFixedRebateData = async (rebateCodeId, database) => {
     }
     for (const item of items) {
       if (!item.code || !item.name) continue;
+      const originalCreated = itemCreatedMap[item.code] || null;
       const ir = await fetch(`${API_BASE}/inc-item-rebate?db=${database}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseInt(item.unitPerQty) || 0, UnitOfMeasure: item.unitOfMeasure || '', db: 'VAN' }),      });
+        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseInt(item.unitPerQty) || 0, UnitOfMeasure: item.unitOfMeasure || '', CreatedDate: originalCreated, db: 'VAN' }),
+      });
       if (!ir.ok) { const t = await ir.text(); throw new Error(`Failed item: ${t}`); }
       const iResult      = await ir.json();
       const itemRebateId = iResult.id;
@@ -2074,74 +2068,54 @@ const saveFixedRebateData = async (rebateCodeId, database) => {
     }
   };
 
-const savePercentageRebateData = async (rebateCodeId, database) => {
-  for (const customer of customers) {
-    if (!customer.code || !customer.name) continue;
-    const custRes = await fetch(`${API_BASE}/per-cust-rebate?db=${database}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        RebateCode: rebateCodeId, 
-        CardCode: customer.code, 
-        CardName: customer.name, 
-        db: 'VAN' 
-      }),
-    });
-    if (!custRes.ok) { const t = await custRes.text(); throw new Error(`Failed: ${t}`); }
-    const custResult      = await custRes.json();
-    const perCustRebateId = custResult.id;
-    if (quotaType === "withQuota" && customer.percentages && customer.percentages.length > 0) {
-      const monthlyPeriods    = getMonthlyPeriodsFromQuotaPeriods();
-      const percentagesToSave = [];
-      for (let i = 0; i < monthlyPeriods.length; i++) {
-        const monthName = monthlyPeriods[i]?.label || `Month ${i + 1}`;
-        const val       = customer.percentages[i] || "";
-        if (val !== "" && val !== null) {
-          const pv = parseFloat(val);
-          if (!isNaN(pv)) percentagesToSave.push({ Month: monthName, TargetQty: pv });
+  const savePercentageRebateData = async (rebateCodeId, database, customerCreatedMap = {}, itemCreatedMap = {}) => {
+    for (const customer of customers) {
+      if (!customer.code || !customer.name) continue;
+      const originalCreated = customerCreatedMap[customer.code] || null;
+      const custRes = await fetch(`${API_BASE}/per-cust-rebate?db=${database}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ RebateCode: rebateCodeId, CardCode: customer.code, CardName: customer.name, CreatedDate: originalCreated, db: 'VAN' }),
+      });
+      if (!custRes.ok) { const t = await custRes.text(); throw new Error(`Failed: ${t}`); }
+      const custResult      = await custRes.json();
+      const perCustRebateId = custResult.id;
+      if (quotaType === "withQuota" && customer.percentages && customer.percentages.length > 0) {
+        const monthlyPeriods    = getMonthlyPeriodsFromQuotaPeriods();
+        const percentagesToSave = [];
+        for (let i = 0; i < monthlyPeriods.length; i++) {
+          const monthName = monthlyPeriods[i]?.label || `Month ${i + 1}`;
+          const val       = customer.percentages[i] || "";
+          if (val !== "" && val !== null) {
+            const pv = parseFloat(val);
+            if (!isNaN(pv)) percentagesToSave.push({ Month: monthName, TargetQty: pv });
+          }
         }
-      }
-      if (percentagesToSave.length > 0) {
-        const bulkRes = await fetch(`${API_BASE}/per-cust-quotas/bulk?db=${database}`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ CustRebateId: perCustRebateId, quotas: percentagesToSave, db: 'VAN' }),
-        });
-        if (!bulkRes.ok) {
-          for (const p of percentagesToSave) {
-            await fetch(`${API_BASE}/per-cust-quota?db=${database}`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                PerCustRebateId: perCustRebateId, 
-                Month: p.Month, 
-                TargetQty: p.TargetQty, 
-                db: 'VAN' 
-              }),
-            });
+        if (percentagesToSave.length > 0) {
+          const bulkRes = await fetch(`${API_BASE}/per-cust-quotas/bulk?db=${database}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ CustRebateId: perCustRebateId, quotas: percentagesToSave, db: 'VAN' }),
+          });
+          if (!bulkRes.ok) {
+            for (const p of percentagesToSave) {
+              await fetch(`${API_BASE}/per-cust-quota?db=${database}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ PerCustRebateId: perCustRebateId, Month: p.Month, TargetQty: p.TargetQty, db: 'VAN' }),
+              });
+            }
           }
         }
       }
     }
-  }
-
-  for (const item of items) {
-    if (!item.code || !item.name) continue;
-    
-    // ✅ FIX: Include UnitOfMeasure in the request
-    const ir = await fetch(`${API_BASE}/per-prod-rebate?db=${database}`, {
-      method: 'POST', 
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        RebateCode: rebateCodeId, 
-        ItemCode: item.code, 
-        ItemName: item.name, 
-        UnitPerQty: parseFloat(item.unitPerQty) || 0, 
-        PercentagePerBag: parseFloat(item.percentagePerBag) || 0,
-        UnitOfMeasure: item.unitOfMeasure || '',  // ← ADD THIS LINE
-        db: 'VAN' 
-      }),
-    });
-    if (!ir.ok) { const t = await ir.text(); throw new Error(`Failed item: ${t}`); }
-  }
-};
+    for (const item of items) {
+      if (!item.code || !item.name) continue;
+      const originalCreated = itemCreatedMap[item.code] || null;
+      const ir = await fetch(`${API_BASE}/per-prod-rebate?db=${database}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ RebateCode: rebateCodeId, ItemCode: item.code, ItemName: item.name, UnitPerQty: parseFloat(item.unitPerQty) || 0, PercentagePerBag: parseFloat(item.percentagePerBag) || 0, UnitOfMeasure: item.unitOfMeasure || '', CreatedDate: originalCreated, db: 'VAN' }),
+      });
+      if (!ir.ok) { const t = await ir.text(); throw new Error(`Failed item: ${t}`); }
+    }
+  };
 
   const handleAddCustomer = () => {
     if (!access.canEdit) { showToast("You do not have permission to add customers", "error"); return; }

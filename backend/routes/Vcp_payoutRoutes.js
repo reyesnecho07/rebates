@@ -1108,10 +1108,42 @@ const applyBalanceCarryOverToPayouts = (payouts, frequency = 'Quarterly') => {
       previousBalance = balance;
     }
   });
-  
-  console.log(`✅ Applied carry-over to ${payoutsWithCarryOver.length} payouts (Frequency: ${frequency})`);
+
+settleCarriedForwardBalances(payoutsWithCarryOver);
+
+  console.log(`✅ Applied carry-over to ${payoutsWithCarryOver.length} payouts`);
   return payoutsWithCarryOver;
 };
+
+const settleCarriedForwardBalances = (payoutsWithCarryOver) => {
+  const pendingStack = [];
+
+  payoutsWithCarryOver.forEach((payout) => {
+    if (payout.isQtrRebate || payout.isBeginningBalance || payout.displayType === 'beginning_balance') {
+      return;
+    }
+
+    const balance         = parseFloat(payout.Balance) || 0;
+    const previousBalance = parseFloat(payout.PreviousBalance) || 0;
+
+    if (balance > 0.01) {
+      pendingStack.push(payout);
+    } else if (previousBalance > 0.01 && pendingStack.length > 0) {
+      // This period is fully paid AND it absorbed a carried-forward balance —
+      // every earlier unpaid period that fed into that balance is now settled.
+      while (pendingStack.length > 0) {
+        const prevRow = pendingStack.shift();
+        prevRow.Status        = 'Settled';
+        prevRow.Balance       = 0;
+        prevRow.CarriedOverTo = payout.Period;
+        prevRow.CarryOverNote = `Balance of ₱${(prevRow.BaseAmount || 0).toFixed(2)} fully paid via ${payout.Period}`;
+      }
+    }
+  });
+
+  return payoutsWithCarryOver;
+};
+
 const calculateMonthlyPayoutData = async (transactions, rebateType, customerCode, rebateCode, pool, frequency = 'Quarterly', sapEntries = []) => {
   try {
     console.log(`📊 Starting payout calculation for ${customerCode}, ${rebateCode}, type: ${rebateType}, frequency: ${frequency}`);
@@ -1691,6 +1723,9 @@ const mergePayoutData = (calculatedData, existingData, rebateType, frequency, sa
         );
         
         if (existing) {
+          const freshBase  = calculated.baseAmount ?? calculated.amount ?? 0;
+          const freshTotal = calculated.amount ?? 0;
+
           merged.push({
             Id: existing.Id,
             PayoutId: existing.PayoutId || calculated.id,
@@ -1699,17 +1734,20 @@ const mergePayoutData = (calculatedData, existingData, rebateType, frequency, sa
             RebateType: existing.RebateType || rebateType,
             Date: existing.Date || calculated.date,
             Period: existing.Period || calculated.period,
-            BaseAmount: existing.BaseAmount || calculated.baseAmount || calculated.amount,
-            TotalAmount: existing.TotalAmount || calculated.amount,
-            Amount: existing.TotalAmount || calculated.amount,
-            Status: existing.Status || calculated.status,
+
+            // ⬇️ always recalculated — this is the fix
+            BaseAmount: freshBase,
+            TotalAmount: freshTotal,
+            Amount: freshTotal,
+
+            Status: calculated.status, // recompute below, don't freeze
             AmountReleased: existing.AmountReleased || calculated.amountReleased || 0,
             SapReleasedAmount: existing.SapReleasedAmount || calculated.sapReleasedAmount || 0,
             SapLastSync: existing.SapLastSync || calculated.sapLastSync,
-            Balance: existing.Balance || calculated.balance,
+            Balance: Math.max(0, freshTotal - (existing.AmountReleased || calculated.amountReleased || 0)),
             ReleaseDate: existing.ReleaseDate,
             CreatedDate: existing.CreatedDate || new Date().toISOString().split('T')[0],
-            UpdatedDate: existing.UpdatedDate || new Date().toISOString().split('T')[0],
+            UpdatedDate: new Date().toISOString().split('T')[0],
             monthKey: calculated.monthKey,
             quarter: calculated.quarter,
             year: calculated.year,
@@ -1845,6 +1883,8 @@ const savePayoutsToDatabase = async (payouts, pool, frequency = 'Quarterly') => 
               SapLastSync = @SapLastSync,
               RebateBalance = @RebateBalance,
               RebateType = @RebateType,
+              CarriedOverTo = @CarriedOverTo,
+              CarryOverNote = @CarryOverNote,
               UpdatedDate = GETDATE()
             WHERE PayoutId = @PayoutId
           `;
@@ -1861,6 +1901,8 @@ const savePayoutsToDatabase = async (payouts, pool, frequency = 'Quarterly') => 
             .input('SapLastSync', sql.DateTime, sapLastSync)
             .input('RebateBalance', sql.Decimal(18, 2), balance)
             .input('RebateType', sql.NVarChar(50), rebateType)
+            .input('CarriedOverTo', sql.NVarChar(50), payout.CarriedOverTo || null)
+            .input('CarryOverNote', sql.NVarChar(200), payout.CarryOverNote || null)
             .query(updateQuery);
             
           console.log(`✅ Updated payout ${payout.PayoutId}: Base=${baseAmount}, Total=${totalAmount}, Released=${amountReleased}, SAP=${sapReleasedAmount}, Balance=${balance}, Status=${finalStatus}`);
@@ -2040,12 +2082,13 @@ const updateSubsequentPayouts = async (cardCode, rebateCode, pool) => {
     console.log(`🔄 Updating subsequent payouts for ${cardCode} - ${rebateCode}`);
     
     const getPayoutsQuery = `
-      SELECT Id, PayoutId, BaseAmount, TotalAmount, AmountReleased, RebateBalance, Status, PayoutDate
+      SELECT Id, PayoutId, BaseAmount, TotalAmount, AmountReleased, RebateBalance, Status, PayoutDate, Period
       FROM PayoutHistory
       WHERE CardCode   = @cardCode
         AND RebateCode = @rebateCode
         AND PayoutId   NOT LIKE 'SAP-%'
         AND PayoutId   NOT LIKE 'OOP-%'
+        AND PayoutId   NOT LIKE 'QtrRebate-%'
       ORDER BY PayoutDate ASC, CreatedDate ASC
     `;
     
@@ -2060,18 +2103,18 @@ const updateSubsequentPayouts = async (cardCode, rebateCode, pool) => {
       return;
     }
     
+    const rows = payouts.map(p => ({ ...p }));
     let previousBalance = 0;
     
-    for (let i = 0; i < payouts.length; i++) {
-      const payout = payouts[i];
+    // First pass: calculate balances and statuses
+    rows.forEach((payout, index) => {
       const baseAmount = parseFloat(payout.BaseAmount) || 0;
       const amountReleased = parseFloat(payout.AmountReleased) || 0;
-      
       const totalAmount = baseAmount + previousBalance;
       const balance = Math.max(0, totalAmount - amountReleased);
-      
+
       let status = payout.Status;
-      if (baseAmount === 0) {
+      if (baseAmount === 0 && previousBalance === 0) {
         status = 'No Payout';
       } else if (amountReleased === 0 && totalAmount > 0) {
         status = 'Pending';
@@ -2080,25 +2123,72 @@ const updateSubsequentPayouts = async (cardCode, rebateCode, pool) => {
       } else if (amountReleased > 0) {
         status = 'Partially Paid';
       }
-      
-      const updateQuery = `
-        UPDATE PayoutHistory 
-        SET 
-          TotalAmount = @totalAmount,
-          RebateBalance = @balance,
-          Status = @status,
-          UpdatedDate = GETDATE()
-        WHERE Id = @id
-      `;
-      
-      await pool.request()
-        .input('totalAmount', sql.Decimal(18, 2), totalAmount)
-        .input('balance', sql.Decimal(18, 2), balance)
-        .input('status', sql.NVarChar(50), status)
-        .input('id', sql.Int, payout.Id)
-        .query(updateQuery);
-      
+
+      payout.TotalAmount = totalAmount;
+      payout.Balance = balance;
+      payout.Status = status;
+      payout.PreviousBalance = previousBalance;
       previousBalance = balance;
+    });
+
+    // Second pass: set CarriedOverTo and CarryOverNote for records with balance
+    rows.forEach((payout, index) => {
+      const balance = parseFloat(payout.Balance) || 0;
+      
+      if (balance > 0 && index < rows.length - 1) {
+        // If there's a balance and it's not the last record, carry it forward
+        const nextPeriod = rows[index + 1].Period || 'Next Period';
+        payout.CarriedOverTo = nextPeriod;
+        payout.CarryOverNote = `Balance of ₱${balance.toFixed(2)} carried forward to ${nextPeriod}`;
+      } else if (balance > 0 && index === rows.length - 1) {
+        // If it's the last record with balance, mark as "To be claimed"
+        payout.CarriedOverTo = 'To Be Claimed';
+        payout.CarryOverNote = `Remaining balance of ₱${balance.toFixed(2)} to be claimed`;
+      } else {
+        // If balance is 0, clear the carry-over fields
+        payout.CarriedOverTo = null;
+        payout.CarryOverNote = null;
+      }
+      
+      // Also settle any previous records that are now fully paid
+      if (balance === 0 && payout.PreviousBalance > 0) {
+        // This period absorbed a carry-over balance and is now fully paid
+        // Find the previous record(s) that had a balance and settle them
+        for (let i = 0; i < index; i++) {
+          const prevRow = rows[i];
+          const prevBalance = parseFloat(prevRow.Balance) || 0;
+          if (prevBalance > 0) {
+            prevRow.Status = 'Settled';
+            prevRow.Balance = 0;
+            prevRow.CarriedOverTo = payout.Period;
+            prevRow.CarryOverNote = `Balance of ₱${prevBalance.toFixed(2)} fully paid via ${payout.Period}`;
+            // Note: We can't break here because there might be multiple previous records
+            // with balances that were carried forward
+          }
+        }
+      }
+    });
+
+    // Save all updates to database
+    for (const payout of rows) {
+      await pool.request()
+        .input('totalAmount', sql.Decimal(18, 2), payout.TotalAmount)
+        .input('balance', sql.Decimal(18, 2), payout.Balance)
+        .input('status', sql.NVarChar(50), payout.Status)
+        .input('carriedOverTo', sql.NVarChar(50), payout.CarriedOverTo || null)
+        .input('carryOverNote', sql.NVarChar(200), payout.CarryOverNote || null)
+        .input('id', sql.Int, payout.Id)
+        .query(`
+          UPDATE PayoutHistory 
+          SET 
+            TotalAmount = @totalAmount, 
+            RebateBalance = @balance, 
+            Status = @status,
+            CarriedOverTo = @carriedOverTo, 
+            CarryOverNote = @carryOverNote, 
+            UpdatedDate = GETDATE()
+          WHERE Id = @id
+        `);
     }
     
     console.log(`✅ Updated ${payouts.length} subsequent payouts`);
@@ -2110,6 +2200,7 @@ const updateSubsequentPayouts = async (cardCode, rebateCode, pool) => {
     console.error('❌ Error updating subsequent payouts:', error);
   }
 };
+
 router.put('/payouts/:payoutId/amount-released', async (req, res) => {
   try {
     const { payoutId } = req.params;
@@ -2667,32 +2758,26 @@ const fetchSAPJournalEntries = async (customerCode, periodFrom, periodTo, pool) 
      * ----------------------------------------------------------------*/
     const arQuery = `
       SELECT
-        'AR'                AS SourceType,
-        AR_INV.CardCode,
-        AR_INV.CardName,
-        AR_INV.DocDate,
-        AR_INV.DocNum,
-        AR_JDT.BaseRef,
-        AR_LN.Account,
-        AR_ACCT.AcctName,
-        AR_LN.Debit,
-        AR_LN.Credit,
-        AR_INV.Comments     AS Memo,
-        NULL                AS LineMemo,
-        AR_INV.DocDate      AS RefDate
-      FROM OINV AR_INV
-      LEFT JOIN OJDT AR_JDT
-             ON AR_JDT.BaseRef = CAST(AR_INV.DocNum AS NVARCHAR)
-      LEFT JOIN JDT1 AR_LN
-             ON AR_LN.TransId  = AR_JDT.TransId
-      LEFT JOIN OACT AR_ACCT
-             ON AR_ACCT.AcctCode = AR_LN.Account
-            AND AR_ACCT.AcctName LIKE '%Rebate%'
+        'AR' AS SourceType,
+        T0.CardCode,
+        T0.CardName,
+        T0.DocDate,
+        T0.DocNum,
+        T1.BaseRef,
+        T1.Account,
+        T2.AcctName,
+        T1.Debit,
+        T1.Credit,
+        T0.DocDate AS RefDate
+      FROM	
+        OINV T0
+        LEFT JOIN OJDT T1 ON T1.BaseRef = CAST(T0.DocNum AS NVARCHAR)
+        LEFT JOIN OACT T2 ON T2.AcctCode = T1.Account AND T2.AcctName LIKE '%Rebate%'
       WHERE
-        AR_INV.CardCode   = @customerCode
-        AND AR_ACCT.AcctName IS NOT NULL
-        AND AR_INV.DocDate >= @periodFrom
-        AND AR_INV.DocDate <= @endDate
+        T0.CardCode   = @customerCode
+        AND T2.AcctName IS NOT NULL
+        AND T0.DocDate >= @periodFrom
+        AND T0.DocDate <= @endDate
     `;
 
     /* ----------------------------------------------------------------
@@ -2725,6 +2810,7 @@ const fetchSAPJournalEntries = async (customerCode, periodFrom, periodTo, pool) 
         T0.DocNum,
         --T0.DocEntry,
         T0.ItemCode,
+        T0.Quantity,
         T0.GTotal
       FROM ORIN T0
       WHERE
@@ -2757,33 +2843,33 @@ const fetchSAPJournalEntries = async (customerCode, periodFrom, periodTo, pool) 
      * All queries now use @endDate instead of @periodTo so post-period
      * entries (e.g. April AR for a Jan-Feb rebate) are included.
      * ----------------------------------------------------------------*/
-    const [jeResult, arResult, apResult, arcmResult, apcmResult] = await Promise.all([
-      sapPool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('periodFrom',   sql.Date,         startDate)
-        .input('endDate',      sql.Date,         endDate)
-        .query(jeQuery),
-      sapPool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('periodFrom',   sql.Date,         startDate)
-        .input('endDate',      sql.Date,         endDate)
-        .query(arQuery),
-      sapPool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('periodFrom',   sql.Date,         startDate)
-        .input('endDate',      sql.Date,         endDate)
-        .query(apQuery),
-      sapPool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('periodFrom',   sql.Date,         startDate)
-        .input('endDate',      sql.Date,         endDate)
-        .query(arcmQuery),
-      sapPool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('periodFrom',   sql.Date,         startDate)
-        .input('endDate',      sql.Date,         endDate)
-        .query(apcmQuery),
-    ]);
+const [jeResult, arResult, apResult, arcmResult, apcmResult] = await Promise.all([
+  sapPool.request()
+    .input('customerCode', sql.NVarChar(50), customerCode)
+    .input('periodFrom',   sql.Date,         startDate)
+    .input('endDate',      sql.Date,         endDate)
+    .query(jeQuery),
+  sapPool.request()
+    .input('customerCode', sql.NVarChar(50), customerCode)
+    .input('periodFrom',   sql.Date,         startDate)
+    .input('endDate',      sql.Date,         endDate)
+    .query(arQuery),
+  sapPool.request()
+    .input('customerCode', sql.NVarChar(50), customerCode)   // fixed
+    .input('periodFrom',   sql.Date,         startDate)
+    .input('endDate',      sql.Date,         endDate)
+    .query(apQuery),
+  sapPool.request()
+    .input('customerCode', sql.NVarChar(50), customerCode)
+    .input('periodFrom',   sql.Date,         startDate)
+    .input('endDate',      sql.Date,         endDate)
+    .query(arcmQuery),
+  sapPool.request()
+    .input('customerCode', sql.NVarChar(50), customerCode)   // fixed
+    .input('periodFrom',   sql.Date,         startDate)
+    .input('endDate',      sql.Date,         endDate)
+    .query(apcmQuery),
+]);
 
     console.log(
       `📊 [SAP] Raw rows — JE: ${jeResult.recordset.length} | ` +

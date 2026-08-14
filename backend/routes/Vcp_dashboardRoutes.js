@@ -675,7 +675,7 @@ customers = Array.from(customerMap.values()).map(customer => {
 
   // Percentage Rebate - Items
   const percentageItemsQuery = `
-    SELECT DISTINCT
+    SELECT 
       T3.ItemCode as code,
       T3.ItemName as description,
       T3.UnitPerQty,
@@ -1153,7 +1153,7 @@ async function loadRebateDetails(rebateCode, database) {
     } else if (rebateType === 'Percentage') {
       // Similar logic for Percentage
       const customersQuery = `
-        SELECT DISTINCT
+        SELECT 
           T1.CardCode as code,
           T1.CardName as name,
           T1.QtrRebate,
@@ -1194,7 +1194,7 @@ async function loadRebateDetails(rebateCode, database) {
 
       // Load Percentage items
       const itemsQuery = `
-        SELECT DISTINCT
+        SELECT 
           T3.ItemCode as code,
           T3.ItemName as description,
           T3.UnitPerQty,
@@ -1759,9 +1759,9 @@ res.json({
         from: rebateDateFrom,
         to: rebateDateTo
       },
-      frequency: frequency  // ADD THIS LINE
+      frequency: frequency 
     },
-    frequency: frequency  // ADD THIS LINE at root level too
+    frequency: frequency 
   }
 });
     }
@@ -4774,10 +4774,8 @@ router.get('/debug/databases', async (req, res) => {
   }
 });
 
-// Simplified ARCM adjustment - subtracts returns directly without adding return entries
 const adjustForARCM = async (sapPool, customerCode, originalTransactions, startDate, endDate) => {
   try {
-    // Create a map of original transactions by invoice number and item for quick lookup
     const originalMap = new Map();
     originalTransactions.forEach(trans => {
       if (trans.InvoiceNumber) {
@@ -4786,72 +4784,83 @@ const adjustForARCM = async (sapPool, customerCode, originalTransactions, startD
       }
     });
 
-    // Query to find ARCM documents that reference original invoices
+    // Extend window forward to catch credit memos posted after the period closes
+    // (same fix as fetchSAPJournalEntries in payoutRoutes.js)
+    const today = new Date();
+    const periodEnd = new Date(endDate);
+    const effectiveEndDate = today > periodEnd ? today : periodEnd;
+
+    // Match EITHER:
+    //  (a) properly linked credit memos (SAP "Copy From" → BaseRef + BaseType = 13), OR
+    //  (b) standalone credit memos where the user manually typed the invoice
+    //      DocNum into the U_Ar_Inv_No UDF instead of linking via Copy From
     const arcmQuery = `
       SELECT
         T0.DocNum as CreditMemoNumber,
-        T0.BaseRef as OriginalDocNum,  -- This references the original invoice
+        COALESCE(
+          NULLIF(NULLIF(LTRIM(RTRIM(CAST(T0.BaseRef AS NVARCHAR(50)))), ''), '0'),
+          NULLIF(LTRIM(RTRIM(T0.U_Ar_Inv_No)), '')
+        ) as OriginalDocNum,
         T0.ItemCode,
         T0.Dscription as Item,
         ABS(T0.Quantity) as ReturnQuantity,
-        T0.BaseType
+        T0.BaseType,
+        CASE
+          WHEN T0.BaseRef IS NOT NULL AND T0.BaseRef != 0 THEN 'Linked'
+          ELSE 'Standalone (UDF)'
+        END as MatchSource
       FROM
-        ORIN T0  -- Returns/Credit Memos
+        ORIN T0
       WHERE
         T0.CardCode = @customerCode
         AND T0.DocDate >= @startDate
         AND T0.DocDate <= @endDate
-        AND T0.BaseRef IS NOT NULL  -- Only those that reference original documents
-        AND T0.BaseType = 13  -- 13 is the type for AR Invoice
+        AND (
+              (T0.BaseRef IS NOT NULL AND T0.BaseRef != 0 AND T0.BaseType = 13)
+              OR
+              ((T0.BaseRef IS NULL OR T0.BaseRef = 0) AND T0.U_Ar_Inv_No IS NOT NULL AND LTRIM(RTRIM(T0.U_Ar_Inv_No)) != '')
+            )
     `;
+
     const arcmResult = await sapPool.request()
       .input('customerCode', sql.NVarChar(50), customerCode)
       .input('startDate', sql.Date, startDate)
-      .input('endDate', sql.Date, endDate)
+      .input('endDate', sql.Date, effectiveEndDate)
       .query(arcmQuery);
 
     if (arcmResult.recordset.length === 0) {
-      return originalTransactions; // No ARCM documents found
+      return originalTransactions;
     }
 
     console.log(`📝 Found ${arcmResult.recordset.length} ARCM documents for customer ${customerCode}`);
+    arcmResult.recordset.forEach(r =>
+      console.log(`   CM ${r.CreditMemoNumber} → Invoice ${r.OriginalDocNum} (${r.MatchSource}), Item ${r.ItemCode}, Qty ${r.ReturnQuantity}`)
+    );
 
-    // Create a map of adjustments keyed by original document number and item
     const adjustments = new Map();
-    
     arcmResult.recordset.forEach(arcm => {
       if (arcm.OriginalDocNum) {
         const key = `${arcm.OriginalDocNum}_${arcm.ItemCode}`;
-        
         if (!adjustments.has(key)) {
-          adjustments.set(key, {
-            originalDocNum: arcm.OriginalDocNum,
-            itemCode: arcm.ItemCode,
-            totalReturnQty: 0
-          });
+          adjustments.set(key, { originalDocNum: arcm.OriginalDocNum, itemCode: arcm.ItemCode, totalReturnQty: 0 });
         }
-        
-        const adjustment = adjustments.get(key);
-        adjustment.totalReturnQty += arcm.ReturnQuantity || 0;
+        adjustments.get(key).totalReturnQty += arcm.ReturnQuantity || 0;
       }
     });
 
     console.log(`📊 Applying adjustments to ${adjustments.size} original invoice items`);
 
-    // Create adjusted transactions - directly subtract returns from originals
     const adjustedTransactions = originalTransactions.map(trans => {
       const key = `${trans.InvoiceNumber}_${trans.ItemCode}`;
       const adjustment = adjustments.get(key);
-      
+
       if (adjustment && adjustment.totalReturnQty > 0) {
-        // This transaction has returns, subtract the return quantity
         const originalQty = trans.ActualSales || 0;
         const adjustedQty = Math.max(0, originalQty - adjustment.totalReturnQty);
-        
+
         console.log(`✏️ Adjusting: Invoice ${trans.InvoiceNumber}, Item ${trans.ItemCode}`);
         console.log(`   Original: ${originalQty}, Returns: ${adjustment.totalReturnQty}, Final: ${adjustedQty}`);
-        
-        // Return adjusted transaction - NO separate return entry
+
         return {
           ...trans,
           ActualSales: adjustedQty,
@@ -4863,22 +4872,14 @@ const adjustForARCM = async (sapPool, customerCode, originalTransactions, startD
           Treetype: trans.Treetype
         };
       }
-      
-      // No adjustment needed
       return trans;
     });
 
     console.log(`✅ ARCM adjustment complete: ${adjustments.size} items adjusted`);
-
-    // Filter out any transactions that became zero after adjustment? 
-    // (Optional - keep them to show they existed but had full returns)
-    // return adjustedTransactions.filter(t => t.ActualSales > 0);
-    
     return adjustedTransactions;
-
   } catch (error) {
     console.error('❌ Error adjusting for ARCM documents:', error);
-    return originalTransactions; // Return original transactions if adjustment fails
+    return originalTransactions;
   }
 };
 
