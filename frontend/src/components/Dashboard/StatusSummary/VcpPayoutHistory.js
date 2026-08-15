@@ -434,32 +434,32 @@ const VcpPayoutHistory = ({
           </span>
         </td>
 
-        {/* ── Status ────────────────────────────────────────────────────── */}
-        <td className="px-4 py-2.5 text-center">
-          {isSettled ? (
-            <span className={`inline-block px-2 py-0.5 rounded border text-xs font-semibold ${
-              isDark
-                ? 'bg-teal-900/30 text-teal-300 border-teal-700/40'
-                : 'bg-teal-50 text-teal-700 border-teal-200'
-            }`}>
-              Paid
-            </span>
-          ) : isEditable ? (
-            <select
-              value={payout.Status}
-              onChange={(e) => handlePayoutStatusChange(payout.Id, e.target.value)}
-              className={statusSelectCls(payout.Status, true)}
-            >
-              <option value="No Payout">No Payout</option>
-              <option value="Partially Paid">Partially Paid</option>
-              <option value="Paid">Paid</option>
-            </select>
-          ) : (
-            <span className={statusSelectCls(payout.Status, false)}>
-              {payout.Status || 'No Payout'}
-            </span>
-          )}
-        </td>
+      {/* ── Status ────────────────────────────────────────────────────── */}
+      <td className="px-4 py-2.5 text-center">
+        <span className={`inline-block px-2 py-0.5 rounded border text-xs font-semibold ${
+          isSettled
+            ? isDark
+              ? 'bg-teal-900/30 text-teal-300 border-teal-700/40'
+              : 'bg-teal-50 text-teal-700 border-teal-200'
+            : payout.Status === 'Paid'
+            ? isDark
+              ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700/40'
+              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+            : payout.Status === 'Partially Paid'
+            ? isDark
+              ? 'bg-amber-900/30 text-amber-300 border-amber-700/40'
+              : 'bg-amber-50 text-amber-700 border-amber-200'
+            : payout.Status === 'Pending'
+            ? isDark
+              ? 'bg-blue-900/30 text-blue-300 border-blue-700/40'
+              : 'bg-blue-50 text-blue-700 border-blue-200'
+            : isDark
+            ? 'bg-slate-700 text-slate-400 border-slate-600'
+            : 'bg-slate-100 text-slate-500 border-slate-200'
+        }`}>
+          {isSettled ? 'Paid' : (payout.Status || 'No Payout')}
+        </span>
+      </td>
 
         {/* ── Amount Released ───────────────────────────────────────────── */}
         <td className="px-4 py-2.5 text-center">
@@ -529,11 +529,6 @@ const VcpPayoutHistory = ({
           <span className={badge(formatCurrency(displayBalance), balColor)}>
             {formatCurrency(displayBalance)}
           </span>
-          {isSettled && (
-            <div className={`text-[9px] mt-0.5 ${isDark ? 'text-teal-400' : 'text-teal-600'}`}>
-              Paid in full
-            </div>
-          )}
         </td>
       </tr>
     );

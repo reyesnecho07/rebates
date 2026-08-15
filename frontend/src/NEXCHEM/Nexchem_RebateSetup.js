@@ -576,6 +576,8 @@ function Nexchem_RebateSetup() {
   const DB_NAME  = 'USER';
   const isDark = theme === 'dark';
 
+  // ─── Drag‑and‑drop state ──────────────────────────────────────────────────
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const customerOptions = useMemo(() =>
     customersDropdown.map(cust => ({ value: cust.CardName, label: cust.CardName })),
@@ -925,15 +927,18 @@ function Nexchem_RebateSetup() {
     }
   };
 
-  const handleImportExcel = async (event) => {
+  // ─── Core import logic (used by both file input and drag‑and‑drop) ──────
+  const handleImportFile = (file) => {
     if (!access.canEdit) { showToast("You do not have permission to import data", "error"); return; }
-    const file = event.target.files[0];
     if (!file) return;
     if (!file.name.match(/\.(xlsx|xls)$/)) {
       showToast("Please select a valid Excel file (.xlsx or .xls)", "error");
       return;
     }
     setLoading(true);
+    const preservedCode = isViewMode ? loadedRebateCode : null;
+    const preservedIsViewMode = isViewMode;
+
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
@@ -1108,6 +1113,12 @@ function Nexchem_RebateSetup() {
             }
           }
         }
+        // Restore edit mode if needed
+        if (preservedIsViewMode && preservedCode) {
+          setRebateCode(preservedCode);
+          setLoadedRebateCode(preservedCode);
+          setIsViewMode(true);
+        }
         const messages = [];
         if (customerDataImported) messages.push(`${importedCustomers.length} customers`);
         if (itemDataImported)     messages.push(`${importedItems.length} items`);
@@ -1118,13 +1129,48 @@ function Nexchem_RebateSetup() {
         }
       } catch (error) {
         showToast(`Import failed: ${error.message}`, "error");
+        if (preservedIsViewMode && preservedCode) {
+          setRebateCode(preservedCode);
+          setLoadedRebateCode(preservedCode);
+          setIsViewMode(true);
+        }
       } finally {
         setLoading(false);
       }
     };
     reader.onerror = () => { setLoading(false); showToast("Error reading file. Please try again.", "error"); };
     reader.readAsArrayBuffer(file);
-    event.target.value = '';
+  };
+
+  // ─── File‑input handler (now just calls handleImportFile) ──────────────
+  const handleImportExcel = (event) => {
+    const file = event.target.files?.[0];
+    if (file) handleImportFile(file);
+    event.target.value = ''; // reset input
+  };
+
+  // ─── Drag‑and‑drop handlers ──────────────────────────────────────────────
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      const file = files[0];
+      handleImportFile(file);
+    }
   };
 
   const processCustomerDataSimple = (excelData) => {
@@ -2033,8 +2079,24 @@ const savePercentageRebateData = async (rebateCodeId, database, customerCreatedM
         <Header collapsed={collapsed} userName={userName} userCode={userCode} initials={initials} logo={nexchemLogo} theme={theme} />
 
         <div className={`pt-16 flex-1 flex flex-col overflow-hidden ${pageBg}`}>
-          <div className={`rounded-2xl border shadow-xl ${cardBg} flex flex-col flex-1 overflow-hidden`}
-               style={{ margin: '1rem 1.5rem', maxWidth: 'calc(100% - 3rem)' }}>
+          {/* ─── Main card with drag‑and‑drop handlers ──────────────────── */}
+          <div
+            className={`rounded-2xl border shadow-xl ${cardBg} flex flex-col flex-1 overflow-hidden relative`}
+            style={{ margin: '1rem 1.5rem', maxWidth: 'calc(100% - 3rem)' }}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            {/* Drag‑and‑drop overlay */}
+            {isDragOver && (
+              <div className="absolute inset-0 z-50 flex items-center justify-center bg-blue-500/10 backdrop-blur-sm rounded-2xl pointer-events-none">
+                <div className={`px-6 py-4 rounded-xl shadow-lg border ${isDark ? 'bg-slate-800 border-blue-700' : 'bg-white border-blue-300'}`}>
+                  <p className={`font-medium ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                    Drop your Excel file here
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* ── Top bar ── */}
             <div className={`flex items-center justify-between px-6 py-3.5 border-b flex-shrink-0 ${divider}`}>
@@ -2425,11 +2487,11 @@ const savePercentageRebateData = async (rebateCodeId, database, customerCreatedM
                                       <td className="px-5 py-3.5">
                                         <div className="flex gap-1.5">
                                           <button
-                                            className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${
+                                            className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${(
                                               isRowEditable('customer', idx)
                                                 ? (isDark ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100')
                                                 : (isDark ? 'bg-slate-800 text-slate-400 hover:bg-slate-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200')
-                                            } ${!access.canEdit ? 'opacity-30 cursor-not-allowed' : ''}`}
+                                            )} ${!access.canEdit ? 'opacity-30 cursor-not-allowed' : ''}`}
                                             onClick={() => { if (access.canEdit) toggleRowEdit('customer', idx); }}
                                           >
                                             {isRowEditable('customer', idx) ? <Save size={13} /> : <Edit size={13} />}

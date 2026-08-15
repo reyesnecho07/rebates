@@ -696,6 +696,9 @@ function Vcp_RebateSetup() {
   const API_BASE = 'http://192.168.100.193:3009/api';
   const DB_NAME  = 'USER';
 
+  // Drag‑and‑drop state
+  const [isDragOver, setIsDragOver] = useState(false);
+
   const isDark = theme === 'dark';
 
   const hasAnyData = useMemo(() => {
@@ -1026,11 +1029,17 @@ function Vcp_RebateSetup() {
     }
   };
 
-  const handleImportExcel = async (event) => {
-    if (!access.canEdit) { showToast("You do not have permission to import data", "error"); return; }
-    const file = event.target.files[0];
+  // --- Core import logic (used by both file input and drag‑and‑drop) ---
+  const handleImportFile = (file) => {
+    if (!access.canEdit) {
+      showToast("You do not have permission to import data", "error");
+      return;
+    }
     if (!file) return;
-    if (!file.name.match(/\.(xlsx|xls)$/)) { showToast("Please select a valid Excel file (.xlsx or .xls)", "error"); return; }
+    if (!file.name.match(/\.(xlsx|xls)$/)) {
+      showToast("Please select a valid Excel file (.xlsx or .xls)", "error");
+      return;
+    }
     setLoading(true);
     const preservedCode       = isViewMode ? loadedRebateCode : null;
     const preservedIsViewMode = isViewMode;
@@ -1049,7 +1058,7 @@ function Vcp_RebateSetup() {
           const jsonData  = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
           if (jsonData.length > 0) {
             if (!preservedIsViewMode) {
-              extracted = extractHeaderInfoFromData(jsonData);  // capture return value
+              extracted = extractHeaderInfoFromData(jsonData);
             }
             const sheetLower = sheetName.toLowerCase();
             if (sheetLower.includes('customer')) {
@@ -1076,7 +1085,7 @@ function Vcp_RebateSetup() {
                 if (Array.isArray(row) && row[0] === "Item Code" && row[1] === "Item Name") { dataStartRow = i + 1; break; }
               }
               if (dataStartRow > 0) {
-                importedItems = processItemDataSimple(jsonData.slice(dataStartRow), extracted.rebateType);  // pass extracted type
+                importedItems = processItemDataSimple(jsonData.slice(dataStartRow), extracted.rebateType);
                 if (importedItems.length > 0) {
                   setItems(importedItems);
                   const state = {};
@@ -1113,7 +1122,37 @@ function Vcp_RebateSetup() {
     };
     reader.onerror = () => { setLoading(false); showToast("Error reading file. Please try again.", "error"); };
     reader.readAsArrayBuffer(file);
-    event.target.value = '';
+  };
+
+  // Updated import handler from file input
+  const handleImportExcel = (event) => {
+    const file = event.target.files?.[0];
+    if (file) handleImportFile(file);
+    event.target.value = ''; // reset
+  };
+
+  // --- Drag‑and‑drop handlers ---
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      const file = files[0];
+      handleImportFile(file);
+    }
   };
 
   const processCustomerDataSimple = (excelData) => {
@@ -1147,7 +1186,7 @@ function Vcp_RebateSetup() {
   };
 
   const processItemDataSimple = (excelData, effectiveRebateType) => {
-    const rt = effectiveRebateType ?? rebateType;   // use passed value, fall back to state
+    const rt = effectiveRebateType ?? rebateType;
     try {
       if (excelData.length === 0) { showToast("No item data found in sheet", "warning"); return []; }
       const dataRows = excelData.filter(row =>
@@ -1813,7 +1852,6 @@ function Vcp_RebateSetup() {
       showToast("At least one customer is required", "warning"); 
       return; 
     }
-    // Open the remove modal instead of confirmModal
     setRemoveCustomerModal({ 
       isOpen: true, 
       index: index, 
@@ -1830,7 +1868,6 @@ function Vcp_RebateSetup() {
       showToast("At least one item is required", "warning"); 
       return; 
     }
-    // Open the remove modal instead of confirmModal
     setRemoveItemModal({ 
       isOpen: true, 
       index: index, 
@@ -1838,7 +1875,6 @@ function Vcp_RebateSetup() {
     });
   };
 
-  // Add these confirmation functions:
   const confirmDeleteCustomer = () => {
     const { index } = removeCustomerModal;
     setCustomers(customers.filter((_, i) => i !== index));
@@ -1948,7 +1984,23 @@ function Vcp_RebateSetup() {
         <Header collapsed={collapsed} userName={userName} userCode={userCode} initials={initials} logo={vcpLogo} theme={theme} />
 
         <div className={`pt-16 flex-1 flex flex-col overflow-hidden ${pageBg}`}>
-          <div className={`rounded-2xl border shadow-xl ${cardBg} w-full max-w-[1600px] mx-auto mt-4 mb-4 mx-6 overflow-hidden flex flex-col flex-1`} style={{ margin: '1rem 1.5rem', maxWidth: 'calc(100% - 3rem)' }}>
+          <div
+            className={`rounded-2xl border shadow-xl ${cardBg} w-full max-w-[1600px] mx-auto mt-4 mb-4 mx-6 overflow-hidden flex flex-col flex-1 relative`}
+            style={{ margin: '1rem 1.5rem', maxWidth: 'calc(100% - 3rem)', position: 'relative' }}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            {/* Drag‑and‑drop overlay */}
+            {isDragOver && (
+              <div className="absolute inset-0 z-50 flex items-center justify-center bg-blue-500/10 backdrop-blur-sm rounded-2xl pointer-events-none">
+                <div className={`px-6 py-4 rounded-xl shadow-lg border ${isDark ? 'bg-slate-800 border-blue-700' : 'bg-white border-blue-300'}`}>
+                  <p className={`font-medium ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                    Drop your Excel file here
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* ── Top bar ─────────────────────────────────────────────────── */}
             <div className={`flex items-center justify-between px-6 py-3.5 border-b ${divider} flex-shrink-0`}>
@@ -2206,7 +2258,6 @@ function Vcp_RebateSetup() {
                                   : (rebateType === "Incremental" ? "Product Ranges"  : rebateType === "Percentage" ? "Product Setup"        : "Product Rebates")
                                 }
                               </span>
-                              {/* Active indicator */}
                               {activeTab === tab && (
                                 <span className={`absolute bottom-0 left-0 right-0 h-0.5 rounded-full ${isDark ? 'bg-blue-500' : 'bg-blue-600'}`} />
                               )}

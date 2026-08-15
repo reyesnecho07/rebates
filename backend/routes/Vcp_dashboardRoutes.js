@@ -4048,9 +4048,14 @@ router.get('/metrics', async (req, res) => {
         `;
 
         const totalUnpaidRebateQuery = `
-          SELECT 
-            SUM(ISNULL(RebateBalance, 0)) AS [Total Unpaid Rebate]
-          FROM PayoutHistory
+          SELECT SUM(ISNULL(RebateBalance, 0)) AS [Total Unpaid Rebate]
+          FROM PayoutHistory p1
+          WHERE CreatedDate = (
+              SELECT MAX(CreatedDate)
+              FROM PayoutHistory p2
+              WHERE p2.CardCode = p1.CardCode
+          )
+          AND CardCode IS NOT NULL
         `;
 
         console.log('🔍 Executing SQL for Total Rebate Paid...');

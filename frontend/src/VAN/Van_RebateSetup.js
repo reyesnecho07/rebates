@@ -586,6 +586,9 @@ function Van_RebateSetup() {
   const API_BASE = 'http://192.168.100.193:3009/api';
   const DB_NAME  = 'USER';
 
+  // ─── Drag‑and‑drop state ──────────────────────────────────────────────────
+  const [isDragOver, setIsDragOver] = useState(false);
+
   const REBATE_NAME_OPTIONS = [
   "TARGET PREMIUM, GRANDE HOG & FIREBLAZE in 50kls. @P50/bag",
   "VALUEMAXX HOG MASH & PELLET in 50kls @P30/bag",
@@ -956,9 +959,12 @@ function Van_RebateSetup() {
     }
   };
 
-  const handleImportExcel = async (event) => {
-    if (!access.canEdit) { showToast("You do not have permission to import data", "error"); return; }
-    const file = event.target.files[0];
+  // ─── Core import logic (used by both file input and drag‑and‑drop) ──────
+  const handleImportFile = (file) => {
+    if (!access.canEdit) {
+      showToast("You do not have permission to import data", "error");
+      return;
+    }
     if (!file) return;
     if (!file.name.match(/\.(xlsx|xls)$/)) {
       showToast("Please select a valid Excel file (.xlsx or .xls)", "error");
@@ -1261,9 +1267,40 @@ function Van_RebateSetup() {
     };
     reader.onerror = () => { setLoading(false); showToast("Error reading file. Please try again.", "error"); };
     reader.readAsArrayBuffer(file);
-    event.target.value = '';
   };
 
+  // ─── Updated file‑input handler ──────────────────────────────────────────
+  const handleImportExcel = (event) => {
+    const file = event.target.files?.[0];
+    if (file) handleImportFile(file);
+    event.target.value = ''; // reset
+  };
+
+  // ─── Drag‑and‑drop handlers ──────────────────────────────────────────────
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      const file = files[0];
+      handleImportFile(file);
+    }
+  };
+
+  // ─── Existing helper functions (unchanged) ───────────────────────────────
   const processCustomerDataSimple = (excelData) => {
     try {
       if (!excelData || excelData.length < 2) {
@@ -1688,7 +1725,8 @@ function Van_RebateSetup() {
     } else if (rebateType === "Incremental") {
       setRangeModal({ isOpen: true, customer: { ...customer, index: customerIndex } });
     } else {
-        setQuotaModal({ isOpen: true, customer: { ...customer, index: customerIndex }, importedQuotas: importedCustomerQuotas[customerIndex] || [] });    }
+        setQuotaModal({ isOpen: true, customer: { ...customer, index: customerIndex }, importedQuotas: importedCustomerQuotas[customerIndex] || [] });
+    }
   };
 
   const openProductRangeModal = (productIndex) => {
@@ -1919,7 +1957,7 @@ const getMonthlyPeriodsFromQuotaPeriods = () => {
         : null;
       const slpCode = salesEmployee ? salesEmployee.SlpCode : null;
       if (!slpCode) throw new Error("Sales employee code not found");
-     /* const dupCheckRes = await fetch(`${API_BASE}/rebate-program/check-duplicate-program`, {
+      /* const dupCheckRes = await fetch(`${API_BASE}/rebate-program/check-duplicate-program`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ RebateType: rebateType, SlpCode: slpCode, DateFrom: selectedDateFrom, DateTo: selectedDateTo, db: 'VAN' }),
       });
@@ -2289,8 +2327,24 @@ const getMonthlyPeriodsFromQuotaPeriods = () => {
         <Header collapsed={collapsed} userName={userName} userCode={userCode} initials={initials} logo={vanLogo} theme={theme} />
 
         <div className={`pt-16 flex-1 flex flex-col overflow-hidden ${pageBg}`}>
-          <div className={`rounded-2xl border shadow-xl ${cardBg} flex flex-col flex-1 overflow-hidden`}
-               style={{ margin: '1rem 1.5rem', maxWidth: 'calc(100% - 3rem)' }}>
+          {/* ─── Main card with drag‑and‑drop handlers ──────────────────── */}
+          <div
+            className={`rounded-2xl border shadow-xl ${cardBg} flex flex-col flex-1 overflow-hidden relative`}
+            style={{ margin: '1rem 1.5rem', maxWidth: 'calc(100% - 3rem)' }}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            {/* Drag‑and‑drop overlay */}
+            {isDragOver && (
+              <div className="absolute inset-0 z-50 flex items-center justify-center bg-blue-500/10 backdrop-blur-sm rounded-2xl pointer-events-none">
+                <div className={`px-6 py-4 rounded-xl shadow-lg border ${isDark ? 'bg-slate-800 border-blue-700' : 'bg-white border-blue-300'}`}>
+                  <p className={`font-medium ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                    Drop your Excel file here
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* ── Top bar ── */}
             <div className={`flex items-center justify-between px-6 py-3.5 border-b flex-shrink-0 ${divider}`}>
@@ -2988,7 +3042,7 @@ const getMonthlyPeriodsFromQuotaPeriods = () => {
       <RangeModal isOpen={rangeModal.isOpen} onClose={closeRangeModal} customer={rangeModal.customer} onSave={(r) => handleSaveRanges(rangeModal.customer.index, r)} quotaPeriods={quotaPeriods} rebateType={rebateType} quotaType={quotaType} theme={theme} />
       <ProductRangeModal isOpen={productRangeModal.isOpen} onClose={closeProductRangeModal} product={productRangeModal.product} onSave={(r) => handleSaveProductRanges(productRangeModal.product.index, r)} quotaPeriods={quotaPeriods} rebateType={rebateType} quotaType={quotaType} theme={theme} />
       <SearchRebateModal isOpen={searchModal.isOpen} onClose={() => setSearchModal({ isOpen: false })} searchCode={searchCode} setSearchCode={setSearchCode} onSearch={handleSearchRebateCode} searchLoading={searchLoading} searchError={searchError} theme={theme} canView={access.canView} />
-      <ToastContainer toasts={toasts} removeToast={removeToast} />
+      <ToastContainer toasts={toasts} removeToast={removeToast} isDark={isDark} />
       {loading && <Loading theme={theme} />}
       <ConfirmationModal isOpen={confirmModal.isOpen} onClose={() => setConfirmModal({ isOpen: false, action: null, data: null })} onConfirm={confirmModal.action === 'reset' ? resetForm : confirmAction} title={confirmModal.title} message={confirmModal.message} />
       <DuplicationError isOpen={duplicationError.isOpen} onClose={() => setDuplicationError({ isOpen: false, type: null, data: null })} type={duplicationError.type} data={duplicationError.data} theme={theme} />

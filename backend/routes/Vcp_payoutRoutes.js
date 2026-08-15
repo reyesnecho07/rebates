@@ -640,6 +640,7 @@ const applyBalanceCarryOver = (payouts, frequency = 'Quarterly', startingBalance
         Status: status,
         ReleaseDate: payout.ReleaseDate || payout.releaseDate,
         PreviousBalance: previousBalanceForThisMonth,
+        OwnDue: baseAmount,
         CalculationNote: previousBalanceForThisMonth > 0 
           ? `Base: ₱${baseAmount.toFixed(2)} + Prev: ₱${previousBalanceForThisMonth.toFixed(2)} = ₱${totalAmount.toFixed(2)}\nSAP Released: ₱${sapReleasedAmount.toFixed(2)}`
           : `Base: ₱${baseAmount.toFixed(2)}\nSAP Released: ₱${sapReleasedAmount.toFixed(2)}`
@@ -649,6 +650,8 @@ const applyBalanceCarryOver = (payouts, frequency = 'Quarterly', startingBalance
       previousBalance = balance;
     }
   });
+
+  settleCarriedForwardBalances(payoutsWithCarryOver);
   
   console.log(`✅ Applied carry-over to ${payoutsWithCarryOver.length} payouts`);
   return payoutsWithCarryOver;
@@ -1058,6 +1061,7 @@ const applyBalanceCarryOverToPayouts = (payouts, frequency = 'Quarterly') => {
         Status: status,
         ReleaseDate: payout.ReleaseDate || payout.releaseDate,
         PreviousBalance: 0,
+        OwnDue: 0,
         CalculationNote: baseAmount > 0 ? 
           `Base: ₱${baseAmount.toFixed(2)} → 0 (Quota not met)` :
           `Base: 0 → 0 (No transactions)`
@@ -1116,30 +1120,41 @@ settleCarriedForwardBalances(payoutsWithCarryOver);
 };
 
 const settleCarriedForwardBalances = (payoutsWithCarryOver) => {
-  const pendingStack = [];
+  // Only the chronological carry-over chain participates — qtr & beginning-balance rows are separate
+  const rows = payoutsWithCarryOver.filter(p =>
+    !p.isQtrRebate && !p.isBeginningBalance && p.displayType !== 'beginning_balance'
+  );
 
-  payoutsWithCarryOver.forEach((payout) => {
-    if (payout.isQtrRebate || payout.isBeginningBalance || payout.displayType === 'beginning_balance') {
-      return;
-    }
+  const n = rows.length;
+  const cumDue      = new Array(n).fill(0);
+  const cumReleased = new Array(n).fill(0);
+  let runningDue = 0, runningReleased = 0;
 
-    const balance         = parseFloat(payout.Balance) || 0;
-    const previousBalance = parseFloat(payout.PreviousBalance) || 0;
-
-    if (balance > 0.01) {
-      pendingStack.push(payout);
-    } else if (previousBalance > 0.01 && pendingStack.length > 0) {
-      // This period is fully paid AND it absorbed a carried-forward balance —
-      // every earlier unpaid period that fed into that balance is now settled.
-      while (pendingStack.length > 0) {
-        const prevRow = pendingStack.shift();
-        prevRow.Status        = 'Settled';
-        prevRow.Balance       = 0;
-        prevRow.CarriedOverTo = payout.Period;
-        prevRow.CarryOverNote = `Balance of ₱${(prevRow.BaseAmount || 0).toFixed(2)} fully paid via ${payout.Period}`;
-      }
-    }
+  rows.forEach((row, i) => {
+    runningDue      += parseFloat(row.OwnDue) || 0;
+    runningReleased += parseFloat(row.AmountReleased) || 0; // row's own recorded release
+    cumDue[i]      = runningDue;
+    cumReleased[i] = runningReleased;
   });
+
+  // For each row i, find the earliest row j >= i whose cumulative release
+  // covers row i's cumulative due — that's the row that "paid off" row i.
+  let j = 0;
+  for (let i = 0; i < n; i++) {
+    if ((parseFloat(rows[i].OwnDue) || 0) <= 0) continue; // nothing was ever owed this period
+    if (j < i) j = i;
+    while (j < n && cumReleased[j] < cumDue[i]) j++;
+
+    if (j < n && cumReleased[j] >= cumDue[i] && j !== i) {
+      // Row i's due was fully absorbed by a LATER row's payment
+      rows[i].Status        = 'Settled';
+      rows[i].Balance       = 0;
+      rows[i].CarriedOverTo = rows[j].Period;
+      rows[i].CarryOverNote = `Balance of ₱${(parseFloat(rows[i].OwnDue) || 0).toFixed(2)} fully paid via ${rows[j].Period}`;
+    }
+    // if j === i, the row already paid itself in full — leave its existing status
+    // if no j found, it's genuinely still outstanding — leave the cascaded Balance/Status as-is
+  }
 
   return payoutsWithCarryOver;
 };
@@ -2168,6 +2183,8 @@ const updateSubsequentPayouts = async (cardCode, rebateCode, pool) => {
         }
       }
     });
+
+    settleCarriedForwardBalances(rows);
 
     // Save all updates to database
     for (const payout of rows) {
