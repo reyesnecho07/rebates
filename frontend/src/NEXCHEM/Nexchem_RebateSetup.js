@@ -1606,6 +1606,7 @@ const handleUpdate = async () => {
         Frequency:   selectedFrequency,
         QuotaType:   quotaType === "withQuota" ? "With Quota" : "Without Quota",
         db:          'NEXCHEM',
+        UpdatedBy: userCode || userName,
       }),
     });
     if (!progRes.ok) throw new Error("Failed to update program header");
@@ -1686,6 +1687,7 @@ const handleUpdate = async () => {
         RebateType: rebateType, SlpCode: slpCode, SlpName: selectedSalesEmployee,
         DateFrom: selectedDateFrom, DateTo: selectedDateTo, Frequency: selectedFrequency,
         QuotaType: quotaType === "withQuota" ? "With Quota" : "Without Quota", db: 'NEXCHEM',
+        CreatedBy: userCode || userName,
       };
       const programRes = await fetch(`${API_BASE}/rebate-program?db=NEXCHEM`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rebateProgramData),

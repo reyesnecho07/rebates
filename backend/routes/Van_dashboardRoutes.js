@@ -1775,7 +1775,7 @@ res.json({
         T0.ItemCode,
         T0.Dscription as Item,
         T0.Quantity as ActualSales,
-        T0.DocEntry,
+        --T0.DocEntry,
         T0.DocNum as InvoiceNumber,
         T0.NumAtCard as CustomerReference,
         T0.CardName as CustomerName
@@ -2388,7 +2388,7 @@ router.get('/test-customer-sap/:customerCode', async (req, res) => {
     // Get sample invoices for customer
     const invoiceQuery = `
       SELECT TOP 5
-        T0.DocEntry,
+        --T0.DocEntry,
         T0.DocNum,
         CONVERT(VARCHAR(10), T0.DocDate, 120) as DocDate,
         T0.CardCode,

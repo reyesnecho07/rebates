@@ -350,33 +350,41 @@ const createBeginningBalanceRecord = (customerCode, rebateCode, rebateType, prev
     return null;
   }
 };
+
 const getPreviousBalanceFromAnyRebateProgram = async (customerCode, rebateType, currentStartDate, pool, currentRebateCode) => {
   try {
     console.log(`🔍 Getting previous balance for ${customerCode} - ${rebateType}`);
+
     // Get frequency of current rebate
     const freqResult = await pool.request()
       .input('rebateCode', sql.NVarChar(50), currentRebateCode)
       .query(`SELECT Frequency FROM RebateProgram WHERE RebateCode = @rebateCode`);
     const currentFrequency = freqResult.recordset[0]?.Frequency || '';
-    // Find other rebate codes for same CardCode + RebateType + Frequency
+
+    // Find other rebate codes for same CardCode + RebateType + Frequency,
+    // ordered NEWEST-FIRST so we check the nearest predecessor first —
+    // its RebateBalance already carries everything older than it.
     const otherRebatesResult = await pool.request()
       .input('customerCode', sql.NVarChar(50), customerCode)
       .input('rebateType', sql.NVarChar(50), rebateType)
       .input('rebateCode', sql.NVarChar(50), currentRebateCode)
       .input('frequency', sql.NVarChar(50), currentFrequency)
       .query(`
-        SELECT DISTINCT ph.RebateCode
+        SELECT DISTINCT rp.RebateCode, rp.DateFrom
         FROM PayoutHistory ph
         LEFT JOIN RebateProgram rp ON ph.RebateCode = rp.RebateCode
         WHERE ph.CardCode = @customerCode
           AND ph.RebateType = @rebateType
           AND ph.RebateCode != @rebateCode
           AND rp.Frequency = @frequency
+        ORDER BY rp.DateFrom DESC
       `);
+
     if (otherRebatesResult.recordset.length === 0) {
       console.log(`📭 No other rebate codes found for ${customerCode} - ${rebateType}`);
       return 0;
     }
+
     // Get the FIRST period of the CURRENT rebate to use as the cutoff
     const currentFirstPeriodResult = await pool.request()
       .input('customerCode', sql.NVarChar(50), customerCode)
@@ -392,7 +400,7 @@ const getPreviousBalanceFromAnyRebateProgram = async (customerCode, rebateType, 
         ORDER BY Id ASC
       `);
     const currentFirstPeriod = currentFirstPeriodResult.recordset[0]?.Period || null;
-    // Parse period string like "January 2026" → numeric 202601 for comparison
+
     const monthNames2 = ['January','February','March','April','May','June',
                          'July','August','September','October','November','December'];
     const parsePeriodNum = (str) => {
@@ -407,49 +415,54 @@ const getPreviousBalanceFromAnyRebateProgram = async (customerCode, rebateType, 
     };
     const currentFirstNum = parsePeriodNum(currentFirstPeriod);
     console.log(`📅 Current rebate first period: ${currentFirstPeriod} (${currentFirstNum})`);
+
+    // Walk candidates NEWEST → OLDEST. The first one whose last period is
+    // genuinely before the current rebate's first period is the direct
+    // predecessor in the chain — its stored RebateBalance (not a
+    // recomputed sum) is the correct amount to carry forward, because
+    // that balance already includes anything IT inherited from earlier
+    // programs.
     for (const row of otherRebatesResult.recordset) {
       const otherCode = row.RebateCode;
-      // Get the LAST period of the other rebate — it must be BEFORE current rebate's first period
-      const otherLastPeriodResult = await pool.request()
+
+      const lastRowResult = await pool.request()
         .input('customerCode', sql.NVarChar(50), customerCode)
         .input('otherCode', sql.NVarChar(50), otherCode)
         .query(`
-          SELECT TOP 1 Period
+          SELECT TOP 1 Period, RebateBalance
           FROM PayoutHistory
           WHERE CardCode = @customerCode
             AND RebateCode = @otherCode
             AND Period NOT LIKE 'Balance of %'
+            AND PayoutId NOT LIKE 'SAP-%'
             AND Period IS NOT NULL
             AND Period != ''
           ORDER BY Id DESC
         `);
-      const otherLastPeriod = otherLastPeriodResult.recordset[0]?.Period || null;
+
+      const otherLastPeriod = lastRowResult.recordset[0]?.Period || null;
       const otherLastNum = parsePeriodNum(otherLastPeriod);
-      console.log(`📅 Other rebate ${otherCode} last period: ${otherLastPeriod} (${otherLastNum})`);
+      const otherBalance = parseFloat(lastRowResult.recordset[0]?.RebateBalance) || 0;
+
+      console.log(`📅 Checking ${otherCode} — last period: ${otherLastPeriod} (${otherLastNum}), balance: ₱${otherBalance.toFixed(2)}`);
+
       // CONDITION: other rebate's last transaction must be BEFORE current rebate's first transaction
       if (currentFirstNum > 0 && otherLastNum >= currentFirstNum) {
         console.log(`🚫 Skipping ${otherCode} — its last period (${otherLastPeriod}) overlaps with current (${currentFirstPeriod})`);
         continue;
       }
-      const balResult = await pool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('otherCode', sql.NVarChar(50), otherCode)
-        .query(`
-          SELECT
-            SUM(BaseAmount - AmountReleased) AS TotalRemaining
-          FROM PayoutHistory
-          WHERE CardCode = @customerCode
-            AND RebateCode = @otherCode
-            AND Period NOT LIKE 'Balance of %'
-            AND BaseAmount > 0
-        `);
-      const remaining = parseFloat(balResult.recordset[0]?.TotalRemaining) || 0;
-      if (remaining > 0) {
-        console.log(`💰 Found valid previous balance: ₱${remaining.toFixed(2)} from ${otherCode} (last period: ${otherLastPeriod})`);
-        return remaining;
+
+      if (otherBalance > 0) {
+        console.log(`💰 Found valid previous balance: ₱${otherBalance.toFixed(2)} from ${otherCode} (last period: ${otherLastPeriod}, nearest predecessor)`);
+        return otherBalance;
       }
-      console.log(`📭 ${otherCode} has no remaining balance`);
+
+      console.log(`📭 ${otherCode} has no remaining balance — checking further back`);
+      // balance is 0 here, so keep walking to an older sibling in case
+      // this one was fully settled but an even older chain link wasn't
+      // (shouldn't normally happen since balances cascade, but safe)
     }
+
     console.log(`📭 No previous balance found for ${customerCode} - ${rebateType}`);
     return 0;
   } catch (error) {
@@ -457,6 +470,7 @@ const getPreviousBalanceFromAnyRebateProgram = async (customerCode, rebateType, 
     return 0;
   }
 };
+
 // Add beginning balance to payouts
 const addBeginningBalanceToPayouts = (payouts, previousBalance, customerCode, rebateType) => {
   try {

@@ -1774,7 +1774,7 @@ res.json({
         T0.ItemCode,
         T0.Dscription as Item,
         T0.Quantity as ActualSales,
-        T0.DocEntry,
+        --T0.DocEntry,
         T0.DocNum as InvoiceNumber,
         --T0.NumAtCard as CustomerReference,
         T0.CardName as CustomerName

@@ -808,30 +808,35 @@ router.get('/rebate-program/items/:code', async (req, res) => {
 
 // PUT /api/rebate-program/:code — update program header only (never touch CreatedDate)
 router.put('/rebate-program/:code', async (req, res) => {
-  const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, CreatedBy } = req.body;
-  const createdBy = CreatedBy || 'Unknown';
-  
-  await req.db.request()
-    .input('c',  sql.NVarChar, req.params.code)
-    .input('rt', sql.NVarChar, RebateType)
-    .input('sc', sql.Int,      SlpCode)
-    .input('sn', sql.NVarChar, SlpName)
-    .input('df', sql.Date,     DateFrom)
-    .input('dt', sql.Date,     DateTo)
-    .input('fr', sql.NVarChar, Frequency)
-    .input('qt', sql.NVarChar, QuotaType)
-    .input('ub', sql.NVarChar, UpdatedBy || 'Unknown')
-    .query(`
-      UPDATE RebateProgram
-      SET RebateType = @rt, SlpCode = @sc, SlpName = @sn,
-          DateFrom   = @df, DateTo  = @dt, Frequency = @fr,
-          QuotaType  = @qt, CreatedBy = @CreatedBy, UpdatedBy = @UpdatedBy,
-          UpdatedDate = GETDATE()
-          -- CreatedDate is intentionally NOT updated here
-      WHERE RebateCode = @c
-        AND CreatedDate IS NOT NULL   -- safety guard: only update rows that already have a CreatedDate
-    `);
-  res.json({ success: true });
+  try {
+    const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, UpdatedBy } = req.body;
+    const updatedBy = UpdatedBy || 'Unknown';
+
+    await req.db.request()
+      .input('c',  sql.NVarChar, req.params.code)
+      .input('rt', sql.NVarChar, RebateType)
+      .input('sc', sql.Int,      SlpCode)
+      .input('sn', sql.NVarChar, SlpName)
+      .input('df', sql.Date,     DateFrom)
+      .input('dt', sql.Date,     DateTo)
+      .input('fr', sql.NVarChar, Frequency)
+      .input('qt', sql.NVarChar, QuotaType)
+      .input('ub', sql.NVarChar, updatedBy)
+      .query(`
+        UPDATE RebateProgram
+        SET RebateType = @rt, SlpCode = @sc, SlpName = @sn,
+            DateFrom   = @df, DateTo  = @dt, Frequency = @fr,
+            QuotaType  = @qt, UpdatedBy = @ub,
+            UpdatedDate = GETDATE()
+            -- CreatedBy / CreatedDate intentionally untouched
+        WHERE RebateCode = @c
+          AND CreatedDate IS NOT NULL
+      `);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('❌ Error updating rebate program:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // DELETE /api/rebate-program/:code/details?type=Fixed|Incremental|Percentage

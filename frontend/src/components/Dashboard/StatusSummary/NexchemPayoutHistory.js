@@ -411,11 +411,9 @@ const renderPayoutRow = (payout, index) => {
             <tr key="beg-balance-row" className={`border-b ${isDark ? 'border-slate-700/50 bg-emerald-900/10 border-l-2 border-l-emerald-500' : 'border-slate-100 bg-emerald-50/60 border-l-2 border-l-emerald-400'}`}>
               <td className="px-5 py-2.5">
                 <span className={`font-bold ${isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>{dateDisplay}</span>
-                <div className={`text-[10px] mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>Beginning Balance</div>
               </td>
               <td className="px-4 py-2.5">
                 <div className={`font-medium text-xs ${isDark ? 'text-emerald-200' : 'text-emerald-800'}`}>Beginning Balance</div>
-                {fromLabel && <div className={`text-[10px] mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>(From {fromLabel} transactions)</div>}
               </td>
               <td className="px-4 py-2.5" />
               <td className="px-4 py-2.5" />

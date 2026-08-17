@@ -4507,7 +4507,7 @@ const fetchSAPJournalEntries = async (customerCode, periodFrom, periodTo, pool) 
         T0.CardName,
         T0.DocDate,
         T0.DocNum,
-        T0.DocEntry,
+        --T0.DocEntry,
         T0.ItemCode,
         T0.GTotal
       FROM ORIN T0
@@ -4527,7 +4527,7 @@ const fetchSAPJournalEntries = async (customerCode, periodFrom, periodTo, pool) 
         T0.U_BP_Code    AS CardCode,
         T0.DocDate,
         T0.DocNum,
-        T0.DocEntry,
+        --T0.DocEntry,
         T0.GTotal
       FROM ORPC T0
       WHERE
@@ -5346,7 +5346,7 @@ export const fetchAllSAPTransactionsForCustomer = async (customerCode) => {
              T0.CardName,
              T0.DocDate,  
              T0.DocNum, 
-             T0.DocEntry,
+             --T0.DocEntry,
              T0.ItemCode, 
              T0.GTotal
       FROM ORIN T0
@@ -5360,7 +5360,7 @@ export const fetchAllSAPTransactionsForCustomer = async (customerCode) => {
              T0.U_BP_Code AS CardCode,
              T0.DocDate,  
              T0.DocNum, 
-             T0.DocEntry,
+             --T0.DocEntry,
              T0.GTotal
       FROM ORPC T0
       WHERE T0.U_BP_Code = @customerCode

@@ -621,17 +621,17 @@ const VcpPayoutHistory = ({
                       <span className={`font-bold ${isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>
                         {dateDisplay}
                       </span>
-                      <div className={`text-[10px] mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                      {/*<div className={`text-[10px] mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
                         Beginning Balance
-                      </div>
+                      </div>*/}
                     </td>
                     <td className="px-4 py-2.5">
                       <div className={`font-medium text-xs ${isDark ? 'text-emerald-200' : 'text-emerald-800'}`}>
                         Beginning Balance
                       </div>
-                      <div className={`text-[10px] mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                      {/*<div className={`text-[10px] mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
                         (From {fromMonth} transactions)
-                      </div>
+                      </div>*/}
                     </td>
                     <td className="px-4 py-2.5" />
                     <td className="px-4 py-2.5" />

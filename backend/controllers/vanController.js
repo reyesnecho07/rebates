@@ -54,9 +54,14 @@ const getCustomers = async (req, res) => {
         .request()
         .query(`
           SELECT
-            CardCode,
-            CardName
-          FROM OCRD
+            T0.CardCode,
+            T0.CardName,
+            T1.GroupName,
+            T2.SlpName
+          FROM
+            OCRD T0  
+            INNER JOIN OCRG T1 ON T0.GroupCode = T1.GroupCode 
+            INNER JOIN OSLP T2 ON T0.SlpCode = T2.SlpCode
         `);
       console.log(`🟩 VAN Customers: ${result.recordset.length} records`);
       return result.recordset;
