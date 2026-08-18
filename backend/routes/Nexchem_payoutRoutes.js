@@ -706,89 +706,77 @@ const applyBalanceCarryOver = (payouts, frequency = 'Quarterly', startingBalance
 const mergePayoutData = (calculatedData, existingData, rebateType, frequency, sapEntries = []) => {
   try {
     console.log(`🔄 Merging payout data: ${calculatedData.length} calculated, ${existingData.length} existing`);
-    
+
     if (!Array.isArray(calculatedData)) calculatedData = [];
     if (!Array.isArray(existingData)) existingData = [];
-    
+
     const merged = [];
-    
+
     calculatedData.forEach(calculated => {
       try {
-        const existing = existingData.find(record => 
-          record.PayoutId === calculated.id
+        const existing = existingData.find(record => record.PayoutId === calculated.id);
+
+        // ── Always use fresh numbers from calculated – never freeze ──
+        const freshBase  = parseFloat(calculated.baseAmount ?? calculated.amount ?? 0);
+        const freshTotal = parseFloat(calculated.amount ?? 0);
+
+        // SAP‑released amount takes priority when present (fresh sync),
+        // otherwise fall back to whatever was manually saved before.
+        const freshSapReleased = parseFloat(calculated.sapReleasedAmount || 0);
+        const amountReleased = freshSapReleased > 0
+          ? freshSapReleased
+          : parseFloat(existing?.AmountReleased ?? calculated.amountReleased ?? 0);
+
+        const balance = freshTotal - amountReleased; // can be negative for over‑release
+
+        // ── Preserve manual status edits, but let quota/eligibility force "No Payout" ──
+        const status = calculateStatus(
+          existing?.Status,
+          calculated.eligible,
+          calculated.quotaMet,
+          rebateType
         );
-        
-        if (existing) {
-          merged.push({
-            Id: existing.Id,
-            PayoutId: existing.PayoutId || calculated.id,
-            CardCode: existing.CardCode || calculated.cardCode,
-            RebateCode: existing.RebateCode || calculated.rebateCode,
-            RebateType: existing.RebateType || rebateType,
-            Date: existing.Date || calculated.date,
-            Period: existing.Period || calculated.period,
-            BaseAmount: existing.BaseAmount || calculated.baseAmount || calculated.amount,
-            TotalAmount: existing.TotalAmount || calculated.amount,
-            Amount: existing.TotalAmount || calculated.amount,
-            Status: existing.Status || calculated.status,
-            AmountReleased: existing.AmountReleased || calculated.amountReleased || 0,
-            SapReleasedAmount: existing.SapReleasedAmount || calculated.sapReleasedAmount || 0,
-            SapLastSync: existing.SapLastSync || (calculated.sapReleasedAmount ? new Date() : null),
-            Balance: existing.Balance || calculated.balance,
-            ReleaseDate: existing.ReleaseDate,
-            CreatedDate: existing.CreatedDate || new Date().toISOString().split('T')[0],
-            UpdatedDate: existing.UpdatedDate || new Date().toISOString().split('T')[0],
-            monthKey: calculated.monthKey,
-            quarter: calculated.quarter,
-            year: calculated.year,
-            totalQtyForReb: calculated.totalQtyForReb || 0,
-            totalAdjustedQtyForReb: calculated.totalAdjustedQtyForReb || 0,
-            eligible: calculated.eligible,
-            quotaMet: calculated.quotaMet,
-            qtrRebate: calculated.qtrRebate,
-            isQtrRebate: calculated.type === 'quarterly',
-            calculationNote: calculated.calculationNote,
-            hasTransactions: calculated.hasTransactions || false,
-            transactionCount: calculated.transactionCount || 0,
-            sapEntries: calculated.sapEntries || [],
-            PreviousBalance: existing.PreviousBalance || 0
-          });
-        } else {
-          merged.push({
-            Id: null,
-            PayoutId: calculated.id,
-            CardCode: calculated.cardCode,
-            RebateCode: calculated.rebateCode,
-            RebateType: rebateType,
-            Date: calculated.date,
-            Period: calculated.period,
-            BaseAmount: calculated.baseAmount || calculated.amount,
-            TotalAmount: calculated.amount,
-            Amount: calculated.amount,
-            Status: calculated.status,
-            AmountReleased: calculated.amountReleased || 0,
-            SapReleasedAmount: calculated.sapReleasedAmount || 0,
-            SapLastSync: calculated.sapReleasedAmount ? new Date() : null,
-            Balance: calculated.balance,
-            ReleaseDate: null,
-            CreatedDate: new Date().toISOString().split('T')[0],
-            UpdatedDate: new Date().toISOString().split('T')[0],
-            monthKey: calculated.monthKey,
-            quarter: calculated.quarter,
-            year: calculated.year,
-            totalQtyForReb: calculated.totalQtyForReb || 0,
-            totalAdjustedQtyForReb: calculated.totalAdjustedQtyForReb || 0,
-            eligible: calculated.eligible,
-            quotaMet: calculated.quotaMet,
-            qtrRebate: calculated.qtrRebate,
-            isQtrRebate: calculated.type === 'quarterly',
-            calculationNote: calculated.calculationNote,
-            hasTransactions: calculated.hasTransactions || false,
-            transactionCount: calculated.transactionCount || 0,
-            sapEntries: calculated.sapEntries || [],
-            PreviousBalance: 0
-          });
-        }
+
+        // ── Build the merged record ──
+        merged.push({
+          Id: existing?.Id || null,
+          PayoutId: existing?.PayoutId || calculated.id,
+          CardCode: existing?.CardCode || calculated.cardCode,
+          RebateCode: existing?.RebateCode || calculated.rebateCode,
+          RebateType: existing?.RebateType || rebateType,
+          Date: existing?.Date || calculated.date,
+          Period: existing?.Period || calculated.period,
+
+          // ⬇️ Always fresh – this is the core fix
+          BaseAmount: freshBase,
+          TotalAmount: freshTotal,
+          Amount: freshTotal,
+
+          Status: status,
+          AmountReleased: amountReleased,
+          SapReleasedAmount: freshSapReleased || parseFloat(existing?.SapReleasedAmount || 0),
+          SapLastSync: freshSapReleased > 0 ? new Date() : (existing?.SapLastSync || null),
+          Balance: balance,
+          ReleaseDate: existing?.ReleaseDate || null,
+          CreatedDate: existing?.CreatedDate || new Date().toISOString().split('T')[0],
+          UpdatedDate: new Date().toISOString().split('T')[0],
+
+          // Calculated metadata
+          monthKey: calculated.monthKey,
+          quarter: calculated.quarter,
+          year: calculated.year,
+          totalQtyForReb: calculated.totalQtyForReb || 0,
+          totalAdjustedQtyForReb: calculated.totalAdjustedQtyForReb || 0,
+          eligible: calculated.eligible,
+          quotaMet: calculated.quotaMet,
+          qtrRebate: calculated.qtrRebate,
+          isQtrRebate: calculated.type === 'quarterly',
+          calculationNote: calculated.calculationNote,
+          hasTransactions: calculated.hasTransactions || false,
+          transactionCount: calculated.transactionCount || 0,
+          sapEntries: calculated.sapEntries || [],
+          PreviousBalance: parseFloat(existing?.PreviousBalance || 0)
+        });
       } catch (mergeError) {
         console.error(`❌ Error merging record:`, mergeError.message);
       }
@@ -796,7 +784,6 @@ const mergePayoutData = (calculatedData, existingData, rebateType, frequency, sa
 
     console.log(`✅ Merged ${merged.length} payout records with SAP data`);
     return merged;
-    
   } catch (error) {
     console.error('❌ Error in mergePayoutData:', error);
     return [];

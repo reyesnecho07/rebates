@@ -3178,7 +3178,7 @@ const [jeResult, arResult, apResult, arcmResult, apcmResult] = await Promise.all
     }
 
     /* ----------------------------------------------------------------
-     * PART 8 — Serialise, sort, log summary
+     *             PART 8 — Serialise, sort, log summary
      * ----------------------------------------------------------------*/
     const resultArray = Object.values(entriesByPeriod)
       .map(({ transactionIds, ...rest }) => rest)
