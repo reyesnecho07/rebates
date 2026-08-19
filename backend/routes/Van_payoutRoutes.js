@@ -3592,105 +3592,78 @@ router.get('/payouts-with-balances/:cardCode?', async (req, res) => {
 const mergePayoutData = (calculatedData, existingData, rebateType) => {
   try {
     console.log(`🔄 Merging payout data: ${calculatedData.length} calculated, ${existingData.length} existing`);
-    
+
     if (!Array.isArray(calculatedData)) calculatedData = [];
     if (!Array.isArray(existingData)) existingData = [];
-    
+
     const merged = [];
-    
+
     calculatedData.forEach(calculated => {
       try {
-        // Find matching existing record using PayoutId
-        const existing = existingData.find(record => 
-          record.PayoutId === calculated.id
+        const existing = existingData.find(record => record.PayoutId === calculated.id);
+
+        // ── Always use fresh numbers from calculated – never freeze ──
+        const freshBase  = parseFloat(calculated.baseAmount ?? calculated.amount ?? 0);
+        const freshTotal = parseFloat(calculated.amount ?? 0);
+
+        // If the calculation provided a released amount (e.g. from SAPJournalEntries),
+        // use that; otherwise keep the manually set value from existing (if any).
+        const freshReleased = parseFloat(calculated.amountReleased || 0);
+        const amountReleased = freshReleased > 0
+          ? freshReleased
+          : parseFloat(existing?.AmountReleased || 0);
+
+        const balance = calculateBalance(freshTotal, amountReleased);
+
+        // Preserve manual status edits, but let quota/eligibility force "No Payout"
+        const status = calculateStatus(
+          existing?.Status,
+          calculated.eligible,
+          calculated.quotaMet,
+          rebateType
         );
-        
-        if (existing) {
-          // Calculate balance using the helper function
-          const balance = calculateBalance(
-            existing.TotalAmount || calculated.amount,
-            existing.AmountReleased || calculated.amountReleased || 0
-          );
-          
-          merged.push({
-            Id: existing.Id,
-            PayoutId: existing.PayoutId || calculated.id,
-            CardCode: existing.CardCode || calculated.cardCode,
-            RebateCode: existing.RebateCode || calculated.rebateCode,
-            RebateType: existing.RebateType || rebateType,
-            Date: existing.Date || calculated.date,
-            Period: existing.Period || calculated.period,
-            BaseAmount: existing.BaseAmount || calculated.baseAmount || calculated.amount,
-            TotalAmount: existing.TotalAmount || calculated.amount,
-            Amount: existing.TotalAmount || calculated.amount,
-            Status: calculateStatus(
-              existing.Status,
-              calculated.eligible,
-              calculated.quotaMet,
-              rebateType
-            ),
-            AmountReleased: existing.AmountReleased || calculated.amountReleased || 0,
-            Balance: balance,
-            ReleaseDate: existing.ReleaseDate,
-            CreatedDate: existing.CreatedDate || new Date().toISOString().split('T')[0],
-            UpdatedDate: existing.UpdatedDate || new Date().toISOString().split('T')[0],
-            monthKey: calculated.monthKey,
-            quarter: calculated.quarter,
-            year: calculated.year,
-            totalQtyForReb: calculated.totalQtyForReb || 0,
-            totalAdjustedQtyForReb: calculated.totalAdjustedQtyForReb || 0,
-            eligible: calculated.eligible,
-            quotaMet: calculated.quotaMet,
-            qtrRebate: calculated.qtrRebate,
-            isQtrRebate: calculated.type === 'quarterly',
-            calculationNote: calculated.calculationNote,
-            hasTransactions: calculated.hasTransactions || false,
-            transactionCount: calculated.transactionCount || 0
-          });
-        } else {
-          // Calculate balance using the helper function
-          const balance = calculateBalance(
-            calculated.amount,
-            calculated.amountReleased || 0
-          );
-          
-          // Create new record structure
-          merged.push({
-            Id: null,
-            PayoutId: calculated.id,
-            CardCode: calculated.cardCode,
-            RebateCode: calculated.rebateCode,
-            RebateType: rebateType,
-            Date: calculated.date,
-            Period: calculated.period,
-            BaseAmount: calculated.baseAmount || calculated.amount,
-            TotalAmount: calculated.amount,
-            Amount: calculated.amount,
-            Status: calculateStatus(
-              calculated.status,
-              calculated.eligible,
-              calculated.quotaMet,
-              rebateType
-            ),
-            AmountReleased: calculated.amountReleased || 0,
-            Balance: balance,
-            ReleaseDate: null,
-            CreatedDate: new Date().toISOString().split('T')[0],
-            UpdatedDate: new Date().toISOString().split('T')[0],
-            monthKey: calculated.monthKey,
-            quarter: calculated.quarter,
-            year: calculated.year,
-            totalQtyForReb: calculated.totalQtyForReb || 0,
-            totalAdjustedQtyForReb: calculated.totalAdjustedQtyForReb || 0,
-            eligible: calculated.eligible,
-            quotaMet: calculated.quotaMet,
-            qtrRebate: calculated.qtrRebate,
-            isQtrRebate: calculated.type === 'quarterly',
-            calculationNote: calculated.calculationNote,
-            hasTransactions: calculated.hasTransactions || false,
-            transactionCount: calculated.transactionCount || 0
-          });
-        }
+
+        // ── Build the merged record ──
+        merged.push({
+          Id: existing?.Id || null,
+          PayoutId: existing?.PayoutId || calculated.id,
+          CardCode: existing?.CardCode || calculated.cardCode,
+          RebateCode: existing?.RebateCode || calculated.rebateCode,
+          RebateType: existing?.RebateType || rebateType,
+          Date: existing?.Date || calculated.date,
+          Period: existing?.Period || calculated.period,
+
+          // ⬇️ Always fresh – this is the core fix
+          BaseAmount: freshBase,
+          TotalAmount: freshTotal,
+          Amount: freshTotal,
+
+          Status: status,
+          AmountReleased: amountReleased,
+          Balance: balance,
+          ReleaseDate: existing?.ReleaseDate || null,
+          CreatedDate: existing?.CreatedDate || new Date().toISOString().split('T')[0],
+          UpdatedDate: new Date().toISOString().split('T')[0],
+
+          // Calculated metadata
+          monthKey: calculated.monthKey,
+          quarter: calculated.quarter,
+          year: calculated.year,
+          totalQtyForReb: calculated.totalQtyForReb || 0,
+          totalAdjustedQtyForReb: calculated.totalAdjustedQtyForReb || 0,
+          eligible: calculated.eligible,
+          quotaMet: calculated.quotaMet,
+          qtrRebate: calculated.qtrRebate,
+          isQtrRebate: calculated.type === 'quarterly',
+          calculationNote: calculated.calculationNote,
+          hasTransactions: calculated.hasTransactions || false,
+          transactionCount: calculated.transactionCount || 0,
+          // Include optional SAP journal fields if present
+          ...(calculated.hasSapJournal !== undefined && { hasSapJournal: calculated.hasSapJournal }),
+          ...(calculated.journalRemarks && { journalRemarks: calculated.journalRemarks }),
+          ...(calculated.journalDate && { journalDate: calculated.journalDate }),
+          ...(calculated.journalStatus && { journalStatus: calculated.journalStatus }),
+        });
       } catch (mergeError) {
         console.error(`❌ Error merging record:`, mergeError.message);
       }
@@ -3698,7 +3671,6 @@ const mergePayoutData = (calculatedData, existingData, rebateType) => {
 
     console.log(`✅ Merged ${merged.length} payout records`);
     return merged;
-    
   } catch (error) {
     console.error('❌ Error in mergePayoutData:', error);
     return [];
@@ -4467,11 +4439,6 @@ const fetchSAPJournalEntries = async (customerCode, periodFrom, periodTo, pool) 
         OINV T0
         LEFT JOIN OJDT T1 ON T1.BaseRef = CAST(T0.DocNum AS NVARCHAR)
         LEFT JOIN OACT T2 ON T2.AcctCode = T1.Account AND T2.AcctName LIKE '%Rebate%'
-      WHERE
-        T0.CardCode   = @customerCode
-        AND T2.AcctName IS NOT NULL
-        AND T0.DocDate >= @periodFrom
-        AND T0.DocDate <= @endDate
       WHERE
         T0.CardCode   = @customerCode
         AND T2.AcctName IS NOT NULL

@@ -1100,7 +1100,7 @@ export default function Login() {
               </span>
 
               {/* Help tooltip */}
-              <div className="tooltip-hover absolute right-0" style={{ lineHeight: 0 }}>
+           {/*   <div className="tooltip-hover absolute right-0" style={{ lineHeight: 0 }}>
                 <HelpCircle
                   size={17} strokeWidth={1.6}
                   style={{ color: isDark ? "rgba(255,255,255,.30)" : "#94a3b8", transition: "color .15s" }}
@@ -1115,8 +1115,8 @@ export default function Login() {
                   <br />
                   <span style={{ opacity: 0.75 }}>• First-time login?</span> Use your temporary password.
                 </div>
-              </div>
-            </div>
+              </div>*/}
+            </div> 
           </div>
         </div>
 
