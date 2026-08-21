@@ -1167,32 +1167,35 @@ function Van_RebateSetup() {
           if (headerRowIndex > -1) {
             const headers = itemData[headerRowIndex];
             if (importedRebateType === "Fixed" || importedRebateType === "Percentage") {
-              const codeColIndex   = headers.findIndex(h => String(h).toLowerCase().includes('item code'));
-              const nameColIndex   = headers.findIndex(h => String(h).toLowerCase().includes('item name'));
-              const qtyColIndex    = headers.findIndex(h => String(h).toLowerCase().includes('qty') && !String(h).toLowerCase().includes('min') && !String(h).toLowerCase().includes('max'));
-              const rebateColIndex = headers.findIndex(h =>
-                String(h).toLowerCase().includes('rebate per bag') || String(h).toLowerCase().includes('percentage per bag')
-              );
-              const importedItems = [];
-              for (let i = headerRowIndex + 1; i < itemData.length; i++) {
-                const row = itemData[i];
-                if (!Array.isArray(row) || !row[codeColIndex]) continue;
-                const code = String(row[codeColIndex] || '').trim();
-                const name = String(row[nameColIndex] || '').trim();
-                if (!code || !name) continue;
-                const exists = itemsDropdown.some(i => i.ItemCode === code || i.ItemName === name);
-                if (!exists) continue;
-                const qty       = row[qtyColIndex]    !== undefined ? String(row[qtyColIndex]).trim()    : '';
-                const rebateVal = row[rebateColIndex] !== undefined ? String(row[rebateColIndex]).trim() : '';
-                importedItems.push({
-                  code,
-                  name,
-                  unitPerQty:       qty,
-                  rebatePerBag:     importedRebateType === "Fixed"      ? rebateVal : '',
-                  percentagePerBag: importedRebateType === "Percentage" ? rebateVal : '',
-                  ranges:           {},
-                });
-              }
+            const codeColIndex   = headers.findIndex(h => String(h).toLowerCase().includes('item code'));
+            const nameColIndex   = headers.findIndex(h => String(h).toLowerCase().includes('item name'));
+            const qtyColIndex    = headers.findIndex(h => String(h).toLowerCase().includes('qty') && !String(h).toLowerCase().includes('min') && !String(h).toLowerCase().includes('max'));
+            const uomColIndex    = headers.findIndex(h => String(h).toLowerCase().includes('unit of measure') || String(h).toLowerCase() === 'uom');
+            const rebateColIndex = headers.findIndex(h =>
+              String(h).toLowerCase().includes('rebate per bag') || String(h).toLowerCase().includes('percentage per bag')
+            );
+            const importedItems = [];
+            for (let i = headerRowIndex + 1; i < itemData.length; i++) {
+              const row = itemData[i];
+              if (!Array.isArray(row) || !row[codeColIndex]) continue;
+              const code = String(row[codeColIndex] || '').trim();
+              const name = String(row[nameColIndex] || '').trim();
+              if (!code || !name) continue;
+              const exists = itemsDropdown.some(i => i.ItemCode === code || i.ItemName === name);
+              if (!exists) continue;
+              const qty       = row[qtyColIndex]    !== undefined ? String(row[qtyColIndex]).trim()    : '';
+              const rebateVal = row[rebateColIndex] !== undefined ? String(row[rebateColIndex]).trim() : '';
+              const uomVal    = uomColIndex > -1 && row[uomColIndex] !== undefined ? String(row[uomColIndex]).trim() : ''; // ← declared here
+              importedItems.push({
+                code,
+                name,
+                unitPerQty:       qty,
+                rebatePerBag:     importedRebateType === "Fixed"      ? rebateVal : '',
+                percentagePerBag: importedRebateType === "Percentage" ? rebateVal : '',
+                unitOfMeasure:    uomVal || detectUnitOfMeasure(name),
+                ranges:           {},
+              });
+            }
               if (importedItems.length > 0) {
                 setItems(importedItems);
                 const state = {};
@@ -1203,6 +1206,7 @@ function Van_RebateSetup() {
               const codeColIndex    = headers.findIndex(h => String(h).toLowerCase().includes('item code'));
               const nameColIndex    = headers.findIndex(h => String(h).toLowerCase().includes('item name'));
               const qtyColIndex     = headers.findIndex(h => String(h).toLowerCase().includes('qty') && !String(h).toLowerCase().includes('min') && !String(h).toLowerCase().includes('max'));
+              const uomColIndex     = headers.findIndex(h => String(h).toLowerCase().includes('unit of measure') || String(h).toLowerCase() === 'uom');
               const periodColIndex  = headers.findIndex(h => String(h).toLowerCase().includes('period'));
               const rangeNoColIndex = headers.findIndex(h => String(h).toLowerCase().includes('range no'));
               const minColIndex     = headers.findIndex(h => String(h).toLowerCase().includes('min qty'));
@@ -1217,14 +1221,21 @@ function Van_RebateSetup() {
                 if (!code || !name) continue;
                 const exists = itemsDropdown.some(i => i.ItemCode === code);
                 if (!exists) continue;
-                const qty         = row[qtyColIndex]     !== undefined ? String(row[qtyColIndex]).trim()     : '';
-                const periodLabel = String(row[periodColIndex]  || '').trim();
-                const rangeNo     = parseInt(row[rangeNoColIndex]) || 1;
-                const minQty      = String(row[minColIndex]     || '0').trim();
-                const maxQty      = String(row[maxColIndex]     || '0').trim();
-                const rebate      = String(row[rebateColIndex]  || '0').trim();
+                const qty          = row[qtyColIndex]     !== undefined ? String(row[qtyColIndex]).trim()     : '';
+                const uomVal        = uomColIndex > -1 && row[uomColIndex] !== undefined ? String(row[uomColIndex]).trim() : ''; // ← declared here, top of loop
+                const periodLabel  = String(row[periodColIndex]  || '').trim();
+                const rangeNo      = parseInt(row[rangeNoColIndex]) || 1;
+                const minQty       = String(row[minColIndex]     || '0').trim();
+                const maxQty       = String(row[maxColIndex]     || '0').trim();
+                const rebate       = String(row[rebateColIndex]  || '0').trim();
                 if (!itemMap.has(code)) {
-                  itemMap.set(code, { code, name, unitPerQty: qty, rebatePerBag: '', percentagePerBag: '', ranges: {} });
+                  itemMap.set(code, {
+                    code, name,
+                    unitPerQty: qty,
+                    rebatePerBag: '', percentagePerBag: '',
+                    unitOfMeasure: uomVal || detectUnitOfMeasure(name),
+                    ranges: {}
+                  });
                 }
                 const item = itemMap.get(code);
                 let periodIndex = 0;
@@ -1559,14 +1570,14 @@ function Van_RebateSetup() {
       XLSX.utils.book_append_sheet(workbook, customerWorksheet, 'Customers');
       let itemSheetData = [...headerData];
       if (rebateType === "Fixed" || rebateType === "Percentage") {
-        const itemHeaders = ["Item Code","Item Name","Qty", rebateType === "Fixed" ? "Rebate Per Bag" : "Percentage Per Bag"];
-        itemSheetData.push(itemHeaders);
-        items.filter(i => i.code && i.name).forEach(i => {
-          itemSheetData.push([
-            i.code, i.name, i.unitPerQty || '0',
-            rebateType === "Percentage" ? (i.percentagePerBag || '0') : (i.rebatePerBag || '0'),
-          ]);
-        });
+      const itemHeaders = ["Item Code","Item Name","Qty","Unit of Measure", rebateType === "Fixed" ? "Rebate Per Bag" : "Percentage Per Bag"];
+      itemSheetData.push(itemHeaders);
+      items.filter(i => i.code && i.name).forEach(i => {
+        itemSheetData.push([
+          i.code, i.name, i.unitPerQty || '0', i.unitOfMeasure || '',
+          rebateType === "Percentage" ? (i.percentagePerBag || '0') : (i.rebatePerBag || '0'),
+        ]);
+      });
       } else if (rebateType === "Incremental") {
         itemSheetData.push(["Item Code","Item Name","Qty","Period","Range No","Min Qty","Max Qty","Rebate Per Bag"]);
         items.filter(i => i.code && i.name).forEach(i => {
@@ -1577,7 +1588,7 @@ function Van_RebateSetup() {
               const range = periodRanges[rangeNo];
               if (range && (range.min || range.max || range.rebate)) {
                 itemSheetData.push([
-                  i.code, i.name, i.unitPerQty || '0',
+                  i.code, i.name, i.unitPerQty || '0', i.unitOfMeasure || '',
                   monthlyPeriods[periodIdx]?.label || `Period ${periodIdx + 1}`,
                   rangeNo + 1, range.min || '0', range.max || '0', range.rebate || '0',
                 ]);
@@ -2785,7 +2796,7 @@ const getMonthlyPeriodsFromQuotaPeriods = () => {
                         <div className="flex flex-col flex-1 overflow-hidden">
                           <div className="flex items-center gap-3 mb-2 flex-shrink-0">
                             <h3 className={`text-sm font-semibold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
-                              {rebateType === "Incremental" ? "Product Rebate Ranges" : rebateType === "Percentage" ? "Product Setup" : "Product Rebate Configuration"}
+                              {rebateType === "Incremental" ? "Product Setup" : rebateType === "Percentage" ? "Product Setup" : "Product Rebate Configuration"}
                             </h3>
                             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${isDark ? 'bg-slate-800 text-slate-400 border border-slate-700' : 'bg-slate-100 text-slate-600'}`}>
                               {items.length}
@@ -2797,18 +2808,30 @@ const getMonthlyPeriodsFromQuotaPeriods = () => {
                               <table className="w-full border-collapse text-sm min-w-[600px]">
                                 <thead className={`sticky top-0 z-10 ${isDark ? 'bg-slate-800/90' : 'bg-slate-50'}`}>
                                   <tr>
-                                      {["Item Code", "Item Name", "Qty", "Unit of Measure",
-                                        ...(rebateType === "Percentage" ? ["% Per Bag"] : [rebateType === "Incremental" ? "Rebate Ranges" : "Rebate per Unit"]),
-                                        "Actions"
-                                      ].map(h => (
-                                      <th key={h} className={`px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider border-b ${isDark ? 'text-slate-500 border-slate-700/60' : 'text-slate-500 border-slate-200'}`}>{h}</th>
+                                    {[
+                                      "Item Code",
+                                      "Item Name",
+                                      "Qty",
+                                      "Unit of Measure",
+                                      // Rebate column only for Fixed or Percentage
+                                      ...(rebateType === "Percentage"
+                                        ? ["% Per Bag"]
+                                        : rebateType === "Incremental"
+                                        ? []          // ← removed for Incremental
+                                        : ["Rebate per Unit"]
+                                      ),
+                                      "Actions"
+                                    ].map(h => (
+                                      <th key={h} className={`px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider border-b ${isDark ? 'text-slate-500 border-slate-700/60' : 'text-slate-500 border-slate-200'}`}>
+                                        {h}
+                                      </th>
                                     ))}
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {items.length === 0 ? (
                                     <tr>
-                                      <td colSpan={5} className={`px-5 py-16 text-center ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
+                                      <td colSpan={rebateType === "Incremental" ? 5 : 6} className={`px-5 py-16 text-center ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>
                                         <div className="flex flex-col items-center gap-2">
                                           <Package className="w-7 h-7 opacity-30" />
                                           <span className="text-sm">No items added yet</span>
@@ -2816,42 +2839,52 @@ const getMonthlyPeriodsFromQuotaPeriods = () => {
                                         </div>
                                       </td>
                                     </tr>
-                                  ) : items.map((item, idx) => (
-                                    <tr key={idx} className={`border-b last:border-b-0 transition-colors ${isDark ? 'border-slate-800 hover:bg-slate-800/50' : 'border-slate-100 hover:bg-slate-50/80'}`}>
-                                      <td className="px-5 py-3.5">
-                                        <code className={`font-mono text-xs font-medium px-2 py-1 rounded-lg ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700'}`}>
-                                          {item.code || "—"}
-                                        </code>
-                                      </td>
-                                      <td className="px-5 py-3.5">
-                                        {isRowEditable('item', idx) ? (
-                                          <button
-                                            onClick={() => handleOpenItemModal(idx)}
-                                            className={`flex items-center justify-between gap-2 px-3 py-2 border rounded-lg text-sm transition-all w-full min-w-[200px] ${
-                                              isDark
-                                                ? 'bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600'
-                                                : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300 shadow-sm'
-                                            }`}
-                                          >
-                                            <span className="text-left whitespace-normal">{item.name || "Select Item"}</span>
-                                            <Package className={`w-3.5 h-3.5 flex-shrink-0 ${isDark ? 'text-slate-600' : 'text-slate-400'}`} />
-                                          </button>
-                                        ) : (
-                                          <span className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{item.name || "—"}</span>
-                                        )}
-                                      </td>
-                                      <td className="px-5 py-3.5">
-                                        {isRowEditable('item', idx) ? (
-                                          <input type="text" value={item.unitPerQty || ""} onChange={(e) => { const nd = [...items]; nd[idx].unitPerQty = e.target.value; setItems(nd); }} placeholder="Qty"
-                                            className={`w-28 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200 text-slate-800'}`}
-                                            disabled={!access.canEdit}
-                                          />
-                                        ) : (
-                                          <span className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{item.unitPerQty || "—"}</span>
-                                        )}
-                                      </td>
+                                  ) : (
+                                    items.map((item, idx) => (
+                                      <tr key={idx} className={`border-b last:border-b-0 transition-colors ${isDark ? 'border-slate-800 hover:bg-slate-800/50' : 'border-slate-100 hover:bg-slate-50/80'}`}>
+                                        {/* Item Code */}
+                                        <td className="px-5 py-3.5">
+                                          <code className={`font-mono text-xs font-medium px-2 py-1 rounded-lg ${isDark ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-700'}`}>
+                                            {item.code || "—"}
+                                          </code>
+                                        </td>
 
-                                      {/* Unit of Measure */}
+                                        {/* Item Name */}
+                                        <td className="px-5 py-3.5">
+                                          {isRowEditable('item', idx) ? (
+                                            <button
+                                              onClick={() => handleOpenItemModal(idx)}
+                                              className={`flex items-center justify-between gap-2 px-3 py-2 border rounded-lg text-sm transition-all w-full min-w-[200px] ${
+                                                isDark
+                                                  ? 'bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600'
+                                                  : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300 shadow-sm'
+                                              }`}
+                                            >
+                                              <span className="text-left whitespace-normal">{item.name || "Select Item"}</span>
+                                              <Package className={`w-3.5 h-3.5 flex-shrink-0 ${isDark ? 'text-slate-600' : 'text-slate-400'}`} />
+                                            </button>
+                                          ) : (
+                                            <span className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{item.name || "—"}</span>
+                                          )}
+                                        </td>
+
+                                        {/* Qty */}
+                                        <td className="px-5 py-3.5">
+                                          {isRowEditable('item', idx) ? (
+                                            <input
+                                              type="text"
+                                              value={item.unitPerQty || ""}
+                                              onChange={(e) => { const nd = [...items]; nd[idx].unitPerQty = e.target.value; setItems(nd); }}
+                                              placeholder="Qty"
+                                              className={`w-28 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200 text-slate-800'}`}
+                                              disabled={!access.canEdit}
+                                            />
+                                          ) : (
+                                            <span className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{item.unitPerQty || "—"}</span>
+                                          )}
+                                        </td>
+
+                                        {/* Unit of Measure */}
                                         <td className="px-5 py-3.5">
                                           {isRowEditable('item', idx) ? (
                                             <div className="relative">
@@ -2887,77 +2920,78 @@ const getMonthlyPeriodsFromQuotaPeriods = () => {
                                           )}
                                         </td>
 
-                                      {rebateType === "Percentage" && (
-                                        <td className="px-5 py-3.5">
-                                          {isRowEditable('item', idx) ? (
-                                            <div className="relative w-32">
-                                              <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>%</span>
-                                              <input type="text" value={item.percentagePerBag || ""} onChange={(e) => handlePercentagePerBagChange(idx, e.target.value)} placeholder="0.00"
-                                                className={`w-full pl-7 pr-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200 text-slate-800'}`}
-                                                disabled={!access.canEdit}
-                                              />
-                                            </div>
-                                          ) : (
-                                            <span className={`text-sm font-medium ${isDark ? 'text-amber-300' : 'text-amber-600'}`}>
-                                              {item.percentagePerBag ? `${item.percentagePerBag}%` : "—"}
-                                            </span>
-                                          )}
-                                        </td>
-                                      )}
+                                        {/* ─── Rebate column ─── */}
+                                        {rebateType === "Percentage" && (
+                                          <td className="px-5 py-3.5">
+                                            {isRowEditable('item', idx) ? (
+                                              <div className="relative w-32">
+                                                <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>%</span>
+                                                <input
+                                                  type="text"
+                                                  value={item.percentagePerBag || ""}
+                                                  onChange={(e) => handlePercentagePerBagChange(idx, e.target.value)}
+                                                  placeholder="0.00"
+                                                  className={`w-full pl-7 pr-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200 text-slate-800'}`}
+                                                  disabled={!access.canEdit}
+                                                />
+                                              </div>
+                                            ) : (
+                                              <span className={`text-sm font-medium ${isDark ? 'text-amber-300' : 'text-amber-600'}`}>
+                                                {item.percentagePerBag ? `${item.percentagePerBag}%` : "—"}
+                                              </span>
+                                            )}
+                                          </td>
+                                        )}
 
-                                      {rebateType !== "Percentage" && (
-                                        <td className="px-5 py-3.5">
-                                          {rebateType === "Incremental" ? (
-                                            <button onClick={() => openProductRangeModal(idx)}
-                                              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all ${
-                                                isDark
-                                                  ? 'bg-violet-500/10 text-violet-400 border border-violet-500/20 hover:bg-violet-500/20'
-                                                  : 'bg-violet-50 text-violet-700 border border-violet-200 hover:bg-violet-100'
-                                              }`}>
-                                              <TrendingUp className="w-3.5 h-3.5" />
-                                              {getProductRangeSummary(item)}
-                                            </button>
-                                          ) : (
+                                        {rebateType === "Fixed" && (
+                                          <td className="px-5 py-3.5">
                                             <div className="w-36">
                                               {isRowEditable('item', idx) ? (
                                                 <div className="relative">
                                                   <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-xs ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>₱</span>
-                                                  <input type="text" value={item.rebatePerBag || ""} onChange={(e) => handleRebatePerBagChange(idx, e.target.value)} placeholder="0.00"
+                                                  <input
+                                                    type="text"
+                                                    value={item.rebatePerBag || ""}
+                                                    onChange={(e) => handleRebatePerBagChange(idx, e.target.value)}
+                                                    placeholder="0.00"
                                                     className={`w-full pl-7 pr-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${isDark ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-white border-slate-200 text-slate-800'}`}
                                                     disabled={!access.canEdit}
                                                   />
                                                 </div>
                                               ) : (
                                                 <span className={`text-sm font-medium ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                                                  {item.rebatePerBag ? `₱${item.rebatePerBag}${item.unitOfMeasure ? `/${item.unitOfMeasure}` : '/bag'}` : "—"}                                                </span>
+                                                  {item.rebatePerBag ? `₱${item.rebatePerBag}${item.unitOfMeasure ? `/${item.unitOfMeasure}` : '/bag'}` : "—"}
+                                                </span>
                                               )}
                                             </div>
-                                          )}
-                                        </td>
-                                      )}
+                                          </td>
+                                        )}
+                                        {/* ─── end rebate column ─── */}
 
-                                      <td className="px-5 py-3.5">
-                                        <div className="flex gap-1.5">
-                                          <button
-                                            className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${
-                                              isRowEditable('item', idx)
-                                                ? (isDark ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100')
-                                                : (isDark ? 'bg-slate-800 text-slate-400 hover:bg-slate-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200')
-                                            } ${!access.canEdit ? 'opacity-30 cursor-not-allowed' : ''}`}
-                                            onClick={() => { if (access.canEdit) toggleRowEdit('item', idx); }}
-                                          >
-                                            {isRowEditable('item', idx) ? <Save size={13} /> : <Edit size={13} />}
-                                          </button>
-                                          <button
-                                            className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${isDark ? 'text-red-400 hover:bg-red-500/10' : 'text-red-500 hover:bg-red-50'} ${!access.canEdit ? 'opacity-30 cursor-not-allowed' : ''}`}
-                                            onClick={() => handleDeleteItem(idx)}
-                                          >
-                                            <Trash2 size={13} />
-                                          </button>
-                                        </div>
-                                      </td>
-                                    </tr>
-                                  ))}
+                                        {/* Actions */}
+                                        <td className="px-5 py-3.5">
+                                          <div className="flex gap-1.5">
+                                            <button
+                                              className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${
+                                                isRowEditable('item', idx)
+                                                  ? (isDark ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100')
+                                                  : (isDark ? 'bg-slate-800 text-slate-400 hover:bg-slate-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200')
+                                              } ${!access.canEdit ? 'opacity-30 cursor-not-allowed' : ''}`}
+                                              onClick={() => { if (access.canEdit) toggleRowEdit('item', idx); }}
+                                            >
+                                              {isRowEditable('item', idx) ? <Save size={13} /> : <Edit size={13} />}
+                                            </button>
+                                            <button
+                                              className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all ${isDark ? 'text-red-400 hover:bg-red-500/10' : 'text-red-500 hover:bg-red-50'} ${!access.canEdit ? 'opacity-30 cursor-not-allowed' : ''}`}
+                                              onClick={() => handleDeleteItem(idx)}
+                                            >
+                                              <Trash2 size={13} />
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    ))
+                                  )}
                                 </tbody>
                               </table>
                             </div>

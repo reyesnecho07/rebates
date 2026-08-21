@@ -18,7 +18,7 @@ const VanPayoutHistory = ({
   setEditedAmountReleased,
   saveMessage,
   setSaveMessage,
-  handlePayoutStatusChange,
+  handlePayoutStatusChange, // kept for compatibility but not used
   loadDetailedPayoutsData,
   formatCurrency,
   setFilteredPayouts,
@@ -282,7 +282,7 @@ const VanPayoutHistory = ({
   const goToPage = (page) => {
     setPayoutCurrentPage(page);
     const start = (page - 1) * payoutRowsPerPage;
-    setLocalPaginatedPayouts(localFilteredPayouts.slice(start, start + payoutRowsPerPage)); // ← was setPaginatedPayouts / filteredPayouts
+    setLocalPaginatedPayouts(localFilteredPayouts.slice(start, start + payoutRowsPerPage));
   };
 
   // ── Theme tokens ───────────────────────────────────────────────────────────
@@ -325,15 +325,15 @@ const VanPayoutHistory = ({
     return `inline-block px-2 py-0.5 rounded border font-semibold tabular-nums text-xs whitespace-nowrap ${map[color] || map.slate}`;
   };
 
-  const statusSelectCls = (status, editable) => {
-    if (!editable) return `appearance-none px-2 py-0.5 rounded border text-xs font-semibold italic ${isDark ? 'bg-slate-700 text-slate-500 border-slate-600' : 'bg-slate-100 text-slate-400 border-slate-200'}`;
-    const map = {
-      Paid:             isDark ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700/40' : 'bg-emerald-50 text-emerald-700 border-emerald-200',
-      'Partially Paid': isDark ? 'bg-amber-900/30 text-amber-300 border-amber-700/40'       : 'bg-amber-50 text-amber-700 border-amber-200',
-      Pending:          isDark ? 'bg-blue-900/30 text-blue-300 border-blue-700/40'          : 'bg-blue-50 text-blue-700 border-blue-200',
-      'No Payout':      isDark ? 'bg-slate-700 text-slate-400 border-slate-600'              : 'bg-slate-100 text-slate-500 border-slate-200',
-    };
-    return `appearance-none px-2 py-0.5 rounded border text-xs font-semibold cursor-pointer focus:outline-none ${map[status] || map['No Payout']}`;
+  // Map status to color
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'Paid': return 'emerald';
+      case 'Partially Paid': return 'amber';
+      case 'Pending': return 'blue';
+      case 'No Payout': return 'slate';
+      default: return 'slate';
+    }
   };
 
   // ── Beginning balance row ─────────────────────────────────────────────────
@@ -398,7 +398,7 @@ const VanPayoutHistory = ({
     const journalRemarks = payout.journalRemarks || '';
     const journalDate   = payout.journalDate || null;
     const isNoPayout    = status === 'No Payout' && totalAmount <= 0 && !isQtr;
-    const isEditable    = status !== 'No Payout' && (totalAmount > 0 || isQtr);
+    const isEditable    = status !== 'No Payout' && (totalAmount > 0 || isQtr); // kept for other uses
     const isEditing     = editingPayoutId === (payout.id || payout.Id);
 
     let rowAccent = '';
@@ -466,21 +466,9 @@ const VanPayoutHistory = ({
           </span>
         </td>
 
-        {/* Status */}
+        {/* Status - now only a badge, no dropdown */}
         <td className="px-4 py-2.5 text-center">
-          {isEditable ? (
-            <select
-              value={status}
-              onChange={(e) => handlePayoutStatusChange(payout.id || payout.Id || payout.PayoutId, e.target.value)}
-              className={statusSelectCls(status, true)}
-            >
-              <option value="No Payout">No Payout</option>
-              <option value="Partially Paid">Partially Paid</option>
-              <option value="Paid">Paid</option>
-            </select>
-          ) : (
-            <span className={statusSelectCls(status, false)}>{status}</span>
-          )}
+          <span className={badge(status, getStatusColor(status))}>{status}</span>
         </td>
 
         {/* Amount Released */}
@@ -521,38 +509,7 @@ const VanPayoutHistory = ({
     <div className={`h-full flex flex-col ${T.bg}`}>
 
       {/* ── Section header ──────────────────────────────────────────────── */}
-     {/* <div className={`flex-shrink-0 px-5 py-3 border-b flex items-center justify-between ${T.header}`}>
-        <div>
-          <h4 className={`text-xs font-bold uppercase tracking-widest ${T.tp}`}>Payout History</h4>
-          <p className={`text-[11px] mt-0.5 ${T.ts}`}>Rebate payment records — beginning balances from previous quarter</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {totalBegBalance > 0 && (
-            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
-              isDark ? 'bg-emerald-900/20 border-emerald-700/30 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-700'
-            }`}>
-              Beg. Bal: {formatCurrency(totalBegBalance)}
-            </span>
-          )}
-          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
-            isDark ? 'bg-slate-700 border-slate-600 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-600'
-          }`}>
-            {filteredPayouts.length} record{filteredPayouts.length !== 1 ? 's' : ''}
-          </span>
-          <button
-            onClick={syncNewPayouts}
-            disabled={syncingSap}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all ${
-              syncingSap
-                ? isDark ? 'bg-slate-700 border-slate-600 text-slate-500 cursor-not-allowed' : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
-                : isDark ? 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
-            }`}
-          >
-            <RefreshCw size={12} className={syncingSap ? 'animate-spin' : ''} />
-            SAP Sync
-          </button>
-        </div>
-      </div> */}
+      {/* (commented out as in original) */}
 
       {/* SAP sync message */}
       {sapSyncMessage && (
@@ -571,7 +528,6 @@ const VanPayoutHistory = ({
       )}
 
       {/* ── Table ───────────────────────────────────────────────────────── */}
-{/* ── Table ───────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-auto">
         {sortedPaginated.length === 0 ? (
           <div className="h-full flex items-center justify-center py-16">
@@ -630,7 +586,7 @@ const VanPayoutHistory = ({
                   const n = Number(e.target.value);
                   setPayoutRowsPerPage(n);
                   setPayoutCurrentPage(1);
-                  setLocalPaginatedPayouts(localFilteredPayouts.slice(0, n)); // ← was setPaginatedPayouts / filteredPayouts
+                  setLocalPaginatedPayouts(localFilteredPayouts.slice(0, n));
                 }}
                 className={`text-xs border rounded-md px-1.5 py-0.5 outline-none ${T.select}`}
               >

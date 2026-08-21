@@ -105,6 +105,10 @@ function Van_Dashboard() {
   const [lastRefreshTime, setLastRefreshTime] = useState(0);
   const CACHE_DURATION = 5 * 60 * 1000;
 
+  // Guards to prevent infinite reload loops on incremental/quota data
+  const incrementalDataLoadedRef = useRef({});
+  const quotaAutoLoadedRef = useRef({});
+
   const componentMetadata = {
       name: 'Van_Dashboard',
       version: '2.0.0',
@@ -604,23 +608,28 @@ const calculateQuotaStatus = (rebateType, totalAchieved, totalQuota, customer) =
     }
   }, [modalCustomer, currentCustomerData]);
 
-// This useEffect handles auto-loading for Fixed/Percentage but not for Incremental
-useEffect(() => {
-  if (modalCustomer && customerModalTab === 'quota' && !modalCustomer.details?.monthlyQuotas?.length) {
+  // This useEffect handles auto-loading for Fixed/Percentage but not for Incremental
+  useEffect(() => {
+    if (!modalCustomer || customerModalTab !== 'quota') return;
+    if (modalCustomer.details?.monthlyQuotas?.length) return;
+
+    const key = `${modalCustomer.code}_${modalCustomer.rebateCode}`;
+    if (quotaAutoLoadedRef.current[key]) return;
+    quotaAutoLoadedRef.current[key] = true;
+
     console.log('🔄 Auto-loading monthly quotas for quota tab...');
-    
-    // Don't show loading, just fetch in background
+
     const loadData = async () => {
       const quotaData = await fetchMonthlyQuotaData(
-        modalCustomer.code, 
-        modalCustomer.rebateCode, 
-        modalCustomer.rebateType, 
+        modalCustomer.code,
+        modalCustomer.rebateCode,
+        modalCustomer.rebateType,
         true
       );
-      
+
       if (quotaData && quotaData.monthlyQuotas?.length > 0) {
         setModalCustomer(prev => {
-          if (!prev) return null;
+          if (!prev || prev.code !== modalCustomer.code || prev.rebateCode !== modalCustomer.rebateCode) return prev;
           return {
             ...prev,
             details: {
@@ -634,10 +643,10 @@ useEffect(() => {
         });
       }
     };
-    
+
     loadData();
-  }
-}, [modalCustomer, customerModalTab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalCustomer?.code, modalCustomer?.rebateCode, customerModalTab]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -1166,14 +1175,6 @@ const handleMonthlyFixedQuotas = () => {
   }];
 };
 
-useEffect(() => {
-  if (modalCustomer && modalCustomer.rebateType === 'Incremental' && customerModalTab === 'quota') {
-    if (!detailedTransactions.length && !modalCustomer.details?.transactions?.length) {
-      console.log('🚨 No transactions found for incremental, triggering load...');
-      loadDetailedTransactionsData(true);
-    }
-  }
-}, [modalCustomer, customerModalTab]);
 
   // Add this function to debug percentage data
   const debugPercentageData = () => {
@@ -2557,6 +2558,10 @@ const handleCustomerClick = async (customer) => {
     setTransactionCurrentPage(1);
     setPayoutCurrentPage(1);
     setCustomerModalTab("quota");
+
+    // Reset loop-prevention guards so the new customer's data loads fresh
+    incrementalDataLoadedRef.current = {};
+    quotaAutoLoadedRef.current = {};
     
     // Get frequency from customer data (it should already be in the customer object from rebates-summary)
     const frequency = customer.frequency || 'Quarterly';
@@ -2602,54 +2607,48 @@ const handleCustomerClick = async (customer) => {
 };
 
 useEffect(() => {
-  if (modalCustomer && modalCustomer.rebateType === 'Incremental' && customerModalTab === 'quota') {
-    // Load incremental range data
-    const loadIncrementalData = async () => {
-      console.log('🎯 Loading incremental range data...');
-      
-      // Check if we already have ranges in the modalCustomer
-      const hasRanges = modalCustomer.ranges?.length > 0 || 
-                       modalCustomer.details?.rebateDetails?.ranges?.length > 0;
-      
-      if (!hasRanges) {
-        console.log('📊 No ranges found, fetching incremental range data...');
-        const ranges = await loadIncrementalRangeData(
-          modalCustomer.rebateCode, 
-          modalCustomer.code
-        );
-        
-        if (ranges.length > 0) {
-          console.log('Loaded incremental ranges:', ranges.length);
-          
-          // Update the modalCustomer with the fetched ranges
-          setModalCustomer(prev => {
-            if (!prev) return null;
-            return {
-              ...prev,
-              ranges: ranges,
-              details: {
-                ...prev.details,
-                rebateDetails: {
-                  ...prev.details?.rebateDetails,
-                  ranges: ranges
-                }
-              }
-            };
-          });
-        }
-      }
-      
-      // Also load transactions if needed
-      if (!detailedTransactions.length && !modalCustomer.details?.transactions?.length) {
-        console.log('📊 Loading transactions for incremental rebate...');
-        await loadDetailedTransactionsData(true);
-      }
-    };
-    
-    loadIncrementalData();
+  if (!modalCustomer || modalCustomer.rebateType !== 'Incremental' || customerModalTab !== 'quota') {
+    return;
   }
-}, [modalCustomer, customerModalTab]);
 
+  const loadKey = `${modalCustomer.code}_${modalCustomer.rebateCode}`;
+  if (incrementalDataLoadedRef.current[loadKey]) return;
+  incrementalDataLoadedRef.current[loadKey] = true;
+
+  const loadIncrementalData = async () => {
+    console.log('🎯 Loading incremental range + transaction data for', loadKey);
+
+    const hasRanges = modalCustomer.ranges?.length > 0 ||
+                       modalCustomer.details?.rebateDetails?.ranges?.length > 0;
+
+    if (!hasRanges) {
+      const ranges = await loadIncrementalRangeData(modalCustomer.rebateCode, modalCustomer.code);
+      if (ranges.length > 0) {
+        setModalCustomer(prev => {
+          if (!prev || prev.code !== modalCustomer.code || prev.rebateCode !== modalCustomer.rebateCode) return prev;
+          return {
+            ...prev,
+            ranges,
+            details: {
+              ...prev.details,
+              rebateDetails: {
+                ...prev.details?.rebateDetails,
+                ranges
+              }
+            }
+          };
+        });
+      }
+    }
+
+    if (!detailedTransactions.length) {
+      await loadDetailedTransactionsData(true);
+    }
+  };
+
+  loadIncrementalData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [modalCustomer?.code, modalCustomer?.rebateCode, modalCustomer?.rebateType, customerModalTab]);
 
   const handlePayoutStatusChange = async (payoutId, newStatus) => {
     try {
@@ -3502,1339 +3501,222 @@ const handleSaveItem = async (itemCode) => {
   );
 };
 
+  // ─── MODIFIED: Fixed Customer Table (Actions column removed) ────────────
   const renderFixedCustomerTable = ({ access } = {}) => {
     const isDark = theme === 'dark';
-
-      const isMonthly = rebateDetails?.frequency === 'Monthly';
-
-    if (!rebateDetails?.customers || rebateDetails.customers.length === 0) {
-      return (
-        <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center">
-            <Users size={48} className={`mx-auto mb-4 ${
-              isDark ? 'text-gray-600' : 'text-slate-300'
-            }`} />
-            <h5 className={`text-lg font-semibold mb-2 ${
-              isDark ? 'text-gray-300' : 'text-slate-700'
-            }`}>No Customers Found</h5>
-            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>
-              No customers are associated with this rebate program.
-            </p>
-          </div>
-        </div>
-      );
-    }
-
-const getQuotaMonthNames = () => {
-  const dateFrom = rebateDetails?.dateFrom ||
-                   rebateDetails?.rebateDetails?.dateFrom ||
-                   selectedRebate?.from;
-
-  const frequency = rebateDetails?.frequency || 'Quarterly';
-  
-  // Get the actual quotas from the first customer
-  const firstCustomer = rebateDetails?.customers?.[0];
-  let quotaCount = 0;
-  
-  // Determine quota count from the actual data
-  if (Array.isArray(firstCustomer?.quotas)) {
-    quotaCount = firstCustomer.quotas.length;
-  } else if (typeof firstCustomer?.quotas === 'object' && firstCustomer?.quotas) {
-    quotaCount = Object.keys(firstCustomer.quotas).length;
-  }
-  
-  // If no quotas found, use default based on frequency
-  if (quotaCount === 0) {
-    quotaCount = frequency === 'Quarterly' ? 3 : 3;
-  }
-
-  if (!dateFrom) {
-    return Array.from({ length: quotaCount }, (_, i) => ({
-      name: frequency === 'Quarterly' ? `Q${i + 1} ${new Date().getFullYear()}` : `Month ${i + 1}`,
-      dates: frequency === 'Quarterly' ? `Quarter ${i + 1}` : `Month ${i + 1}`,
-      shortLabel: frequency === 'Quarterly' ? `Q${i + 1}` : `M${i + 1}`,
-      isMonthly: frequency === 'Monthly',
-      isQuarterly: frequency === 'Quarterly'
-    }));
-  }
-
-  const addMonths = (date, n) => {
-    const d = new Date(date);
-    const day = d.getDate();
-    d.setDate(1);
-    d.setMonth(d.getMonth() + n);
-    const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-    d.setDate(Math.min(day, last));
-    return d;
-  };
-
-  const fmtShort = (d) =>
-    d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const fmtFull = (d) =>
-    d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-  const start = new Date(dateFrom);
-  const labels = [];
-
-  // Calculate periods based on frequency
-  for (let i = 0; i < quotaCount; i++) {
-    let sliceStart, sliceEnd;
-    
-  if (frequency === 'Quarterly') {
-    // Each period is 1 MONTH (monthly breakdown)
-    sliceStart = addMonths(start, i);
-    const nextStart = addMonths(start, i + 1);
-    sliceEnd = new Date(nextStart);
-    sliceEnd.setDate(sliceEnd.getDate() - 1);
-  } else {
-      // For Monthly: each period is 1 month
-      sliceStart = addMonths(start, i);
-      const nextStart = addMonths(start, i + 1);
-      sliceEnd = new Date(nextStart);
-      sliceEnd.setDate(sliceEnd.getDate() - 1);
-    }
-
-    // Format the date range
-    // For Quarterly: "Jan 15 – Apr 14, 2026"
-    // For Monthly: "Jun 1 – Jun 30, 2026"
-    const dateRange = `${fmtShort(sliceStart)} – ${fmtFull(sliceEnd)}`;
-
-    labels.push({
-      name: dateRange,
-      dates: dateRange,
-      shortLabel: dateRange,
-      monthName: sliceStart.toLocaleDateString('en-US', { month: 'long' }),
-      year: sliceStart.getFullYear(),
-      isMonthly: frequency === 'Monthly',
-      isQuarterly: frequency === 'Quarterly',
-      index: i,
-      startDate: sliceStart,
-      endDate: sliceEnd
-    });
-  }
-
-  return labels;
-};
-
-    const quotaMonths = getQuotaMonthNames();
-
-  const getFixedQuotaValue = (customer, monthIndex) => {
-    if (!customer.quotas) return 0;
-
-    const monthName = typeof quotaMonths[monthIndex] === 'object'
-      ? quotaMonths[monthIndex].name
-      : quotaMonths[monthIndex];
-
-    if (Array.isArray(customer.quotas)) {
-      return customer.quotas[monthIndex] || 0;
-    } else if (typeof customer.quotas === 'object') {
-      if (customer.quotas[monthName] !== undefined) return customer.quotas[monthName] || 0;
-      const numericKey = monthIndex + 1;
-      if (customer.quotas[numericKey] !== undefined) return customer.quotas[numericKey] || 0;
-      const monthKey = `Month${numericKey}`;
-      if (customer.quotas[monthKey] !== undefined) return customer.quotas[monthKey] || 0;
-    }
-    return 0;
-  };
-
-    // Helper to get quota value safely
-  const getQuotaValue = (customer, monthIndex) => {
-    if (!customer.quotas) return 0;
-
-    const quotaMonths = getQuotaMonthNames();
-    const monthName = typeof quotaMonths[monthIndex] === 'object'
-      ? quotaMonths[monthIndex].name
-      : quotaMonths[monthIndex];
-
-    if (Array.isArray(customer.quotas)) {
-      return customer.quotas[monthIndex] || 0;
-    } else if (typeof customer.quotas === 'object') {
-      if (customer.quotas[monthName] !== undefined) return customer.quotas[monthName] || 0;
-      const numericKey = monthIndex + 1;
-      if (customer.quotas[numericKey] !== undefined) return customer.quotas[numericKey] || 0;
-      const monthKey = `Month${numericKey}`;
-      if (customer.quotas[monthKey] !== undefined) return customer.quotas[monthKey] || 0;
-    }
-    return 0;
-  };
-
-if (isMonthly) {
-  // Get all month names dynamically
-  const quotaMonths = getQuotaMonthNames();
-  
-  // ─── MONTHLY TABLE ───────────────────────────────────────────────────
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead className={`sticky top-0 border-b ${
-          isDark 
-            ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
-            : 'bg-gray-50 border-gray-200'
-        }`}>
-          <tr>
-            {/* Customer column - bold */}
-            <th className={`px-3 py-2 text-left text-xs font-bold uppercase tracking-wider min-w-[180px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>
-              Customer
-            </th>
-            
-            {/* Code column - bold */}
-            <th className={`px-3 py-2 text-left text-xs font-bold uppercase tracking-wider min-w-[100px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>
-              Code
-            </th>
-            
-            {/* Dynamic Month Columns with Date Ranges - bold */}
-            {quotaMonths.map((month, index) => (
-              <th
-                key={index}
-                className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[150px] ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}
-              >
-                <div className="font-bold text-xs whitespace-nowrap">
-                  {month.dates || month.name || `Month ${index + 1}`}
-                </div>
-              </th>
-            ))}
-            
-            {/* QTR Rebate column - bold */}
-            <th className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>
-              QTR Rebate
-            </th>
-            
-            {/* Actions column - bold */}
-            <th className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>
-              Actions
-            </th>
-          </tr>
-        </thead>
-        <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-          {rebateDetails.customers.map((customer, i) => {
-            const customerCode = customer.code || `CUST-${i}`;
-            const isEditing = editingCustomers[customerCode] || false;
-            
-            return (
-              <tr key={i} className={`transition-colors duration-150 ${
-                isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
-              }`}>
-                {/* Customer Name */}
-                <td className="px-3 py-2 align-top">
-                  <div className="flex items-center gap-2 w-full">
-                    <div 
-                      className="w-5 h-5 rounded-md text-white flex items-center justify-center font-medium text-xs flex-shrink-0 shadow-sm"
-                      style={{ backgroundColor: customer.color || '#3b82f6' }}
-                    >
-                      {(customer.name && customer.name.charAt(0)) || '?'}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
-                        isDark ? 'text-gray-200' : 'text-gray-800'
-                      }`}>
-                        {customer.name || 'Unknown Customer'}
-                      </div>
-                    </div>
-                  </div>
-                </td>
-                
-                {/* Customer Code */}
-                <td className="px-3 py-2 align-top">
-                  <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
-                    isDark 
-                      ? 'bg-gray-800 text-gray-300' 
-                      : 'bg-gray-100 text-gray-700'
-                  }`}>
-                    {customer.code || 'N/A'}
-                  </code>
-                </td>
-                
-                {/* Dynamic Month Columns */}
-                {quotaMonths.map((month, idx) => {
-                  const quotaValue = getQuotaValue(customer, idx);
-                  
-                  return (
-                    <td key={idx} className="px-3 py-2 text-center align-top">
-                      {isEditing ? (
-                        <div className="space-y-0.5">
-                          <input
-                            type="number"
-                            value={quotaValue}
-                            onChange={(e) => handleCustomerQuotaChange(customer.code, idx, e.target.value)}
-                            className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                              isDark 
-                                ? 'bg-gray-800 text-gray-100' 
-                                : 'bg-white text-gray-800'
-                            }`}
-                            min="0"
-                            step="1"
-                          />
-                        </div>
-                      ) : (
-                        <div className="space-y-0.5">
-                          <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                            quotaValue > 0
-                              ? isDark 
-                                ? 'bg-blue-500/80 text-white' 
-                                : 'bg-blue-500 text-white'
-                              : isDark
-                                ? 'bg-gray-700 text-gray-400'
-                                : 'bg-gray-200 text-gray-600'
-                          }`}>
-                            {quotaValue}
-                          </span>
-                        </div>
-                      )}
-                    </td>
-                  );
-                })}
-                
-                {/* QTR Rebate */}
-                <td className="px-3 py-2 text-center align-top">
-                  {isEditing ? (
-                    <div className="flex items-center justify-center gap-0.5">
-                      <span className={`text-xs ${
-                        isDark ? 'text-gray-300' : 'text-gray-700'
-                      }`}>₱</span>
-                      <input
-                        type="number"
-                        value={customer.qtrRebate || 0}
-                        onChange={(e) => handleCustomerQtrRebateChange(customer.code, e.target.value)}
-                        className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                          isDark 
-                            ? 'bg-gray-800 text-gray-100' 
-                            : 'bg-white text-gray-800'
-                        }`}
-                        min="0"
-                        step="0.01"
-                      />
-                    </div>
-                  ) : (
-                    <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                      customer.qtrRebate > 0
-                        ? isDark 
-                          ? 'bg-emerald-500/80 text-white' 
-                          : 'bg-emerald-500 text-white'
-                        : isDark
-                          ? 'bg-gray-700 text-gray-400'
-                          : 'bg-gray-200 text-gray-600'
-                    }`}>
-                      ₱{(customer.qtrRebate || 0).toFixed(2)}
-                    </span>
-                  )}
-                </td>
-                
-                {/* Actions */}
-                <td className="px-3 py-2 text-center align-top">
-                  {isEditing ? (
-                    <div className="flex gap-1 justify-center">
-                      <button
-                        onClick={() => handleSaveCustomer(customer.code)}
-                        className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
-                        title="Save"
-                      >
-                        <Check size={10} />
-                      </button>
-                      <button
-                        onClick={() => handleCancelEditCustomer(customer.code)}
-                        className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
-                        title="Cancel"
-                      >
-                        <X size={10} />
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => access?.canEdit && handleEditCustomer(customer.code)}
-                      disabled={!access?.canEdit}
-                      title={access?.canEdit ? 'Edit' : 'No edit permission'}
-                      className={`p-1 rounded transition-colors ${
-                        access?.canEdit
-                          ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
-                          : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
-                      }`}
-                    >
-                      <Edit size={10} />
-                    </button>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ─── QUARTERLY TABLE (non-Monthly) ──────────────────────────────────
-return (
-  <div className="overflow-x-auto">
-    <table className="w-full">
-      <thead className={`sticky top-0 border-b ${
-        isDark 
-          ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
-          : 'bg-gray-50 border-gray-200'
-      }`}>
-        <tr>
-          {/* Customer column - bold */}
-          <th className={`px-3 py-2 text-left text-xs font-bold uppercase tracking-wider min-w-[180px] ${
-            isDark ? 'text-gray-300' : 'text-gray-700'
-          }`}>
-            Customer
-          </th>
-          
-          {/* Code column - bold */}
-          <th className={`px-3 py-2 text-left text-xs font-bold uppercase tracking-wider min-w-[100px] ${
-            isDark ? 'text-gray-300' : 'text-gray-700'
-          }`}>
-            Code
-          </th>
-          
-          {/* Dynamic Period Columns with Date Ranges - bold */}
-          {quotaMonths.map((col, index) => (
-            <th
-              key={index}
-              className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[150px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}
-            >
-              <div className="font-bold text-xs whitespace-nowrap">
-                {col.dates || col.name || `Period ${index + 1}`}
-              </div>
-            </th>
-          ))}
-          
-          {/* QTR Rebate column - bold */}
-          <th className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-            isDark ? 'text-gray-300' : 'text-gray-700'
-          }`}>
-            QTR Rebate
-          </th>
-          
-          {/* Actions column - bold */}
-          <th className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
-            isDark ? 'text-gray-300' : 'text-gray-700'
-          }`}>
-            Actions
-          </th>
-        </tr>
-      </thead>
-      <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-        {rebateDetails.customers.map((customer, i) => {
-          const customerCode = customer.code || `CUST-${i}`;
-          const isEditing = editingCustomers[customerCode] || false;
-          
-          return (
-            <tr key={i} className={`transition-colors duration-150 ${
-              isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
-            }`}>
-              {/* Customer Name */}
-              <td className="px-3 py-2 align-top">
-                <div className="flex items-center gap-2 w-full">
-                  <div 
-                    className="w-5 h-5 rounded-md text-white flex items-center justify-center font-medium text-xs flex-shrink-0 shadow-sm"
-                    style={{ backgroundColor: customer.color || '#3b82f6' }}
-                  >
-                    {(customer.name && customer.name.charAt(0)) || '?'}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
-                      isDark ? 'text-gray-200' : 'text-gray-800'
-                    }`}>
-                      {customer.name || 'Unknown Customer'}
-                    </div>
-                  </div>
-                </div>
-              </td>
-              
-              {/* Customer Code */}
-              <td className="px-3 py-2 align-top">
-                <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
-                  isDark 
-                    ? 'bg-gray-800 text-gray-300' 
-                    : 'bg-gray-100 text-gray-700'
-                }`}>
-                  {customer.code || 'N/A'}
-                </code>
-              </td>
-              
-              {/* Dynamic Period Columns */}
-              {quotaMonths.map((month, idx) => {
-                const quotaValue = getQuotaValue(customer, idx);
-                
-                return (
-                  <td key={idx} className="px-3 py-2 text-center align-top">
-                    {isEditing ? (
-                      <div className="space-y-0.5">
-                        <input
-                          type="number"
-                          value={quotaValue}
-                          onChange={(e) => handleCustomerQuotaChange(customer.code, idx, e.target.value)}
-                          className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                            isDark 
-                              ? 'bg-gray-800 text-gray-100' 
-                              : 'bg-white text-gray-800'
-                          }`}
-                          min="0"
-                          step="1"
-                        />
-                      </div>
-                    ) : (
-                      <div className="space-y-0.5">
-                        <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                          quotaValue > 0
-                            ? isDark 
-                              ? 'bg-blue-500/80 text-white' 
-                              : 'bg-blue-500 text-white'
-                            : isDark
-                              ? 'bg-gray-700 text-gray-400'
-                              : 'bg-gray-200 text-gray-600'
-                        }`}>
-                          {quotaValue}
-                        </span>
-                      </div>
-                    )}
-                  </td>
-                );
-              })}
-              
-              {/* QTR Rebate */}
-              <td className="px-3 py-2 text-center align-top">
-                {isEditing ? (
-                  <div className="flex items-center justify-center gap-0.5">
-                    <span className={`text-xs ${
-                      isDark ? 'text-gray-300' : 'text-gray-700'
-                    }`}>₱</span>
-                    <input
-                      type="number"
-                      value={customer.qtrRebate || 0}
-                      onChange={(e) => handleCustomerQtrRebateChange(customer.code, e.target.value)}
-                      className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                        isDark 
-                          ? 'bg-gray-800 text-gray-100' 
-                          : 'bg-white text-gray-800'
-                      }`}
-                      min="0"
-                      step="0.01"
-                    />
-                  </div>
-                ) : (
-                  <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                    customer.qtrRebate > 0
-                      ? isDark 
-                        ? 'bg-emerald-500/80 text-white' 
-                        : 'bg-emerald-500 text-white'
-                      : isDark
-                        ? 'bg-gray-700 text-gray-400'
-                        : 'bg-gray-200 text-gray-600'
-                  }`}>
-                    ₱{(customer.qtrRebate || 0).toFixed(2)}
-                  </span>
-                )}
-              </td>
-              
-              {/* Actions */}
-              <td className="px-3 py-2 text-center align-top">
-                {isEditing ? (
-                  <div className="flex gap-1 justify-center">
-                    <button
-                      onClick={() => handleSaveCustomer(customer.code)}
-                      className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
-                      title="Save"
-                    >
-                      <Check size={10} />
-                    </button>
-                    <button
-                      onClick={() => handleCancelEditCustomer(customer.code)}
-                      className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
-                      title="Cancel"
-                    >
-                      <X size={10} />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => access?.canEdit && handleEditCustomer(customer.code)}
-                    disabled={!access?.canEdit}
-                    title={access?.canEdit ? 'Edit' : 'No edit permission'}
-                    className={`p-1 rounded transition-colors ${
-                      access?.canEdit
-                        ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
-                        : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
-                    }`}
-                  >
-                    <Edit size={10} />
-                  </button>
-                )}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  </div>
-);
-
-    
-  };
-
-  const renderIncrementalCustomerTable = ({ access } = {}) => {
-    const isDark = theme === 'dark';
+    const isMonthly = rebateDetails?.frequency === 'Monthly';
 
     if (!rebateDetails?.customers || rebateDetails.customers.length === 0) {
       return (
         <div className="flex-1 flex items-center justify-center p-8">
           <div className="text-center">
             <Users size={48} className={`mx-auto mb-4 ${isDark ? 'text-gray-600' : 'text-slate-300'}`} />
-            <h5 className={`text-lg font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
-              No Customers Found
-            </h5>
-            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>
-              No customers are associated with this rebate program.
-            </p>
+            <h5 className={`text-lg font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>No Customers Found</h5>
+            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>No customers are associated with this rebate program.</p>
           </div>
         </div>
       );
     }
 
-    const rangeColors = {
-      1: isDark
-        ? { text: 'text-blue-300',    badge: 'bg-blue-700 text-white'    }
-        : { text: 'text-blue-700',    badge: 'bg-blue-500 text-white'    },
-      2: isDark
-        ? { text: 'text-amber-300',   badge: 'bg-amber-700 text-white'   }
-        : { text: 'text-amber-700',   badge: 'bg-amber-500 text-white'   },
-      3: isDark
-        ? { text: 'text-emerald-300', badge: 'bg-emerald-700 text-white' }
-        : { text: 'text-emerald-700', badge: 'bg-emerald-500 text-white' },
+    const getQuotaMonthNames = () => {
+      const dateFrom = rebateDetails?.dateFrom ||
+                       rebateDetails?.rebateDetails?.dateFrom ||
+                       selectedRebate?.from;
+      const frequency = rebateDetails?.frequency || 'Quarterly';
+      const firstCustomer = rebateDetails?.customers?.[0];
+      let quotaCount = 0;
+      if (Array.isArray(firstCustomer?.quotas)) quotaCount = firstCustomer.quotas.length;
+      else if (typeof firstCustomer?.quotas === 'object' && firstCustomer?.quotas) quotaCount = Object.keys(firstCustomer.quotas).length;
+      if (quotaCount === 0) quotaCount = frequency === 'Quarterly' ? 3 : 3;
+      if (!dateFrom) {
+        return Array.from({ length: quotaCount }, (_, i) => ({
+          name: frequency === 'Quarterly' ? `Q${i + 1} ${new Date().getFullYear()}` : `Month ${i + 1}`,
+          dates: frequency === 'Quarterly' ? `Quarter ${i + 1}` : `Month ${i + 1}`,
+          shortLabel: frequency === 'Quarterly' ? `Q${i + 1}` : `M${i + 1}`,
+          isMonthly: frequency === 'Monthly',
+          isQuarterly: frequency === 'Quarterly'
+        }));
+      }
+      const addMonths = (date, n) => {
+        const d = new Date(date);
+        const day = d.getDate();
+        d.setDate(1);
+        d.setMonth(d.getMonth() + n);
+        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+        d.setDate(Math.min(day, last));
+        return d;
+      };
+      const fmtShort = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const fmtFull = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const start = new Date(dateFrom);
+      const labels = [];
+      for (let i = 0; i < quotaCount; i++) {
+        let sliceStart, sliceEnd;
+        if (frequency === 'Quarterly') {
+          sliceStart = addMonths(start, i);
+          const nextStart = addMonths(start, i + 1);
+          sliceEnd = new Date(nextStart);
+          sliceEnd.setDate(sliceEnd.getDate() - 1);
+        } else {
+          sliceStart = addMonths(start, i);
+          const nextStart = addMonths(start, i + 1);
+          sliceEnd = new Date(nextStart);
+          sliceEnd.setDate(sliceEnd.getDate() - 1);
+        }
+        const dateRange = `${fmtShort(sliceStart)} – ${fmtFull(sliceEnd)}`;
+        labels.push({
+          name: dateRange,
+          dates: dateRange,
+          shortLabel: dateRange,
+          monthName: sliceStart.toLocaleDateString('en-US', { month: 'long' }),
+          year: sliceStart.getFullYear(),
+          isMonthly: frequency === 'Monthly',
+          isQuarterly: frequency === 'Quarterly',
+          index: i,
+          startDate: sliceStart,
+          endDate: sliceEnd
+        });
+      }
+      return labels;
     };
-
-    return (
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className={`sticky top-0 border-b ${
-            isDark
-              ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700'
-              : 'bg-gray-50 border-gray-200'
-          }`}>
-            <tr>
-              <th className={`px-4 py-2.5 text-left   text-[10px] font-bold uppercase tracking-widest min-w-[180px] max-w-[180px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                Customer
-              </th>
-              <th className={`px-4 py-2.5 text-left   text-[10px] font-bold uppercase tracking-widest min-w-[100px] max-w-[100px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                Code
-              </th>
-              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest min-w-[100px] max-w-[100px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                Qtr Rebate
-              </th>
-              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                Quantity Ranges
-              </th>
-              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                Rebate Per Unit
-              </th>
-              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest min-w-[80px] max-w-[80px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                Actions
-              </th>
-            </tr>
-          </thead>
-
-          <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-            {rebateDetails.customers.map((customer) => (
-              <tr
-                key={customer.code}
-                className={`transition-colors duration-150 ${isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'}`}
-              >
-
-                {/* ── Customer ─────────────────────────────────────────── */}
-                <td className="px-4 py-3 align-middle max-w-[180px]">
-                  <div className="flex items-center gap-2.5">
-                    <div
-                      className="w-7 h-7 rounded-md text-white flex items-center justify-center font-semibold text-xs flex-shrink-0 shadow-sm"
-                      style={{ backgroundColor: customer.color || '#3b82f6' }}
-                    >
-                      {customer.name?.charAt(0) || '?'}
-                    </div>
-                    <span className={`font-medium text-xs truncate ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>
-                      {customer.name || 'Unknown Customer'}
-                    </span>
-                  </div>
-                </td>
-
-                {/* ── Code ─────────────────────────────────────────────── */}
-                <td className="px-4 py-3 align-middle max-w-[100px]">
-                  <code className={`text-xs px-2 py-0.5 rounded font-semibold border inline-block ${
-                    isDark ? 'bg-slate-800 text-slate-300 border-slate-600' : 'bg-slate-100 text-slate-700 border-slate-200'
-                  }`}>
-                    {customer.code || 'N/A'}
-                  </code>
-                </td>
-
-                {/* ── Qtr Rebate ───────────────────────────────────────── */}
-                <td className="px-4 py-3 text-center align-middle max-w-[100px]">
-                  {editingCustomers[customer.code] ? (
-                    <input
-                      type="number"
-                      value={customer.qtrRebate || 0}
-                      onChange={(e) => handleCustomerQtrRebateChange(customer.code, e.target.value)}
-                      className={`w-16 px-2 py-1 border rounded text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                        isDark ? 'bg-gray-800 border-gray-600 text-gray-100' : 'border-gray-300 text-gray-800'
-                      }`}
-                    />
-                  ) : (
-                    <span className={`text-xs px-3 py-1 rounded-lg font-bold inline-block shadow-sm ${
-                      isDark
-                        ? 'bg-gradient-to-r from-blue-600/80 to-blue-700/80 text-white'
-                        : 'bg-gradient-to-r from-blue-500 to-blue-600 text-white'
-                    }`}>
-                      {customer.qtrRebate || 0}
-                    </span>
-                  )}
-                </td>
-
-                  {/* ── Quantity Ranges ───────────────────────────────────── */}
-                  <td className="px-4 py-3 align-middle">
-                    <div className="flex items-center justify-center gap-1 flex-nowrap">
-                      {customer.ranges?.map((range, rangeIndex) => {
-                        const colors = rangeColors[range.rangeNo] || rangeColors[1];
-                        return (
-                          <div key={`${customer.code}-range-${rangeIndex}`} className="flex items-center gap-0.5 flex-shrink-0">
-                            <span className={`text-[9px] px-1 py-0.5 rounded font-bold flex-shrink-0 leading-none ${colors.badge}`}>
-                              R{range.rangeNo}
-                            </span>
-                            {editingCustomers[customer.code] ? (
-                              <div className="flex items-center gap-0.5">
-                                <input
-                                  type="number"
-                                  value={range.minQty || 0}
-                                  onChange={(e) => handleCustomerRangeChange(customer.code, rangeIndex, 'minQty', e.target.value)}
-                                  className={`w-10 px-1 py-0.5 border rounded text-[10px] text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${
-                                    isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'
-                                  }`}
-                                  title="Min Qty"
-                                />
-                                <span className={`text-[9px] font-medium ${isDark ? 'text-slate-400' : 'text-slate-400'}`}>–</span>
-                                <input
-                                  type="number"
-                                  value={range.maxQty || 0}
-                                  onChange={(e) => handleCustomerRangeChange(customer.code, rangeIndex, 'maxQty', e.target.value)}
-                                  className={`w-10 px-1 py-0.5 border rounded text-[10px] text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${
-                                    isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'
-                                  }`}
-                                  title="Max Qty"
-                                />
-                              </div>
-                            ) : (
-                              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border leading-none ${colors.text} ${
-                                isDark ? 'bg-slate-800/60 border-slate-700' : 'bg-slate-50 border-slate-200'
-                              }`}>
-                                {range.minQty ?? 0}–{range.maxQty ?? 0}
-                              </span>
-                            )}
-                            {rangeIndex < customer.ranges.length - 1 && (
-                              <span className={`text-[9px] mx-0.5 flex-shrink-0 ${isDark ? 'text-slate-600' : 'text-slate-300'}`}>·</span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </td>
-
-                  {/* ── Rebate Per Bag ────────────────────────────────────── */}
-                  <td className="px-4 py-3 align-middle">
-                    <div className="flex items-center justify-center gap-1 flex-nowrap">
-                      {customer.ranges?.map((range, rangeIndex) => {
-                        const colors = rangeColors[range.rangeNo] || rangeColors[1];
-                        return (
-                          <div key={`${customer.code}-rebate-${rangeIndex}`} className="flex items-center gap-0.5 flex-shrink-0">
-                            <span className={`text-[9px] px-1 py-0.5 rounded font-bold flex-shrink-0 leading-none ${colors.badge}`}>
-                              R{range.rangeNo}
-                            </span>
-                            {editingCustomers[customer.code] ? (
-                              <input
-                                type="number"
-                                value={range.rebatePerBag || 0}
-                                onChange={(e) => handleCustomerRangeChange(customer.code, rangeIndex, 'rebatePerBag', e.target.value)}
-                                className={`w-10 px-1 py-0.5 border rounded text-[10px] text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${
-                                  isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'
-                                }`}
-                              />
-                            ) : (
-                              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border leading-none ${colors.text} ${
-                                isDark ? 'bg-slate-800/60 border-slate-700' : 'bg-slate-50 border-slate-200'
-                              }`}>
-                                {range.rebatePerBag ?? 0}
-                              </span>
-                            )}
-                            {rangeIndex < customer.ranges.length - 1 && (
-                              <span className={`text-[9px] mx-0.5 flex-shrink-0 ${isDark ? 'text-slate-600' : 'text-slate-300'}`}>·</span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </td>
-
-                {/* ── Actions ───────────────────────────────────────────── */}
-                <td className="px-4 py-3 text-center align-middle max-w-[80px]">
-                  {editingCustomers[customer.code] ? (
-                    <div className="flex gap-2 justify-center">
-                      <button
-                        onClick={() => handleSaveCustomer(customer.code)}
-                        className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors shadow-sm"
-                        title="Save"
-                      >
-                        <Check size={14} />
-                      </button>
-                      <button
-                        onClick={() => handleCancelEditCustomer(customer.code)}
-                        className="p-1.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors shadow-sm"
-                        title="Cancel"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => access?.canEdit && handleEditCustomer(customer.code)}
-                      disabled={!access?.canEdit}
-                      title={access?.canEdit ? 'Edit' : 'No edit permission'}
-                      className={`p-1.5 rounded transition-colors ${
-                        access?.canEdit
-                          ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
-                          : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
-                      }`}
-                    >
-                      <Edit size={12} />
-                    </button>
-                  )}
-                </td>
-
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
-
-  const renderPercentageCustomerTable = ({ access } = {}) => {
-    const isDark = theme === 'dark';
-      const isMonthly = rebateDetails?.frequency === 'Monthly';
-
-    if (!rebateDetails?.customers || rebateDetails.customers.length === 0) {
-      return (
-        <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center">
-            <Users size={48} className={`mx-auto mb-4 ${
-              isDark ? 'text-gray-600' : 'text-slate-300'
-            }`} />
-            <h5 className={`text-lg font-semibold mb-2 ${
-              isDark ? 'text-gray-300' : 'text-slate-700'
-            }`}>No Customers Found</h5>
-            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>
-              No customers are associated with this Percentage rebate program.
-            </p>
-          </div>
-        </div>
-      );
-    }
-
-const getQuotaMonthNames = () => {
-  const dateFrom = rebateDetails?.dateFrom ||
-                   rebateDetails?.rebateDetails?.dateFrom ||
-                   selectedRebate?.from;
-
-  const frequency = rebateDetails?.frequency || 'Quarterly';
-  
-  // Get the actual quotas from the first customer
-  const firstCustomer = rebateDetails?.customers?.[0];
-  let quotaCount = 0;
-  
-  // Determine quota count from the actual data
-  if (Array.isArray(firstCustomer?.quotas)) {
-    quotaCount = firstCustomer.quotas.length;
-  } else if (typeof firstCustomer?.quotas === 'object' && firstCustomer?.quotas) {
-    quotaCount = Object.keys(firstCustomer.quotas).length;
-  }
-  
-  // If no quotas found, use default based on frequency
-  if (quotaCount === 0) {
-    quotaCount = 3;
-  }
-
-  if (!dateFrom) {
-    return Array.from({ length: quotaCount }, (_, i) => ({
-      name: `Period ${i + 1}`,
-      dates: `Period ${i + 1}`,
-      shortLabel: `P${i + 1}`,
-      isMonthly: frequency === 'Monthly',
-      isQuarterly: frequency === 'Quarterly'
-    }));
-  }
-
-  const addMonths = (date, n) => {
-    const d = new Date(date);
-    const day = d.getDate();
-    d.setDate(1);
-    d.setMonth(d.getMonth() + n);
-    const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-    d.setDate(Math.min(day, last));
-    return d;
-  };
-
-  const fmtShort = (d) =>
-    d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const fmtFull = (d) =>
-    d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-  const start = new Date(dateFrom);
-  const labels = [];
-
-  // Calculate periods based on frequency
-  for (let i = 0; i < quotaCount; i++) {
-    let sliceStart, sliceEnd;
-    
-    if (frequency === 'Quarterly') {
-      // ─── QUARTERLY: Each period is 1 MONTH (monthly breakdown) ──
-      // The quotaCount represents the number of months (3 for a quarter)
-      sliceStart = addMonths(start, i);
-      const nextStart = addMonths(start, i + 1);
-      sliceEnd = new Date(nextStart);
-      sliceEnd.setDate(sliceEnd.getDate() - 1);
-    } else {
-      // ─── MONTHLY: each period is 1 month ─────────────────────────
-      sliceStart = addMonths(start, i);
-      const nextStart = addMonths(start, i + 1);
-      sliceEnd = new Date(nextStart);
-      sliceEnd.setDate(sliceEnd.getDate() - 1);
-    }
-
-    // Format the date range
-    // Quarterly: "Jul 1 – Jul 31, 2024"
-    // Monthly:   "Jul 1 – Jul 31, 2024"
-    const dateRange = `${fmtShort(sliceStart)} – ${fmtFull(sliceEnd)}`;
-
-    labels.push({
-      name: dateRange,
-      dates: dateRange,
-      shortLabel: dateRange,
-      monthName: sliceStart.toLocaleDateString('en-US', { month: 'long' }),
-      year: sliceStart.getFullYear(),
-      isMonthly: frequency === 'Monthly',
-      isQuarterly: frequency === 'Quarterly',
-      index: i,
-      startDate: sliceStart,
-      endDate: sliceEnd
-    });
-  }
-
-  return labels;
-};
 
     const quotaMonths = getQuotaMonthNames();
 
-  // Helper to get quota value safely - CORRECTED for percentage
-  const getQuotaValue = (customer, monthIndex) => {
-    if (!customer.quotas) return 0;
+    const getQuotaValue = (customer, monthIndex) => {
+      if (!customer.quotas) return 0;
+      const monthName = typeof quotaMonths[monthIndex] === 'object' ? quotaMonths[monthIndex].name : quotaMonths[monthIndex];
+      if (Array.isArray(customer.quotas)) return customer.quotas[monthIndex] || 0;
+      if (typeof customer.quotas === 'object') {
+        if (customer.quotas[monthName] !== undefined) return customer.quotas[monthName] || 0;
+        const numericKey = monthIndex + 1;
+        if (customer.quotas[numericKey] !== undefined) return customer.quotas[numericKey] || 0;
+        const monthKey = `Month${numericKey}`;
+        if (customer.quotas[monthKey] !== undefined) return customer.quotas[monthKey] || 0;
+      }
+      return 0;
+    };
 
-    const monthName = typeof quotaMonths[monthIndex] === 'object'
-      ? quotaMonths[monthIndex].name
-      : quotaMonths[monthIndex];
-
-    if (Array.isArray(customer.quotas)) {
-      return customer.quotas[monthIndex] || 0;
-    } else if (typeof customer.quotas === 'object') {
-      if (customer.quotas[monthName] !== undefined) return customer.quotas[monthName] || 0;
-      const numericKey = monthIndex + 1;
-      if (customer.quotas[numericKey] !== undefined) return customer.quotas[numericKey] || 0;
-      const monthKey = `Month${numericKey}`;
-      if (customer.quotas[monthKey] !== undefined) return customer.quotas[monthKey] || 0;
-    }
-    return 0;
-  };
-
-if (isMonthly) {
-  // Get all month names dynamically
-  const quotaMonths = getQuotaMonthNames();
-  
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead className={`sticky top-0 border-b ${
-          isDark 
-            ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
-            : 'bg-gray-50 border-gray-200'
-        }`}>
-          <tr>
-            <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Customer</th>
-            <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Code</th>
-            
-            {/* Dynamic Month Columns with Date Ranges */}
-            {quotaMonths.map((month, index) => (
-              <th key={index} className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[130px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>
-                <div className="font-bold text-sm">
-                  {month.dates || month.name || `Month ${index + 1}`}
-                </div>
-              </th>
-            ))}
-            
-            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>QTR Rebate</th>
-            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Actions</th>
-          </tr>
-        </thead>
-        <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-          {rebateDetails.customers.map((customer, index) => {
-            const customerCode = customer.code || `CUST-${index}`;
-            const isEditing = editingCustomers[customerCode] || false;
-            
-            return (
-              <tr key={index} className={`transition-colors duration-150 ${
-                isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
-              }`}>
-                <td className="px-3 py-2 align-top">
-                  <div className="flex items-center gap-2 w-full">
-                    <div 
-                      className="w-5 h-5 rounded-md text-white flex items-center justify-center font-medium text-xs flex-shrink-0 shadow-sm"
-                      style={{ backgroundColor: customer.color || '#10b981' }}
-                    >
-                      {customer.name ? customer.name.charAt(0).toUpperCase() : '?'}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
-                        isDark ? 'text-gray-200' : 'text-gray-800'
-                      }`}>
-                        {customer.name || 'Unknown Customer'}
+    if (isMonthly) {
+      return (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className={`sticky top-0 border-b ${isDark ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' : 'bg-gray-50 border-gray-200'}`}>
+              <tr>
+                <th className={`px-3 py-2 text-left text-xs font-bold uppercase tracking-wider min-w-[180px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Customer</th>
+                <th className={`px-3 py-2 text-left text-xs font-bold uppercase tracking-wider min-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Code</th>
+                {quotaMonths.map((month, index) => (
+                  <th key={index} className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[150px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    <div className="font-bold text-xs whitespace-nowrap">{month.dates || month.name || `Month ${index + 1}`}</div>
+                  </th>
+                ))}
+                <th className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[100px] max-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>QTR Rebate</th>
+              </tr>
+            </thead>
+            <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
+              {rebateDetails.customers.map((customer, i) => {
+                const customerCode = customer.code || `CUST-${i}`;
+                const isEditing = editingCustomers[customerCode] || false;
+                return (
+                  <tr key={i} className={`transition-colors duration-150 ${isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'}`}>
+                    <td className="px-3 py-2 align-top">
+                      <div className="flex items-center gap-2 w-full">
+                        <div className="w-5 h-5 rounded-md text-white flex items-center justify-center font-medium text-xs flex-shrink-0 shadow-sm" style={{ backgroundColor: customer.color || '#3b82f6' }}>
+                          {(customer.name && customer.name.charAt(0)) || '?'}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>{customer.name || 'Unknown Customer'}</div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                </td>
-                
-                <td className="px-3 py-2 align-top">
-                  <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
-                    isDark 
-                      ? 'bg-gray-800 text-gray-300' 
-                      : 'bg-gray-100 text-gray-700'
-                  }`}>
-                    {customerCode}
-                  </code>
-                </td>
-                
-                {/* Dynamic Month Columns */}
-                {quotaMonths.map((month, idx) => {
-                  const quotaValue = getQuotaValue(customer, idx);
-                  
-                  return (
-                    <td key={idx} className="px-3 py-2 text-center align-top">
+                    </td>
+                    <td className="px-3 py-2 align-top">
+                      <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-700'}`}>{customer.code || 'N/A'}</code>
+                    </td>
+                    {quotaMonths.map((month, idx) => {
+                      const quotaValue = getQuotaValue(customer, idx);
+                      return (
+                        <td key={idx} className="px-3 py-2 text-center align-top">
+                          {isEditing ? (
+                            <input type="number" value={quotaValue} onChange={(e) => handleCustomerQuotaChange(customer.code, idx, e.target.value)} className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} min="0" step="1" />
+                          ) : (
+                            <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${quotaValue > 0 ? (isDark ? 'bg-blue-500/80 text-white' : 'bg-blue-500 text-white') : (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-200 text-gray-600')}`}>{quotaValue}</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="px-3 py-2 text-center align-top">
                       {isEditing ? (
-                        <input
-                          type="number"
-                          value={quotaValue}
-                          onChange={(e) => handleCustomerQuotaChange(customerCode, idx, e.target.value)}
-                          className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                            isDark 
-                              ? 'bg-gray-800 text-gray-100' 
-                              : 'bg-white text-gray-800'
-                          }`}
-                          min="0"
-                          step="1"
-                        />
+                        <div className="flex items-center justify-center gap-0.5">
+                          <span className={`text-xs ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>₱</span>
+                          <input type="number" value={customer.qtrRebate || 0} onChange={(e) => handleCustomerQtrRebateChange(customer.code, e.target.value)} className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} min="0" step="0.01" />
+                        </div>
                       ) : (
-                        <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                          quotaValue > 0 
-                            ? isDark 
-                              ? 'bg-emerald-500/80 text-white' 
-                              : 'bg-emerald-500 text-white'
-                            : isDark
-                              ? 'bg-gray-700 text-gray-400'
-                              : 'bg-gray-200 text-gray-600'
-                        }`}>
-                          {quotaValue}
-                        </span>
+                        <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${customer.qtrRebate > 0 ? (isDark ? 'bg-emerald-500/80 text-white' : 'bg-emerald-500 text-white') : (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-200 text-gray-600')}`}>₱{(customer.qtrRebate || 0).toFixed(2)}</span>
                       )}
                     </td>
-                  );
-                })}
-                
-                <td className="px-3 py-2 text-center align-top">
-                  {isEditing ? (
-                    <div className="flex items-center justify-center gap-0.5">
-                      <span className={`text-xs ${
-                        isDark ? 'text-gray-300' : 'text-gray-700'
-                      }`}>₱</span>
-                      <input
-                        type="number"
-                        value={customer.qtrRebate || 0}
-                        onChange={(e) => handleCustomerQtrRebateChange(customerCode, e.target.value)}
-                        className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                          isDark 
-                            ? 'bg-gray-800 text-gray-100' 
-                            : 'bg-white text-gray-800'
-                        }`}
-                        min="0"
-                        step="0.01"
-                      />
-                    </div>
-                  ) : (
-                    <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                      customer.qtrRebate > 0
-                        ? isDark 
-                          ? 'bg-blue-500/80 text-white' 
-                          : 'bg-blue-500 text-white'
-                        : isDark
-                          ? 'bg-gray-700 text-gray-400'
-                          : 'bg-gray-200 text-gray-600'
-                    }`}>
-                      ₱{parseFloat(customer.qtrRebate || 0).toFixed(2)}
-                    </span>
-                  )}
-                </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
 
-                <td className="px-3 py-2 text-center align-top">
-                  {isEditing ? (
-                    <div className="flex gap-1 justify-center">
-                      <button
-                        onClick={() => handleSaveCustomer(customerCode)}
-                        className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
-                        title="Save"
-                      >
-                        <Check size={10} />
-                      </button>
-                      <button
-                        onClick={() => handleCancelEditCustomer(customerCode)}
-                        className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
-                        title="Cancel"
-                      >
-                        <X size={10} />
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => handleEditCustomer(customerCode)}
-                      className="p-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
-                      title="Edit"
-                    >
-                      <Edit size={10} />
-                    </button>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-
+    // Quarterly table (no Actions column)
     return (
       <div className="overflow-x-auto">
         <table className="w-full">
-          <thead className={`sticky top-0 border-b ${
-            isDark 
-              ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
-              : 'bg-gray-50 border-gray-200'
-          }`}>
+          <thead className={`sticky top-0 border-b ${isDark ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' : 'bg-gray-50 border-gray-200'}`}>
             <tr>
-              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] max-w-[180px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Customer</th>
-              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Code</th>
-              {quotaMonths.map((month, index) => (
-                <th 
-                  key={index}
-                  className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[90px] max-w-[90px] ${
-                    isDark ? 'text-gray-300' : 'text-gray-700'
-                  }`}
-                >
-                  {month}
+              <th className={`px-3 py-2 text-left text-xs font-bold uppercase tracking-wider min-w-[180px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Customer</th>
+              <th className={`px-3 py-2 text-left text-xs font-bold uppercase tracking-wider min-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Code</th>
+              {quotaMonths.map((col, index) => (
+                <th key={index} className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[150px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                  <div className="font-bold text-xs whitespace-nowrap">{col.dates || col.name || `Period ${index + 1}`}</div>
                 </th>
               ))}
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>QTR Rebate</th>
-              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
-                isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>Actions</th>
+              <th className={`px-3 py-2 text-center text-xs font-bold uppercase tracking-wider min-w-[100px] max-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>QTR Rebate</th>
             </tr>
           </thead>
           <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-            {rebateDetails.customers.map((customer, index) => {
-              const customerCode = customer.code || `CUST-${index}`;
-              const customerName = customer.name || 'Unknown Customer';
-              const customerColor = customer.color || '#10b981';
-              const qtrRebate = customer.qtrRebate !== undefined ? customer.qtrRebate : 0;
+            {rebateDetails.customers.map((customer, i) => {
+              const customerCode = customer.code || `CUST-${i}`;
               const isEditing = editingCustomers[customerCode] || false;
-              
-              // Get quotas safely - ensure it's always an array
-              let quotas = [];
-              if (Array.isArray(customer.quotas)) {
-                quotas = customer.quotas;
-              } else if (customer.quotas && typeof customer.quotas === 'object') {
-                // Convert object to array
-                quotas = Object.values(customer.quotas);
-              }
-              
-              // Ensure we have at least 3 quotas
-              while (quotas.length < 3) {
-                quotas.push(0);
-              }
-              
               return (
-                <tr key={index} className={`transition-colors duration-150 ${
-                  isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
-                }`}>
-                  {/* Customer Name */}
+                <tr key={i} className={`transition-colors duration-150 ${isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'}`}>
                   <td className="px-3 py-2 align-top">
                     <div className="flex items-center gap-2 w-full">
-                      <div 
-                        className="w-5 h-5 rounded-md text-white flex items-center justify-center font-medium text-xs flex-shrink-0 shadow-sm"
-                        style={{ backgroundColor: customerColor }}
-                      >
-                        {customerName.charAt(0).toUpperCase()}
+                      <div className="w-5 h-5 rounded-md text-white flex items-center justify-center font-medium text-xs flex-shrink-0 shadow-sm" style={{ backgroundColor: customer.color || '#3b82f6' }}>
+                        {(customer.name && customer.name.charAt(0)) || '?'}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
-                          isDark ? 'text-gray-200' : 'text-gray-800'
-                        }`}>
-                          {customerName}
-                        </div>
+                        <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>{customer.name || 'Unknown Customer'}</div>
                       </div>
                     </div>
                   </td>
-                  
-                  {/* Customer Code */}
                   <td className="px-3 py-2 align-top">
-                    <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
-                      isDark 
-                        ? 'bg-gray-800 text-gray-300' 
-                        : 'bg-gray-100 text-gray-700'
-                    }`}>
-                      {customerCode}
-                    </code>
+                    <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-700'}`}>{customer.code || 'N/A'}</code>
                   </td>
-                  
-                  {/* Quota Columns (3 months) */}
-                  {quotaMonths.map((month, monthIndex) => {
-                    const quotaValue = getQuotaValue(customer, monthIndex);
-                    
+                  {quotaMonths.map((month, idx) => {
+                    const quotaValue = getQuotaValue(customer, idx);
                     return (
-                      <td key={monthIndex} className="px-3 py-2 text-center align-top">
+                      <td key={idx} className="px-3 py-2 text-center align-top">
                         {isEditing ? (
-                          <div className="space-y-0.5">
-                            <input
-                              type="number"
-                              value={quotaValue}
-                              onChange={(e) => handleCustomerQuotaChange(customerCode, monthIndex, e.target.value)}
-                              className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                                isDark 
-                                  ? 'bg-gray-800 text-gray-100' 
-                                  : 'bg-white text-gray-800'
-                              }`}
-                              min="0"
-                              step="1"
-                            />
-                          </div>
+                          <input type="number" value={quotaValue} onChange={(e) => handleCustomerQuotaChange(customer.code, idx, e.target.value)} className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} min="0" step="1" />
                         ) : (
-                          <div className="space-y-0.5">
-                            <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                              quotaValue > 0 
-                                ? isDark 
-                                  ? 'bg-emerald-500/80 text-white' 
-                                  : 'bg-emerald-500 text-white'
-                                : isDark
-                                  ? 'bg-gray-700 text-gray-400'
-                                  : 'bg-gray-200 text-gray-600'
-                            }`}>
-                              {quotaValue}
-                            </span>
-                          </div>
+                          <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${quotaValue > 0 ? (isDark ? 'bg-blue-500/80 text-white' : 'bg-blue-500 text-white') : (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-200 text-gray-600')}`}>{quotaValue}</span>
                         )}
                       </td>
                     );
                   })}
-                  
-                  {/* QTR Rebate */}
                   <td className="px-3 py-2 text-center align-top">
                     {isEditing ? (
                       <div className="flex items-center justify-center gap-0.5">
-                        <span className={`text-xs ${
-                          isDark ? 'text-gray-300' : 'text-gray-700'
-                        }`}>₱</span>
-                        <input
-                          type="number"
-                          value={qtrRebate}
-                          onChange={(e) => handleCustomerQtrRebateChange(customerCode, e.target.value)}
-                          className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                            isDark 
-                              ? 'bg-gray-800 text-gray-100' 
-                              : 'bg-white text-gray-800'
-                          }`}
-                          min="0"
-                          step="0.01"
-                        />
+                        <span className={`text-xs ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>₱</span>
+                        <input type="number" value={customer.qtrRebate || 0} onChange={(e) => handleCustomerQtrRebateChange(customer.code, e.target.value)} className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} min="0" step="0.01" />
                       </div>
                     ) : (
-                      <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                        qtrRebate > 0
-                          ? isDark 
-                            ? 'bg-blue-500/80 text-white' 
-                            : 'bg-blue-500 text-white'
-                          : isDark
-                            ? 'bg-gray-700 text-gray-400'
-                            : 'bg-gray-200 text-gray-600'
-                      }`}>
-                        ₱{parseFloat(qtrRebate).toFixed(2)}
-                      </span>
-                    )}
-                  </td>
-
-                  {/* Actions */}
-                  <td className="px-3 py-2 text-center align-top">
-                    {isEditing ? (
-                      <div className="flex gap-1 justify-center">
-                        <button
-                          onClick={() => handleSaveCustomer(customerCode)}
-                          className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
-                          title="Save"
-                        >
-                          <Check size={10} />
-                        </button>
-                        <button
-                          onClick={() => handleCancelEditCustomer(customerCode)}
-                          className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
-                          title="Cancel"
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => handleEditCustomer(customerCode)}
-                        className="p-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
-                        title="Edit"
-                      >
-                        <Edit size={10} />
-                      </button>
+                      <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${customer.qtrRebate > 0 ? (isDark ? 'bg-emerald-500/80 text-white' : 'bg-emerald-500 text-white') : (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-200 text-gray-600')}`}>₱{(customer.qtrRebate || 0).toFixed(2)}</span>
                     )}
                   </td>
                 </tr>
@@ -4846,506 +3728,98 @@ if (isMonthly) {
     );
   };
 
-const renderFixedItemsTable = ({ access } = {}) => {
-  const isDark = theme === 'dark';
-
-  if (!rebateDetails?.items || rebateDetails.items.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="text-center">
-          <Blocks size={48} className={`mx-auto mb-4 ${
-            isDark ? 'text-gray-600' : 'text-slate-300'
-          }`} />
-          <h5 className={`text-lg font-semibold mb-2 ${
-            isDark ? 'text-gray-300' : 'text-slate-700'
-          }`}>No Items Found</h5>
-          <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>
-            No items are associated with this Fixed rebate program.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead className={`sticky top-0 border-b ${
-          isDark 
-            ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
-            : 'bg-gray-50 border-gray-200'
-        }`}>
-          <tr>
-            <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] max-w-[180px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Item</th>
-            <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Code</th>
-            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Qty Per Unit</th>
-            {/* NEW: Unit of Measure column */}
-            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Unit of Measure</th>
-            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Rebate Per Unit</th>
-            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Actions</th>
-          </tr>
-        </thead>
-        <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-          {rebateDetails.items.map((item, idx) => {
-            // Get rebate per bag value from the correct field
-            const rebatePerBagValue = item.rebatePerBag || item.rebate || 0;
-            
-            return (
-              <tr key={idx} className={`transition-colors duration-150 ${
-                isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
-              }`}>
-                <td className="px-3 py-2 align-top">
-                  <div className="flex items-center gap-2 w-full">
-                    <div className={`w-5 h-5 rounded-md flex items-center justify-center shadow-sm flex-shrink-0 ${
-                      isDark 
-                        ? 'bg-gradient-to-br from-blue-900/30 to-blue-900/30' 
-                        : 'bg-gradient-to-br from-blue-100 to-blue-200'
-                    }`}>
-                      <Blocks size={10} className={
-                        isDark ? 'text-blue-400' : 'text-blue-600'
-                      } />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      {editingItems[item.code] ? (
-                        <input
-                          type="text"
-                          value={item.description}
-                          onChange={(e) => handleItemChange(item.code, 'description', e.target.value)}
-                          className={`w-full px-2 py-1 border rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                            isDark 
-                              ? 'bg-gray-800 border-gray-600 text-gray-100' 
-                              : 'border-gray-300 text-gray-800'
-                          }`}
-                        />
-                      ) : (
-                        <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
-                          isDark ? 'text-gray-200' : 'text-gray-800'
-                        }`}>
-                          {item.description}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </td>
-                <td className="px-3 py-2 align-top">
-                  <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
-                    isDark 
-                      ? 'bg-gray-800 text-gray-300' 
-                      : 'bg-gray-100 text-gray-700'
-                  }`}>
-                    {item.code}
-                  </code>
-                </td>
-                <td className="px-3 py-2 text-center align-top">
-                  {editingItems[item.code] ? (
-                    <input
-                      type="number"
-                      value={item.unitPerQty}
-                      onChange={(e) => handleItemChange(item.code, 'unitPerQty', e.target.value)}
-                      className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                        isDark 
-                          ? 'bg-gray-800 text-gray-100' 
-                          : 'bg-white text-gray-800'
-                      }`}
-                    />
-                  ) : (
-                    <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                      isDark 
-                        ? 'bg-gray-800 text-gray-300' 
-                        : 'bg-gray-100 text-gray-900'
-                    }`}>
-                      {item.unitPerQty}
-                    </span>
-                  )}
-                </td>
-                {/* NEW: Unit of Measure column */}
-                <td className="px-3 py-2 text-center align-top">
-                  {editingItems[item.code] ? (
-                    <input
-                      type="text"
-                      value={item.uom || ''}
-                      onChange={(e) => handleItemChange(item.code, 'uom', e.target.value)}
-                      className={`w-20 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                        isDark 
-                          ? 'bg-gray-800 text-gray-100' 
-                          : 'bg-white text-gray-800'
-                      }`}
-                    />
-                  ) : (
-                    <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                      isDark 
-                        ? 'bg-gray-800 text-gray-300' 
-                        : 'bg-gray-100 text-gray-900'
-                    }`}>
-                      {item.uom || '—'}
-                    </span>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-center align-top">
-                  {editingItems[item.code] ? (
-                    <div className="flex items-center gap-0.5 justify-center">
-                      <span className={`text-xs ${
-                        isDark ? 'text-gray-300' : 'text-gray-700'
-                      }`}>₱</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={rebatePerBagValue}
-                        onChange={(e) => handleItemChange(item.code, 'rebatePerBag', e.target.value)}
-                        className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                          isDark 
-                            ? 'bg-gray-800 text-gray-100' 
-                            : 'bg-white text-gray-800'
-                        }`}
-                      />
-                    </div>
-                  ) : (
-                    <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                      isDark 
-                        ? 'bg-emerald-500/80 text-white' 
-                        : 'bg-emerald-500 text-white'
-                    }`}>
-                      ₱{rebatePerBagValue.toFixed(2)}
-                    </span>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-center align-top">
-                  {editingItems[item.code] ? (
-                    <div className="flex gap-1 justify-center">
-                      <button
-                        onClick={() => handleSaveItem(item.code)}
-                        className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
-                        title="Save"
-                      >
-                        <Check size={10} />
-                      </button>
-                      <button
-                        onClick={() => handleCancelEditItem(item.code)}
-                        className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
-                        title="Cancel"
-                      >
-                        <X size={10} />
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => access?.canEdit && handleEditItem(item.code)}
-                      disabled={!access?.canEdit}
-                      title={access?.canEdit ? 'Edit' : 'No edit permission'}
-                      className={`p-1 rounded transition-colors ${
-                        access?.canEdit
-                          ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
-                          : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
-                      }`}
-                    >
-                      <Edit size={10} />
-                    </button>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-};
-
-  const renderIncrementalItemsTable = ({ access } = {}) => {
+  // ─── MODIFIED: Incremental Customer Table (Actions column removed) ─────
+  const renderIncrementalCustomerTable = ({ access } = {}) => {
     const isDark = theme === 'dark';
-
-    if (!rebateDetails?.items || rebateDetails.items.length === 0) {
+    if (!rebateDetails?.customers || rebateDetails.customers.length === 0) {
       return (
         <div className="flex-1 flex items-center justify-center p-8">
           <div className="text-center">
-            <Blocks size={48} className={`mx-auto mb-4 ${isDark ? 'text-gray-600' : 'text-slate-300'}`} />
-            <h5 className={`text-lg font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>
-              No Items Found
-            </h5>
-            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>
-              No items are associated with this rebate program.
-            </p>
+            <Users size={48} className={`mx-auto mb-4 ${isDark ? 'text-gray-600' : 'text-slate-300'}`} />
+            <h5 className={`text-lg font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>No Customers Found</h5>
+            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>No customers are associated with this rebate program.</p>
           </div>
         </div>
       );
     }
-
     const rangeColors = {
-      1: isDark
-        ? { text: 'text-blue-300',    badge: 'bg-blue-700 text-white'    }
-        : { text: 'text-blue-700',    badge: 'bg-blue-500 text-white'    },
-      2: isDark
-        ? { text: 'text-amber-300',   badge: 'bg-amber-700 text-white'   }
-        : { text: 'text-amber-700',   badge: 'bg-amber-500 text-white'   },
-      3: isDark
-        ? { text: 'text-emerald-300', badge: 'bg-emerald-700 text-white' }
-        : { text: 'text-emerald-700', badge: 'bg-emerald-500 text-white' },
+      1: isDark ? { text: 'text-blue-300', badge: 'bg-blue-700 text-white' } : { text: 'text-blue-700', badge: 'bg-blue-500 text-white' },
+      2: isDark ? { text: 'text-amber-300', badge: 'bg-amber-700 text-white' } : { text: 'text-amber-700', badge: 'bg-amber-500 text-white' },
+      3: isDark ? { text: 'text-emerald-300', badge: 'bg-emerald-700 text-white' } : { text: 'text-emerald-700', badge: 'bg-emerald-500 text-white' },
     };
-
     return (
       <div className="overflow-x-auto">
         <table className="w-full">
-          <thead className={`sticky top-0 border-b ${
-            isDark
-              ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700'
-              : 'bg-gray-50 border-gray-200'
-          }`}>
+          <thead className={`sticky top-0 border-b ${isDark ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' : 'bg-gray-50 border-gray-200'}`}>
             <tr>
-              <th className={`px-4 py-2.5 text-left   text-[10px] font-bold uppercase tracking-widest min-w-[180px] max-w-[180px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                Item
-              </th>
-              <th className={`px-4 py-2.5 text-left   text-[10px] font-bold uppercase tracking-widest min-w-[100px] max-w-[100px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                Code
-              </th>
-              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest min-w-[100px] max-w-[100px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                Qty Per Unit
-              </th>
-              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest min-w-[100px] max-w-[100px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                Unit of Measure
-              </th>
-              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                Quantity Ranges
-              </th>
-              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                Rebates per Range
-              </th>
-              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest min-w-[80px] max-w-[80px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-                Actions
-              </th>
+              <th className={`px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest min-w-[180px] max-w-[180px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Customer</th>
+              <th className={`px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest min-w-[100px] max-w-[100px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Code</th>
+              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest min-w-[100px] max-w-[100px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Qtr Rebate</th>
+              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Quantity Ranges</th>
+              <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Rebate Per Unit</th>
             </tr>
           </thead>
-
           <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-            {rebateDetails.items.map((item) => (
-              <tr
-                key={item.code}
-                className={`transition-colors duration-150 ${isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'}`}
-              >
-
-                {/* ── Item ─────────────────────────────────────────────── */}
+            {rebateDetails.customers.map((customer) => (
+              <tr key={customer.code} className={`transition-colors duration-150 ${isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'}`}>
                 <td className="px-4 py-3 align-middle max-w-[180px]">
                   <div className="flex items-center gap-2.5">
-                    <div className={`w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 shadow-sm ${
-                      isDark ? 'bg-violet-900/40' : 'bg-violet-50'
-                    }`}>
-                      <Blocks size={12} className={isDark ? 'text-violet-400' : 'text-violet-600'} />
+                    <div className="w-7 h-7 rounded-md text-white flex items-center justify-center font-semibold text-xs flex-shrink-0 shadow-sm" style={{ backgroundColor: customer.color || '#3b82f6' }}>
+                      {customer.name?.charAt(0) || '?'}
                     </div>
-                    <span className={`font-medium text-xs truncate ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>
-                      {item.description}
-                    </span>
+                    <span className={`font-medium text-xs truncate ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>{customer.name || 'Unknown Customer'}</span>
                   </div>
                 </td>
-
-                {/* ── Code ─────────────────────────────────────────────── */}
                 <td className="px-4 py-3 align-middle max-w-[100px]">
-                  <code className={`text-xs px-2 py-0.5 rounded font-semibold border inline-block ${
-                    isDark ? 'bg-slate-800 text-slate-300 border-slate-600' : 'bg-slate-100 text-slate-700 border-slate-200'
-                  }`}>
-                    {item.code}
-                  </code>
+                  <code className={`text-xs px-2 py-0.5 rounded font-semibold border inline-block ${isDark ? 'bg-slate-800 text-slate-300 border-slate-600' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>{customer.code || 'N/A'}</code>
                 </td>
-
-                {/* ── Qty Per Unit ──────────────────────────────────────── */}
                 <td className="px-4 py-3 text-center align-middle max-w-[100px]">
-                  {editingItems[item.code] ? (
-                    <input
-                      type="number"
-                      value={item.unitPerQty}
-                      onChange={(e) => handleItemChange(item.code, 'unitPerQty', e.target.value)}
-                      className={`w-16 px-2 py-1 border rounded text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                        isDark ? 'bg-gray-800 border-gray-600 text-gray-100' : 'border-gray-300 text-gray-800'
-                      }`}
-                    />
+                  {editingCustomers[customer.code] ? (
+                    <input type="number" value={customer.qtrRebate || 0} onChange={(e) => handleCustomerQtrRebateChange(customer.code, e.target.value)} className={`w-16 px-2 py-1 border rounded text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-500 ${isDark ? 'bg-gray-800 border-gray-600 text-gray-100' : 'border-gray-300 text-gray-800'}`} />
                   ) : (
-                    <span className={`text-xs px-3 py-1 rounded-lg font-bold inline-block shadow-sm ${
-                      isDark
-                        ? 'bg-gradient-to-r from-violet-600/80 to-violet-700/80 text-white'
-                        : 'bg-gradient-to-r from-violet-500 to-violet-600 text-white'
-                    }`}>
-                      {item.unitPerQty}
-                    </span>
+                    <span className={`text-xs px-3 py-1 rounded-lg font-bold inline-block shadow-sm ${isDark ? 'bg-gradient-to-r from-blue-600/80 to-blue-700/80 text-white' : 'bg-gradient-to-r from-blue-500 to-blue-600 text-white'}`}>{customer.qtrRebate || 0}</span>
                   )}
                 </td>
-
-                {/* Unit of Measure */}
-                <td className="px-4 py-3 text-center align-middle max-w-[100px]">
-                  {editingItems[item.code] ? (
-                    <input
-                      type="text"
-                      value={item.uom || ''}
-                      onChange={(e) => handleItemChange(item.code, 'uom', e.target.value)}
-                      className={`w-20 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                        isDark 
-                          ? 'bg-gray-800 text-gray-100' 
-                          : 'bg-white text-gray-800'
-                      }`}
-                    />
-                  ) : (
-                    <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                      isDark 
-                        ? 'bg-gray-800 text-gray-300' 
-                        : 'bg-gray-100 text-gray-900'
-                    }`}>
-                      {item.uom || '—'}
-                    </span>
-                  )}
-                </td>
-
-                {/* ── Quantity Ranges ───────────────────────────────────── */}
                 <td className="px-4 py-3 align-middle">
-                  {(() => {
-                    const count = item.ranges?.length || 1;
-                    const scale = count <= 2 ? 'normal' : count === 3 ? 'compact' : 'tiny';
-                    const sz = {
-                      normal: { badge: 'text-[10px] px-1.5 py-0.5', input: 'w-14 px-1.5 py-0.5 text-xs', value: 'text-xs px-2 py-0.5', sep: 'text-[10px]' },
-                      compact: { badge: 'text-[9px] px-1 py-px',    input: 'w-11 px-1 py-px text-[10px]', value: 'text-[10px] px-1.5 py-px', sep: 'text-[9px]' },
-                      tiny:    { badge: 'text-[8px] px-1 py-px',    input: 'w-9  px-1 py-px text-[9px]',  value: 'text-[9px] px-1 py-px',    sep: 'text-[8px]' },
-                    }[scale];
-                    return (
-                      <div className="flex items-center justify-center gap-1.5 flex-nowrap overflow-x-auto">
-                        {item.ranges?.map((range, rangeIndex) => {
-                          const colors = rangeColors[range.rangeNo] || rangeColors[1];
-                          return (
-                            <div key={`${item.code}-range-${rangeIndex}`} className="flex items-center gap-1 flex-shrink-0">
-                              <span className={`rounded font-bold flex-shrink-0 ${sz.badge} ${colors.badge}`}>
-                                R{range.rangeNo}
-                              </span>
-                              {editingItems[item.code] ? (
-                                <div className="flex items-center gap-0.5">
-                                  <input
-                                    type="number"
-                                    value={range.minQty || 0}
-                                    onChange={(e) => handleItemRangeChange(item.code, rangeIndex, 'minQty', e.target.value)}
-                                    className={`border rounded text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${sz.input} ${
-                                      isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'
-                                    }`}
-                                    title="Min Qty"
-                                  />
-                                  <span className={`font-medium ${sz.sep} ${isDark ? 'text-slate-400' : 'text-slate-400'}`}>–</span>
-                                  <input
-                                    type="number"
-                                    value={range.maxQty || 0}
-                                    onChange={(e) => handleItemRangeChange(item.code, rangeIndex, 'maxQty', e.target.value)}
-                                    className={`border rounded text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${sz.input} ${
-                                      isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'
-                                    }`}
-                                    title="Max Qty"
-                                  />
-                                </div>
-                              ) : (
-                                <span className={`font-semibold rounded border whitespace-nowrap ${sz.value} ${colors.text} ${
-                                  isDark ? 'bg-slate-800/60 border-slate-700' : 'bg-slate-50 border-slate-200'
-                                }`}>
-                                  {range.minQty ?? 0}–{range.maxQty ?? 0}
-                                </span>
-                              )}
-                              {rangeIndex < item.ranges.length - 1 && (
-                                <span className={`mx-0.5 ${sz.sep} ${isDark ? 'text-slate-600' : 'text-slate-300'}`}>·</span>
-                              )}
+                  <div className="flex items-center justify-center gap-1 flex-nowrap">
+                    {customer.ranges?.map((range, rangeIndex) => {
+                      const colors = rangeColors[range.rangeNo] || rangeColors[1];
+                      return (
+                        <div key={`${customer.code}-range-${rangeIndex}`} className="flex items-center gap-0.5 flex-shrink-0">
+                          <span className={`text-[9px] px-1 py-0.5 rounded font-bold flex-shrink-0 leading-none ${colors.badge}`}>R{range.rangeNo}</span>
+                          {editingCustomers[customer.code] ? (
+                            <div className="flex items-center gap-0.5">
+                              <input type="number" value={range.minQty || 0} onChange={(e) => handleCustomerRangeChange(customer.code, rangeIndex, 'minQty', e.target.value)} className={`w-10 px-1 py-0.5 border rounded text-[10px] text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'}`} title="Min Qty" />
+                              <span className={`text-[9px] font-medium ${isDark ? 'text-slate-400' : 'text-slate-400'}`}>–</span>
+                              <input type="number" value={range.maxQty || 0} onChange={(e) => handleCustomerRangeChange(customer.code, rangeIndex, 'maxQty', e.target.value)} className={`w-10 px-1 py-0.5 border rounded text-[10px] text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'}`} title="Max Qty" />
                             </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
+                          ) : (
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border leading-none ${colors.text} ${isDark ? 'bg-slate-800/60 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>{range.minQty ?? 0}–{range.maxQty ?? 0}</span>
+                          )}
+                          {rangeIndex < customer.ranges.length - 1 && (<span className={`text-[9px] mx-0.5 flex-shrink-0 ${isDark ? 'text-slate-600' : 'text-slate-300'}`}>·</span>)}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </td>
-
-                {/* ── Rebates per Range ─────────────────────────────────── */}
                 <td className="px-4 py-3 align-middle">
-                  {(() => {
-                    const count = item.ranges?.length || 1;
-                    const scale = count <= 2 ? 'normal' : count === 3 ? 'compact' : 'tiny';
-                    const sz = {
-                      normal: { badge: 'text-[10px] px-1.5 py-0.5', input: 'w-16 px-1.5 py-0.5 text-xs', value: 'text-xs px-2 py-0.5', sep: 'text-[10px]', peso: 'text-xs' },
-                      compact: { badge: 'text-[9px] px-1 py-px',    input: 'w-13 px-1 py-px text-[10px]', value: 'text-[10px] px-1.5 py-px', sep: 'text-[9px]', peso: 'text-[10px]' },
-                      tiny:    { badge: 'text-[8px] px-1 py-px',    input: 'w-10 px-1 py-px text-[9px]',  value: 'text-[9px] px-1 py-px',    sep: 'text-[8px]', peso: 'text-[9px]' },
-                    }[scale];
-                    return (
-                      <div className="flex items-center justify-center gap-1.5 flex-nowrap overflow-x-auto">
-                        {item.ranges?.map((range, rangeIndex) => {
-                          const colors = rangeColors[range.rangeNo] || rangeColors[1];
-                          return (
-                            <div key={`${item.code}-rebate-${rangeIndex}`} className="flex items-center gap-1 flex-shrink-0">
-                              <span className={`rounded font-bold flex-shrink-0 ${sz.badge} ${colors.badge}`}>
-                                R{range.rangeNo}
-                              </span>
-                              {editingItems[item.code] ? (
-                                <div className="flex items-center gap-0.5">
-                                  <span className={`${sz.peso} ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>₱</span>
-                                  <input
-                                    type="number"
-                                    value={range.rebatePerBag || 0}
-                                    onChange={(e) => handleItemRangeChange(item.code, rangeIndex, 'rebatePerBag', e.target.value)}
-                                    className={`border rounded text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${sz.input} ${
-                                      isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'
-                                    }`}
-                                  />
-                                </div>
-                              ) : (
-                                <span className={`font-semibold rounded border whitespace-nowrap ${sz.value} ${colors.text} ${
-                                  isDark ? 'bg-slate-800/60 border-slate-700' : 'bg-slate-50 border-slate-200'
-                                }`}>
-                                  ₱{range.rebatePerBag ?? 0}
-                                </span>
-                              )}
-                              {rangeIndex < item.ranges.length - 1 && (
-                                <span className={`mx-0.5 ${sz.sep} ${isDark ? 'text-slate-600' : 'text-slate-300'}`}>·</span>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
+                  <div className="flex items-center justify-center gap-1 flex-nowrap">
+                    {customer.ranges?.map((range, rangeIndex) => {
+                      const colors = rangeColors[range.rangeNo] || rangeColors[1];
+                      return (
+                        <div key={`${customer.code}-rebate-${rangeIndex}`} className="flex items-center gap-0.5 flex-shrink-0">
+                          <span className={`text-[9px] px-1 py-0.5 rounded font-bold flex-shrink-0 leading-none ${colors.badge}`}>R{range.rangeNo}</span>
+                          {editingCustomers[customer.code] ? (
+                            <input type="number" value={range.rebatePerBag || 0} onChange={(e) => handleCustomerRangeChange(customer.code, rangeIndex, 'rebatePerBag', e.target.value)} className={`w-10 px-1 py-0.5 border rounded text-[10px] text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-300 text-slate-800'}`} />
+                          ) : (
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border leading-none ${colors.text} ${isDark ? 'bg-slate-800/60 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>{range.rebatePerBag ?? 0}</span>
+                          )}
+                          {rangeIndex < customer.ranges.length - 1 && (<span className={`text-[9px] mx-0.5 flex-shrink-0 ${isDark ? 'text-slate-600' : 'text-slate-300'}`}>·</span>)}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </td>
-
-                {/* ── Actions ───────────────────────────────────────────── */}
-                <td className="px-4 py-3 text-center align-middle max-w-[80px]">
-                  {editingItems[item.code] ? (
-                    <div className="flex gap-2 justify-center">
-                      <button
-                        onClick={() => handleSaveItem(item.code)}
-                        className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors shadow-sm"
-                        title="Save"
-                      >
-                        <Check size={14} />
-                      </button>
-                      <button
-                        onClick={() => handleCancelEditItem(item.code)}
-                        className="p-1.5 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors shadow-sm"
-                        title="Cancel"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => access?.canEdit && handleEditItem(item.code)}
-                      disabled={!access?.canEdit}
-                      title={access?.canEdit ? 'Edit' : 'No edit permission'}
-                      className={`p-1.5 rounded transition-colors ${
-                        access?.canEdit
-                          ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
-                          : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
-                      }`}
-                    >
-                      <Edit size={12} />
-                    </button>
-                  )}
-                </td>
-
               </tr>
             ))}
           </tbody>
@@ -5354,253 +3828,484 @@ const renderFixedItemsTable = ({ access } = {}) => {
     );
   };
 
-const renderPercentageItemsTable = ({ access } = {}) => {
-  const isDark = theme === 'dark';
+  // ─── MODIFIED: Percentage Customer Table (Actions column removed) ──────
+  const renderPercentageCustomerTable = ({ access } = {}) => {
+    const isDark = theme === 'dark';
+    const isMonthly = rebateDetails?.frequency === 'Monthly';
 
-  if (!rebateDetails?.items || rebateDetails.items.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="text-center">
-          <Blocks size={48} className={`mx-auto mb-4 ${
-            isDark ? 'text-gray-600' : 'text-slate-300'
-          }`} />
-          <h5 className={`text-lg font-semibold mb-2 ${
-            isDark ? 'text-gray-300' : 'text-slate-700'
-          }`}>No Items Found</h5>
-          <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>
-            No items are associated with this Percentage rebate program.
-          </p>
+    if (!rebateDetails?.customers || rebateDetails.customers.length === 0) {
+      return (
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="text-center">
+            <Users size={48} className={`mx-auto mb-4 ${isDark ? 'text-gray-600' : 'text-slate-300'}`} />
+            <h5 className={`text-lg font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>No Customers Found</h5>
+            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>No customers are associated with this Percentage rebate program.</p>
+          </div>
         </div>
+      );
+    }
+
+    const getQuotaMonthNames = () => {
+      const dateFrom = rebateDetails?.dateFrom || rebateDetails?.rebateDetails?.dateFrom || selectedRebate?.from;
+      const frequency = rebateDetails?.frequency || 'Quarterly';
+      const firstCustomer = rebateDetails?.customers?.[0];
+      let quotaCount = 0;
+      if (Array.isArray(firstCustomer?.quotas)) quotaCount = firstCustomer.quotas.length;
+      else if (typeof firstCustomer?.quotas === 'object' && firstCustomer?.quotas) quotaCount = Object.keys(firstCustomer.quotas).length;
+      if (quotaCount === 0) quotaCount = 3;
+      if (!dateFrom) {
+        return Array.from({ length: quotaCount }, (_, i) => ({
+          name: `Period ${i + 1}`,
+          dates: `Period ${i + 1}`,
+          shortLabel: `P${i + 1}`,
+          isMonthly: frequency === 'Monthly',
+          isQuarterly: frequency === 'Quarterly'
+        }));
+      }
+      const addMonths = (date, n) => {
+        const d = new Date(date);
+        const day = d.getDate();
+        d.setDate(1);
+        d.setMonth(d.getMonth() + n);
+        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+        d.setDate(Math.min(day, last));
+        return d;
+      };
+      const fmtShort = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const fmtFull = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const start = new Date(dateFrom);
+      const labels = [];
+      for (let i = 0; i < quotaCount; i++) {
+        let sliceStart, sliceEnd;
+        if (frequency === 'Quarterly') {
+          sliceStart = addMonths(start, i);
+          const nextStart = addMonths(start, i + 1);
+          sliceEnd = new Date(nextStart);
+          sliceEnd.setDate(sliceEnd.getDate() - 1);
+        } else {
+          sliceStart = addMonths(start, i);
+          const nextStart = addMonths(start, i + 1);
+          sliceEnd = new Date(nextStart);
+          sliceEnd.setDate(sliceEnd.getDate() - 1);
+        }
+        const dateRange = `${fmtShort(sliceStart)} – ${fmtFull(sliceEnd)}`;
+        labels.push({
+          name: dateRange,
+          dates: dateRange,
+          shortLabel: dateRange,
+          monthName: sliceStart.toLocaleDateString('en-US', { month: 'long' }),
+          year: sliceStart.getFullYear(),
+          isMonthly: frequency === 'Monthly',
+          isQuarterly: frequency === 'Quarterly',
+          index: i,
+          startDate: sliceStart,
+          endDate: sliceEnd
+        });
+      }
+      return labels;
+    };
+
+    const quotaMonths = getQuotaMonthNames();
+
+    const getQuotaValue = (customer, monthIndex) => {
+      if (!customer.quotas) return 0;
+      const monthName = typeof quotaMonths[monthIndex] === 'object' ? quotaMonths[monthIndex].name : quotaMonths[monthIndex];
+      if (Array.isArray(customer.quotas)) return customer.quotas[monthIndex] || 0;
+      if (typeof customer.quotas === 'object') {
+        if (customer.quotas[monthName] !== undefined) return customer.quotas[monthName] || 0;
+        const numericKey = monthIndex + 1;
+        if (customer.quotas[numericKey] !== undefined) return customer.quotas[numericKey] || 0;
+        const monthKey = `Month${numericKey}`;
+        if (customer.quotas[monthKey] !== undefined) return customer.quotas[monthKey] || 0;
+      }
+      return 0;
+    };
+
+    if (isMonthly) {
+      return (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className={`sticky top-0 border-b ${isDark ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' : 'bg-gray-50 border-gray-200'}`}>
+              <tr>
+                <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Customer</th>
+                <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Code</th>
+                {quotaMonths.map((month, index) => (
+                  <th key={index} className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[130px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    <div className="font-bold text-sm">{month.dates || month.name || `Month ${index + 1}`}</div>
+                  </th>
+                ))}
+                <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>QTR Rebate</th>
+              </tr>
+            </thead>
+            <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
+              {rebateDetails.customers.map((customer, index) => {
+                const customerCode = customer.code || `CUST-${index}`;
+                const isEditing = editingCustomers[customerCode] || false;
+                return (
+                  <tr key={index} className={`transition-colors duration-150 ${isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'}`}>
+                    <td className="px-3 py-2 align-top">
+                      <div className="flex items-center gap-2 w-full">
+                        <div className="w-5 h-5 rounded-md text-white flex items-center justify-center font-medium text-xs flex-shrink-0 shadow-sm" style={{ backgroundColor: customer.color || '#10b981' }}>
+                          {customer.name ? customer.name.charAt(0).toUpperCase() : '?'}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>{customer.name || 'Unknown Customer'}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 align-top">
+                      <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-700'}`}>{customerCode}</code>
+                    </td>
+                    {quotaMonths.map((month, idx) => {
+                      const quotaValue = getQuotaValue(customer, idx);
+                      return (
+                        <td key={idx} className="px-3 py-2 text-center align-top">
+                          {isEditing ? (
+                            <input type="number" value={quotaValue} onChange={(e) => handleCustomerQuotaChange(customerCode, idx, e.target.value)} className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} min="0" step="1" />
+                          ) : (
+                            <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${quotaValue > 0 ? (isDark ? 'bg-emerald-500/80 text-white' : 'bg-emerald-500 text-white') : (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-200 text-gray-600')}`}>{quotaValue}</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="px-3 py-2 text-center align-top">
+                      {isEditing ? (
+                        <div className="flex items-center justify-center gap-0.5">
+                          <span className={`text-xs ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>₱</span>
+                          <input type="number" value={customer.qtrRebate || 0} onChange={(e) => handleCustomerQtrRebateChange(customerCode, e.target.value)} className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} min="0" step="0.01" />
+                        </div>
+                      ) : (
+                        <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${customer.qtrRebate > 0 ? (isDark ? 'bg-blue-500/80 text-white' : 'bg-blue-500 text-white') : (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-200 text-gray-600')}`}>₱{parseFloat(customer.qtrRebate || 0).toFixed(2)}</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    // Quarterly version
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead className={`sticky top-0 border-b ${isDark ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' : 'bg-gray-50 border-gray-200'}`}>
+            <tr>
+              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] max-w-[180px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Customer</th>
+              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Code</th>
+              {quotaMonths.map((month, index) => (
+                <th key={index} className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[90px] max-w-[90px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>{month}</th>
+              ))}
+              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>QTR Rebate</th>
+            </tr>
+          </thead>
+          <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
+            {rebateDetails.customers.map((customer, index) => {
+              const customerCode = customer.code || `CUST-${index}`;
+              const customerName = customer.name || 'Unknown Customer';
+              const customerColor = customer.color || '#10b981';
+              const qtrRebate = customer.qtrRebate !== undefined ? customer.qtrRebate : 0;
+              const isEditing = editingCustomers[customerCode] || false;
+              let quotas = [];
+              if (Array.isArray(customer.quotas)) quotas = customer.quotas;
+              else if (customer.quotas && typeof customer.quotas === 'object') quotas = Object.values(customer.quotas);
+              while (quotas.length < 3) quotas.push(0);
+              return (
+                <tr key={index} className={`transition-colors duration-150 ${isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'}`}>
+                  <td className="px-3 py-2 align-top">
+                    <div className="flex items-center gap-2 w-full">
+                      <div className="w-5 h-5 rounded-md text-white flex items-center justify-center font-medium text-xs flex-shrink-0 shadow-sm" style={{ backgroundColor: customerColor }}>
+                        {customerName.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>{customerName}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-700'}`}>{customerCode}</code>
+                  </td>
+                  {quotaMonths.map((month, monthIndex) => {
+                    const quotaValue = getQuotaValue(customer, monthIndex);
+                    return (
+                      <td key={monthIndex} className="px-3 py-2 text-center align-top">
+                        {isEditing ? (
+                          <input type="number" value={quotaValue} onChange={(e) => handleCustomerQuotaChange(customerCode, monthIndex, e.target.value)} className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} min="0" step="1" />
+                        ) : (
+                          <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${quotaValue > 0 ? (isDark ? 'bg-emerald-500/80 text-white' : 'bg-emerald-500 text-white') : (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-200 text-gray-600')}`}>{quotaValue}</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td className="px-3 py-2 text-center align-top">
+                    {isEditing ? (
+                      <div className="flex items-center justify-center gap-0.5">
+                        <span className={`text-xs ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>₱</span>
+                        <input type="number" value={qtrRebate} onChange={(e) => handleCustomerQtrRebateChange(customerCode, e.target.value)} className={`w-16 px-2 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} min="0" step="0.01" />
+                      </div>
+                    ) : (
+                      <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${qtrRebate > 0 ? (isDark ? 'bg-blue-500/80 text-white' : 'bg-blue-500 text-white') : (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-200 text-gray-600')}`}>₱{parseFloat(qtrRebate).toFixed(2)}</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     );
-  }
+  };
 
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead className={`sticky top-0 border-b ${
-          isDark 
-            ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' 
-            : 'bg-gray-50 border-gray-200'
-        }`}>
-          <tr>
-            <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] max-w-[180px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Item</th>
-            <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Code</th>
-            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Qty Per Unit</th>
-            {/* NEW: Unit of Measure column */}
-            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Unit of Measure</th>
-            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Percentage</th>
-            <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[80px] max-w-[80px] ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>Actions</th>
-          </tr>
-        </thead>
-        <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
-          {rebateDetails.items.map((item, idx) => (
-            <tr key={idx} className={`transition-colors duration-150 ${
-              isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'
-            }`}>
-              <td className="px-3 py-2 align-top">
-                <div className="flex items-center gap-2 w-full">
-                  <div className={`w-5 h-5 rounded-md flex items-center justify-center shadow-sm flex-shrink-0 ${
-                    isDark 
-                      ? 'bg-gradient-to-br from-green-900/30 to-emerald-900/30' 
-                      : 'bg-gradient-to-br from-green-100 to-emerald-200'
-                  }`}>
-                    <Blocks size={10} className={
-                      isDark ? 'text-emerald-400' : 'text-emerald-600'
-                    } />
+  // ─── MODIFIED: Fixed Items Table (Actions column removed) ──────────────
+  const renderFixedItemsTable = ({ access } = {}) => {
+    const isDark = theme === 'dark';
+    if (!rebateDetails?.items || rebateDetails.items.length === 0) {
+      return (
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="text-center">
+            <Blocks size={48} className={`mx-auto mb-4 ${isDark ? 'text-gray-600' : 'text-slate-300'}`} />
+            <h5 className={`text-lg font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>No Items Found</h5>
+            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>No items are associated with this Fixed rebate program.</p>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead className={`sticky top-0 border-b ${isDark ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' : 'bg-gray-50 border-gray-200'}`}>
+            <tr>
+              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] max-w-[180px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Item</th>
+              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Code</th>
+              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Qty Per Unit</th>
+              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Unit of Measure</th>
+              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Rebate Per Unit</th>
+            </tr>
+          </thead>
+          <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
+            {rebateDetails.items.map((item, idx) => {
+              const rebatePerBagValue = item.rebatePerBag || item.rebate || 0;
+              return (
+                <tr key={idx} className={`transition-colors duration-150 ${isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'}`}>
+                  <td className="px-3 py-2 align-top">
+                    <div className="flex items-center gap-2 w-full">
+                      <div className={`w-5 h-5 rounded-md flex items-center justify-center shadow-sm flex-shrink-0 ${isDark ? 'bg-gradient-to-br from-blue-900/30 to-blue-900/30' : 'bg-gradient-to-br from-blue-100 to-blue-200'}`}>
+                        <Blocks size={10} className={isDark ? 'text-blue-400' : 'text-blue-600'} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        {editingItems[item.code] ? (
+                          <input type="text" value={item.description} onChange={(e) => handleItemChange(item.code, 'description', e.target.value)} className={`w-full px-2 py-1 border rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 border-gray-600 text-gray-100' : 'border-gray-300 text-gray-800'}`} />
+                        ) : (
+                          <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>{item.description}</div>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-700'}`}>{item.code}</code>
+                  </td>
+                  <td className="px-3 py-2 text-center align-top">
+                    {editingItems[item.code] ? (
+                      <input type="number" value={item.unitPerQty} onChange={(e) => handleItemChange(item.code, 'unitPerQty', e.target.value)} className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} />
+                    ) : (
+                      <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-900'}`}>{item.unitPerQty}</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-center align-top">
+                    {editingItems[item.code] ? (
+                      <input type="text" value={item.uom || ''} onChange={(e) => handleItemChange(item.code, 'uom', e.target.value)} className={`w-20 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} />
+                    ) : (
+                      <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-900'}`}>{item.uom || '—'}</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-center align-top">
+                    {editingItems[item.code] ? (
+                      <div className="flex items-center gap-0.5 justify-center">
+                        <span className={`text-xs ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>₱</span>
+                        <input type="number" step="0.01" value={rebatePerBagValue} onChange={(e) => handleItemChange(item.code, 'rebatePerBag', e.target.value)} className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} />
+                      </div>
+                    ) : (
+                      <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${isDark ? 'bg-emerald-500/80 text-white' : 'bg-emerald-500 text-white'}`}>₱{rebatePerBagValue.toFixed(2)}</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  // ─── MODIFIED: Incremental Items Table (Actions column removed) ────────
+  const renderIncrementalItemsTable = ({ access } = {}) => {
+    const isDark = theme === 'dark';
+    if (!rebateDetails?.items || rebateDetails.items.length === 0) {
+      return (
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="text-center">
+            <Blocks size={48} className={`mx-auto mb-4 ${isDark ? 'text-gray-600' : 'text-slate-300'}`} />
+            <h5 className={`text-lg font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>No Items Found</h5>
+            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>No items are associated with this rebate program.</p>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="h-full overflow-x-auto">
+        <table className="w-full">
+          <thead className={`sticky top-0 border-b ${isDark ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' : 'bg-gray-50 border-gray-200'}`}>
+            <tr>
+              <th className={`px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest min-w-[120px] max-w-[140px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Item</th>
+              <th className={`px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest min-w-[60px] max-w-[80px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Code</th>
+              <th className={`px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest min-w-[60px] max-w-[80px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Qty Per Unit</th>
+              <th className={`px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest min-w-[60px] max-w-[80px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Unit of Measure</th>
+            </tr>
+          </thead>
+          <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
+            {rebateDetails.items.map((item) => (
+              <tr key={item.code} className={`transition-colors duration-150 ${isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'}`}>
+                <td className="px-3 py-3 align-middle max-w-[140px]">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 shadow-sm ${isDark ? 'bg-violet-900/40' : 'bg-violet-50'}`}>
+                      <Blocks size={11} className={isDark ? 'text-violet-400' : 'text-violet-600'} />
+                    </div>
+                    <span className={`font-medium text-[11px] truncate ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>{item.description}</span>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${
-                      isDark ? 'text-gray-200' : 'text-gray-800'
-                    }`}>
-                      {item.description}
+                </td>
+                <td className="px-3 py-3 align-middle max-w-[80px]">
+                  <code className={`text-[10px] px-1.5 py-0.5 rounded font-semibold border inline-block ${isDark ? 'bg-slate-800 text-slate-300 border-slate-600' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>{item.code}</code>
+                </td>
+                <td className="px-3 py-3 text-center align-middle max-w-[80px]">
+                  {editingItems[item.code] ? (
+                    <input type="number" value={item.unitPerQty} onChange={(e) => handleItemChange(item.code, 'unitPerQty', e.target.value)} className={`w-10 px-1 py-0.5 border rounded text-[11px] text-center focus:outline-none focus:ring-1 focus:ring-blue-500 ${isDark ? 'bg-gray-800 border-gray-600 text-gray-100' : 'border-gray-300 text-gray-800'}`} />
+                  ) : (
+                    <span className={`text-[11px] px-2 py-0.5 rounded-lg font-bold inline-block shadow-sm ${isDark ? 'bg-gradient-to-r from-violet-600/80 to-violet-700/80 text-white' : 'bg-gradient-to-r from-violet-500 to-violet-600 text-white'}`}>{item.unitPerQty}</span>
+                  )}
+                </td>
+                <td className="px-3 py-3 text-center align-middle max-w-[80px]">
+                  {editingItems[item.code] ? (
+                    <input type="text" value={item.uom || ''} onChange={(e) => handleItemChange(item.code, 'uom', e.target.value)} className={`w-12 px-1 py-0.5 border rounded text-[11px] text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} />
+                  ) : (
+                    <span className={`text-[11px] px-1.5 py-0.5 rounded font-medium inline-block text-center min-w-8 ${isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-900'}`}>{item.uom || '—'}</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  // ─── MODIFIED: Percentage Items Table (Actions column removed) ─────────
+  const renderPercentageItemsTable = ({ access } = {}) => {
+    const isDark = theme === 'dark';
+    if (!rebateDetails?.items || rebateDetails.items.length === 0) {
+      return (
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="text-center">
+            <Blocks size={48} className={`mx-auto mb-4 ${isDark ? 'text-gray-600' : 'text-slate-300'}`} />
+            <h5 className={`text-lg font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-slate-700'}`}>No Items Found</h5>
+            <p className={isDark ? 'text-gray-400' : 'text-slate-500'}>No items are associated with this Percentage rebate program.</p>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead className={`sticky top-0 border-b ${isDark ? 'bg-gradient-to-r from-gray-800 to-gray-900 border-gray-700' : 'bg-gray-50 border-gray-200'}`}>
+            <tr>
+              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[180px] max-w-[180px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Item</th>
+              <th className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Code</th>
+              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Qty Per Unit</th>
+              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Unit of Measure</th>
+              <th className={`px-3 py-2 text-center text-xs font-semibold uppercase tracking-wider min-w-[100px] max-w-[100px] ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Percentage</th>
+            </tr>
+          </thead>
+          <tbody className={`divide-y ${isDark ? 'divide-gray-700/50' : 'divide-gray-100'}`}>
+            {rebateDetails.items.map((item, idx) => (
+              <tr key={idx} className={`transition-colors duration-150 ${isDark ? 'hover:bg-gray-700/30' : 'hover:bg-gray-50/50'}`}>
+                <td className="px-3 py-2 align-top">
+                  <div className="flex items-center gap-2 w-full">
+                    <div className={`w-5 h-5 rounded-md flex items-center justify-center shadow-sm flex-shrink-0 ${isDark ? 'bg-gradient-to-br from-green-900/30 to-emerald-900/30' : 'bg-gradient-to-br from-green-100 to-emerald-200'}`}>
+                      <Blocks size={10} className={isDark ? 'text-emerald-400' : 'text-emerald-600'} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className={`font-medium text-xs truncate overflow-hidden text-ellipsis whitespace-nowrap ${isDark ? 'text-gray-200' : 'text-gray-800'}`}>{item.description}</div>
                     </div>
                   </div>
-                </div>
-              </td>
-              <td className="px-3 py-2 align-top">
-                <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${
-                  isDark 
-                    ? 'bg-gray-800 text-gray-300' 
-                    : 'bg-gray-100 text-gray-700'
-                }`}>
-                  {item.code}
-                </code>
-              </td>
-              <td className="px-3 py-2 text-center align-top">
-                {editingItems[item.code] ? (
-                  <input
-                    type="number"
-                    value={item.unitPerQty || 1}
-                    onChange={(e) => handleItemChange(item.code, 'unitPerQty', e.target.value)}
-                    className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                      isDark 
-                        ? 'bg-gray-800 text-gray-100' 
-                        : 'bg-white text-gray-800'
-                    }`}
-                  />
-                ) : (
-                  <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                    isDark 
-                      ? 'bg-gray-800 text-gray-300' 
-                      : 'bg-gray-100 text-gray-900'
-                  }`}>
-                    {item.unitPerQty || 1}
-                  </span>
-                )}
-              </td>
-              {/* NEW: Unit of Measure column */}
-              <td className="px-3 py-2 text-center align-top">
-                {editingItems[item.code] ? (
-                  <input
-                    type="text"
-                    value={item.uom || ''}
-                    onChange={(e) => handleItemChange(item.code, 'uom', e.target.value)}
-                    className={`w-20 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                      isDark 
-                        ? 'bg-gray-800 text-gray-100' 
-                        : 'bg-white text-gray-800'
-                    }`}
-                  />
-                ) : (
-                  <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                    isDark 
-                      ? 'bg-gray-800 text-gray-300' 
-                      : 'bg-gray-100 text-gray-900'
-                  }`}>
-                    {item.uom || '—'}
-                  </span>
-                )}
-              </td>
-              <td className="px-3 py-2 text-center align-top">
-                {editingItems[item.code] ? (
-                  <div className="flex items-center gap-0.5 justify-center">
-                    <input
-                      type="number"
-                      value={item.percentage || 0}
-                      onChange={(e) => handleItemChange(item.code, 'percentage', e.target.value)}
-                      className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${
-                        isDark 
-                          ? 'bg-gray-800 text-gray-100' 
-                          : 'bg-white text-gray-800'
-                      }`}
-                    />
-                    <span className={`text-xs ${
-                      isDark ? 'text-gray-300' : 'text-gray-700'
-                    }`}>%</span>
-                  </div>
-                ) : (
-                  <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${
-                    isDark 
-                      ? 'bg-emerald-500/80 text-white' 
-                      : 'bg-emerald-500 text-white'
-                  }`}>
-                    {item.percentage || 0}%
-                  </span>
-                )}
-              </td>
-              <td className="px-3 py-2 text-center align-top">
-                {editingItems[item.code] ? (
-                  <div className="flex gap-1 justify-center">
-                    <button
-                      onClick={() => handleSaveItem(item.code)}
-                      className="p-1 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
-                      title="Save"
-                    >
-                      <Check size={10} />
-                    </button>
-                    <button
-                      onClick={() => handleCancelEditItem(item.code)}
-                      className="p-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
-                      title="Cancel"
-                    >
-                      <X size={10} />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => access?.canEdit && handleEditItem(item.code)}
-                    disabled={!access?.canEdit}
-                    title={access?.canEdit ? 'Edit' : 'No edit permission'}
-                    className={`p-1 rounded transition-colors ${
-                      access?.canEdit
-                        ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer'
-                        : 'bg-gray-300 text-gray-400 cursor-not-allowed dark:bg-gray-700 dark:text-gray-600'
-                    }`}
-                  >
-                    <Edit size={10} />
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-};
+                </td>
+                <td className="px-3 py-2 align-top">
+                  <code className={`text-xs px-1.5 py-0.5 rounded font-medium truncate inline-block max-w-full ${isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-700'}`}>{item.code}</code>
+                </td>
+                <td className="px-3 py-2 text-center align-top">
+                  {editingItems[item.code] ? (
+                    <input type="number" value={item.unitPerQty || 1} onChange={(e) => handleItemChange(item.code, 'unitPerQty', e.target.value)} className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} />
+                  ) : (
+                    <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-900'}`}>{item.unitPerQty || 1}</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-center align-top">
+                  {editingItems[item.code] ? (
+                    <input type="text" value={item.uom || ''} onChange={(e) => handleItemChange(item.code, 'uom', e.target.value)} className={`w-20 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} />
+                  ) : (
+                    <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-900'}`}>{item.uom || '—'}</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-center align-top">
+                  {editingItems[item.code] ? (
+                    <div className="flex items-center gap-0.5 justify-center">
+                      <input type="number" value={item.percentage || 0} onChange={(e) => handleItemChange(item.code, 'percentage', e.target.value)} className={`w-12 px-1 py-1 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent ${isDark ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-800'}`} />
+                      <span className={`text-xs ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>%</span>
+                    </div>
+                  ) : (
+                    <span className={`text-xs px-2 py-1 rounded font-medium inline-block text-center min-w-10 ${isDark ? 'bg-emerald-500/80 text-white' : 'bg-emerald-500 text-white'}`}>{item.percentage || 0}%</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
 
+  // ---------- The rest of the functions (transaction tables etc.) remain unchanged ----------
   const renderTransactionTable = () => {
     if (!modalCustomer || !modalCustomer.rebateType) {
       return (
-        <div className={`text-center py-8 ${
-          theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
-        }`}>
+        <div className={`text-center py-8 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
           No customer data available
         </div>
       );
     }
-    
-    // Check if monthly frequency
-      const isMonthly = modalCustomer.frequency === 'Monthly' || 
-                      modalCustomer.details?.rebateDetails?.frequency === 'Monthly';
-    
+    const isMonthly = modalCustomer.frequency === 'Monthly' || modalCustomer.details?.rebateDetails?.frequency === 'Monthly';
     if (isMonthly) {
-      // For monthly, we'll show a simplified table
-      // The VanTransactionRecords component will handle this
-      return null; // The component will render the monthly table
+      return null;
     }
-    
-    // Original quarterly logic below...
-    if (detailedTransactions.length > 0 && 
-        detailedTransactions[0]?.RebateType !== modalCustomer.rebateType) {
+    if (detailedTransactions.length > 0 && detailedTransactions[0]?.RebateType !== modalCustomer.rebateType) {
       console.warn('Data type mismatch, resetting...');
       setDetailedTransactions([]);
       return (
-        <div className={`text-center py-8 ${
-          theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
-        }`}>
+        <div className={`text-center py-8 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
           Loading data...
         </div>
       );
     }
-    
     const isIncremental = modalCustomer.rebateType === 'Incremental';
     const isPercentage = modalCustomer.rebateType === 'Percentage';
     const isFixed = modalCustomer.rebateType === 'Fixed';
-    
     if (loadingTransactions[`${modalCustomer.code}_transactions`]) {
       return (
-        <div className={`text-center py-8 ${
-          theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
-        }`}>
+        <div className={`text-center py-8 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
           Loading transaction data...
         </div>
       );
     }
-    
     if (isIncremental) {
       return renderIncrementalTransactionTable();
     } else if (isPercentage) {
@@ -5609,9 +4314,7 @@ const renderPercentageItemsTable = ({ access } = {}) => {
       return renderFixedTransactionTable();
     } else {
       return (
-        <div className={`text-center py-8 ${
-          theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
-        }`}>
+        <div className={`text-center py-8 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
           Unknown rebate type: {modalCustomer.rebateType}
         </div>
       );
@@ -5621,16 +4324,8 @@ const renderPercentageItemsTable = ({ access } = {}) => {
   const renderIncrementalTransactionTable = ({ access } = {}) => {
     return (
       <table className="w-full text-xs">
-        <thead className={`sticky top-0 ${
-          theme === 'dark' 
-            ? 'bg-gradient-to-r from-gray-800 to-gray-900' 
-            : 'bg-gray-50'
-        }`}>
-          <tr className={`font-semibold uppercase tracking-wider border-b ${
-            theme === 'dark' 
-              ? 'border-gray-700 text-gray-300' 
-              : 'border-gray-200 text-gray-600'
-          }`}>
+        <thead className={`sticky top-0 ${theme === 'dark' ? 'bg-gradient-to-r from-gray-800 to-gray-900' : 'bg-gray-50'}`}>
+          <tr className={`font-semibold uppercase tracking-wider border-b ${theme === 'dark' ? 'border-gray-700 text-gray-300' : 'border-gray-200 text-gray-600'}`}>
             <th className="px-6 py-2 text-left w=[12%]">Date</th>
             <th className="px-3 py-2 text-left w=[25%]">Item</th>
             <th className="px-3 py-2 text-center w=[10%]">Act. Sales</th>
@@ -5644,110 +4339,41 @@ const renderPercentageItemsTable = ({ access } = {}) => {
           {paginatedTransactions.length > 0 ? (
             paginatedTransactions.map((transaction, index) => {
               const prevTransaction = index > 0 ? paginatedTransactions[index - 1] : null;
-              const isNewMonth = transaction.IsNewMonth || 
-                (prevTransaction && prevTransaction.MonthKey !== transaction.MonthKey);
-              
-              const itemName = transaction.Item || transaction.ItemName || transaction.item || 
-                              transaction.description || transaction.Description || 'N/A';
-              
+              const isNewMonth = transaction.IsNewMonth || (prevTransaction && prevTransaction.MonthKey !== transaction.MonthKey);
+              const itemName = transaction.Item || transaction.ItemName || transaction.item || transaction.description || transaction.Description || 'N/A';
               return (
-                <tr key={index} className={`${
-                  theme === 'dark' ? 'hover:bg-gray-700/50' : 'hover:bg-gray-50'
-                } ${isNewMonth ? theme === 'dark' ? 'border-t-2 border-gray-600' : 'border-t-2 border-gray-300' : ''}`}>
+                <tr key={index} className={`${theme === 'dark' ? 'hover:bg-gray-700/50' : 'hover:bg-gray-50'} ${isNewMonth ? theme === 'dark' ? 'border-t-2 border-gray-600' : 'border-t-2 border-gray-300' : ''}`}>
                   <td className="px-6 py-2">
-                    <div className={`font-medium ${
-                      theme === 'dark' ? 'text-gray-100' : 'text-gray-900'
-                    }`}>
-                      {transaction.Date || 'N/A'}
-                    </div>
+                    <div className={`font-medium ${theme === 'dark' ? 'text-gray-100' : 'text-gray-900'}`}>{transaction.Date || 'N/A'}</div>
                   </td>
                   <td className="px-3 py-2">
-                    <div className={`font-medium truncate ${
-                      theme === 'dark' ? 'text-gray-100' : 'text-gray-900'
-                    }`}>{itemName}</div>
-                    <div className={`text-[10px] truncate ${
-                      theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
-                    }`}>{transaction.ItemCode || ''}</div>
+                    <div className={`font-medium truncate ${theme === 'dark' ? 'text-gray-100' : 'text-gray-900'}`}>{itemName}</div>
+                    <div className={`text-[10px] truncate ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>{transaction.ItemCode || ''}</div>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={`inline-block px-2 py-0.5 font-medium rounded border ${
-                      theme === 'dark'
-                        ? 'bg-blue-900/30 text-blue-300 border-blue-700' 
-                        : 'bg-blue-50 text-blue-700 border-blue-100'
-                    }`}>
-                      {formatDecimal(transaction.ActualSales)}
-                    </span>
+                    <span className={`inline-block px-2 py-0.5 font-medium rounded border ${theme === 'dark' ? 'bg-blue-900/30 text-blue-300 border-blue-700' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>{formatDecimal(transaction.ActualSales)}</span>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={`inline-block px-2 py-0.5 font-medium rounded border ${
-                      theme === 'dark'
-                        ? 'bg-purple-900/30 text-purple-300 border-purple-700' 
-                        : 'bg-purple-50 text-purple-700 border-purple-100'
-                    }`}>
-                      {formatDecimal(transaction.QtyForReb)}
-                    </span>
+                    <span className={`inline-block px-2 py-0.5 font-medium rounded border ${theme === 'dark' ? 'bg-purple-900/30 text-purple-300 border-purple-700' : 'bg-purple-50 text-purple-700 border-purple-100'}`}>{formatDecimal(transaction.QtyForReb)}</span>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={`inline-block px-2 py-0.5 font-bold rounded border ${
-                      transaction.QtyBal > 0
-                        ? theme === 'dark'
-                          ? 'bg-orange-900/30 text-orange-300 border-orange-700'
-                          : 'bg-orange-50 text-orange-700 border-orange-100'
-                        : theme === 'dark'
-                        ? 'bg-gray-700 text-gray-400 border-gray-600' 
-                        : 'bg-gray-50 text-gray-600 border-gray-200'
-                    }`}>
-                      {formatDecimal(transaction.QtyBal)}
-                    </span>
+                    <span className={`inline-block px-2 py-0.5 font-bold rounded border ${transaction.QtyBal > 0 ? (theme === 'dark' ? 'bg-orange-900/30 text-orange-300 border-orange-700' : 'bg-orange-50 text-orange-700 border-orange-100') : (theme === 'dark' ? 'bg-gray-700 text-gray-400 border-gray-600' : 'bg-gray-50 text-gray-600 border-gray-200')}`}>{formatDecimal(transaction.QtyBal)}</span>
                   </td>
                   <td className="px-3 py-2">
                     <div className="space-y-1">
                       <div className="flex items-center gap-1">
-                        <div className={`flex-1 rounded-full h-1.5 ${
-                          theme === 'dark' ? 'bg-gray-700' : 'bg-gray-200'
-                        }`}>
-                          <div 
-                            className={`h-1.5 rounded-full ${
-                              (parseFloat(transaction.Progress) || 0) >= 100 
-                                ? 'bg-green-500'
-                                : (parseFloat(transaction.Progress) || 0) > 0
-                                ? 'bg-yellow-500'
-                                : theme === 'dark' ? 'bg-gray-600' : 'bg-gray-300'
-                            }`}
-                            style={{ width: `${Math.min(parseFloat(transaction.Progress) || 0, 100)}%` }}
-                          ></div>
+                        <div className={`flex-1 rounded-full h-1.5 ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-200'}`}>
+                          <div className={`h-1.5 rounded-full ${(parseFloat(transaction.Progress) || 0) >= 100 ? 'bg-green-500' : (parseFloat(transaction.Progress) || 0) > 0 ? 'bg-yellow-500' : theme === 'dark' ? 'bg-gray-600' : 'bg-gray-300'}`} style={{ width: `${Math.min(parseFloat(transaction.Progress) || 0, 100)}%` }}></div>
                         </div>
-                        <span className={`font-bold min-w-[30px] text-right text-xs ${
-                          theme === 'dark' ? 'text-gray-300' : 'text-gray-700'
-                        }`}>
-                          {(parseFloat(transaction.Progress) || 0).toFixed(0)}%
-                        </span>
+                        <span className={`font-bold min-w-[30px] text-right text-xs ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>{(parseFloat(transaction.Progress) || 0).toFixed(0)}%</span>
                       </div>
                       {transaction.CurrentRange && (
-                        <div className={`text-[10px] text-center font-medium ${
-                          theme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'
-                        }`}>
-                          Range {transaction.CurrentRange}
-                        </div>
+                        <div className={`text-[10px] text-center font-medium ${theme === 'dark' ? 'text-indigo-400' : 'text-indigo-600'}`}>Range {transaction.CurrentRange}</div>
                       )}
                     </div>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded font-medium text-xs ${
-                      transaction.EligibilityStatus === 'Eligible'
-                        ? theme === 'dark'
-                          ? 'bg-green-900/30 text-green-300 border border-green-700/30' 
-                          : 'bg-green-100 text-green-800'
-                        : transaction.EligibilityStatus === 'Progressing'
-                        ? theme === 'dark'
-                          ? 'bg-yellow-900/30 text-yellow-300 border border-yellow-700/30' 
-                          : 'bg-yellow-100 text-yellow-800'
-                        : theme === 'dark'
-                        ? 'bg-red-900/30 text-red-300 border border-red-700/30' 
-                        : 'bg-red-100 text-red-800'
-                    }`}>
-                      {transaction.StatusMessage}
-                    </span>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded font-medium text-xs ${transaction.EligibilityStatus === 'Eligible' ? (theme === 'dark' ? 'bg-green-900/30 text-green-300 border border-green-700/30' : 'bg-green-100 text-green-800') : transaction.EligibilityStatus === 'Progressing' ? (theme === 'dark' ? 'bg-yellow-900/30 text-yellow-300 border border-yellow-700/30' : 'bg-yellow-100 text-yellow-800') : (theme === 'dark' ? 'bg-red-900/30 text-red-300 border border-red-700/30' : 'bg-red-100 text-red-800')}`}>{transaction.StatusMessage}</span>
                   </td>
                 </tr>
               );
@@ -5755,9 +4381,7 @@ const renderPercentageItemsTable = ({ access } = {}) => {
           ) : (
             <tr>
               <td colSpan={7} className="px-4 py-6 text-center">
-                <div className={theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}>
-                  No transactions found
-                </div>
+                <div className={theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}>No transactions found</div>
               </td>
             </tr>
           )}
@@ -5769,16 +4393,8 @@ const renderPercentageItemsTable = ({ access } = {}) => {
   const renderFixedTransactionTable = ({ access } = {}) => {
     return (
       <table className="w-full text-xs">
-        <thead className={`sticky top-0 ${
-          theme === 'dark' 
-            ? 'bg-gradient-to-r from-gray-800 to-gray-900' 
-            : 'bg-gray-50'
-        }`}>
-          <tr className={`font-semibold uppercase tracking-wider border-b ${
-            theme === 'dark' 
-              ? 'border-gray-700 text-gray-300' 
-              : 'border-gray-200 text-gray-600'
-          }`}>
+        <thead className={`sticky top-0 ${theme === 'dark' ? 'bg-gradient-to-r from-gray-800 to-gray-900' : 'bg-gray-50'}`}>
+          <tr className={`font-semibold uppercase tracking-wider border-b ${theme === 'dark' ? 'border-gray-700 text-gray-300' : 'border-gray-200 text-gray-600'}`}>
             <th className="px-6 py-2 text-left w=[12%]">Date</th>
             <th className="px-3 py-2 text-left w=[25%]">Item</th>
             <th className="px-3 py-2 text-center w=[10%]">Act. Sales</th>
@@ -5792,164 +4408,42 @@ const renderPercentageItemsTable = ({ access } = {}) => {
           {paginatedTransactions.length > 0 ? (
             paginatedTransactions.map((transaction, index) => {
               const prevTransaction = index > 0 ? paginatedTransactions[index - 1] : null;
-              const isNewMonth = transaction.IsNewMonth || 
-                (prevTransaction && prevTransaction.MonthKey !== transaction.MonthKey);
-              
-              const progressPercentage = transaction.MonthQuota > 0 ? 
-                Math.min((transaction.QtyBal / transaction.MonthQuota) * 100, 100) : 0;
+              const isNewMonth = transaction.IsNewMonth || (prevTransaction && prevTransaction.MonthKey !== transaction.MonthKey);
+              const progressPercentage = transaction.MonthQuota > 0 ? Math.min((transaction.QtyBal / transaction.MonthQuota) * 100, 100) : 0;
               const formattedProgress = parseFloat(progressPercentage.toFixed(2));
-              
-              // Add 25kg indicator to item name
               const itemName = transaction.Item || 'N/A';
-              const displayItemName = transaction.Is25kgItem ? 
-                `${itemName} (25kg)` : itemName;
-              
+              const displayItemName = transaction.Is25kgItem ? `${itemName} (25kg)` : itemName;
               return (
-                <tr key={index} className={`${
-                  theme === 'dark' ? 'hover:bg-gray-700/50' : 'hover:bg-gray-50'
-                } ${isNewMonth ? theme === 'dark' ? 'border-t-2 border-gray-600' : 'border-t-2 border-gray-300' : ''}`}>
+                <tr key={index} className={`${theme === 'dark' ? 'hover:bg-gray-700/50' : 'hover:bg-gray-50'} ${isNewMonth ? theme === 'dark' ? 'border-t-2 border-gray-600' : 'border-t-2 border-gray-300' : ''}`}>
                   <td className="px-6 py-2">
-                    <div className={`font-medium ${
-                      theme === 'dark' ? 'text-gray-100' : 'text-gray-900'
-                    }`}>
-                      {transaction.Date || 'N/A'}
-                    </div>
+                    <div className={`font-medium ${theme === 'dark' ? 'text-gray-100' : 'text-gray-900'}`}>{transaction.Date || 'N/A'}</div>
                   </td>
                   <td className="px-3 py-2">
-                    <div className={`font-medium truncate ${
-                      theme === 'dark' ? 'text-gray-100' : 'text-gray-900'
-                    }`}>
-                      {displayItemName}
-                    </div>
-                    <div className={`text-[10px] truncate ${
-                      theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
-                    }`}>
-                      {transaction.ItemCode || ''}
-                    </div>
+                    <div className={`font-medium truncate ${theme === 'dark' ? 'text-gray-100' : 'text-gray-900'}`}>{displayItemName}</div>
+                    <div className={`text-[10px] truncate ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>{transaction.ItemCode || ''}</div>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={`inline-block px-2 py-0.5 font-medium rounded border ${
-                      transaction.Is25kgItem 
-                        ? theme === 'dark'
-                          ? 'bg-blue-900/30 text-blue-300 border-blue-700' 
-                          : 'bg-blue-50 text-blue-700 border-blue-200'
-                        : theme === 'dark'
-                        ? 'bg-blue-900/30 text-blue-300 border-blue-700' 
-                        : 'bg-blue-50 text-blue-700 border-blue-100'
-                    }`}>
-                      {formatDecimal(transaction.ActualSales)}
-                      {transaction.Is25kgItem && (
-                        <span className={`ml-1 text-[10px] ${
-                          theme === 'dark' ? 'text-blue-400' : 'text-blue-500'
-                        }`}></span>
-                      )}
-                    </span>
+                    <span className={`inline-block px-2 py-0.5 font-medium rounded border ${theme === 'dark' ? 'bg-blue-900/30 text-blue-300 border-blue-700' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>{formatDecimal(transaction.ActualSales)}</span>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={`inline-block px-2 py-0.5 font-medium rounded border ${
-                      transaction.QtyForReb > 0
-                        ? transaction.Is25kgItem
-                          ? theme === 'dark'
-                            ? 'bg-purple-900/30 text-purple-300 border-purple-700' 
-                            : 'bg-purple-50 text-purple-700 border-purple-200'
-                          : theme === 'dark'
-                          ? 'bg-purple-900/30 text-purple-300 border-purple-700' 
-                          : 'bg-purple-50 text-purple-700 border-purple-100'
-                        : theme === 'dark'
-                        ? 'bg-gray-700 text-gray-400 border-gray-600' 
-                        : 'bg-gray-50 text-gray-600 border-gray-200'
-                    }`}>
-                      {formatDecimal(transaction.QtyForReb)}
-                      {transaction.Is25kgItem && (
-                        <span className={`ml-1 text-[10px] ${
-                          theme === 'dark' ? 'text-purple-400' : 'text-purple-500'
-                        }`}></span>
-                      )}
-                    </span>
+                    <span className={`inline-block px-2 py-0.5 font-medium rounded border ${transaction.QtyForReb > 0 ? (theme === 'dark' ? 'bg-purple-900/30 text-purple-300 border-purple-700' : 'bg-purple-50 text-purple-700 border-purple-100') : (theme === 'dark' ? 'bg-gray-700 text-gray-400 border-gray-600' : 'bg-gray-50 text-gray-600 border-gray-200')}`}>{formatDecimal(transaction.QtyForReb)}</span>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={`inline-block px-2 py-0.5 font-bold rounded border ${
-                      transaction.QtyBal > 0
-                        ? transaction.QtyBal >= transaction.MonthQuota
-                          ? theme === 'dark'
-                            ? 'bg-green-900/30 text-green-300 border-green-700'
-                            : 'bg-green-100 text-green-800 border-green-300'
-                          : transaction.Is25kgItem
-                          ? theme === 'dark'
-                            ? 'bg-orange-900/30 text-orange-300 border-orange-700'
-                            : 'bg-orange-50 text-orange-700 border-orange-200'
-                          : theme === 'dark'
-                          ? 'bg-orange-900/30 text-orange-300 border-orange-700'
-                          : 'bg-orange-50 text-orange-700 border-orange-100'
-                        : theme === 'dark'
-                        ? 'bg-gray-700 text-gray-400 border-gray-600' 
-                        : 'bg-gray-50 text-gray-600 border-gray-200'
-                    }`}>
-                      {formatDecimal(transaction.QtyBal)}
-                    </span>
+                    <span className={`inline-block px-2 py-0.5 font-bold rounded border ${transaction.QtyBal > 0 ? (transaction.QtyBal >= transaction.MonthQuota ? (theme === 'dark' ? 'bg-green-900/30 text-green-300 border-green-700' : 'bg-green-100 text-green-800 border-green-300') : (theme === 'dark' ? 'bg-orange-900/30 text-orange-300 border-orange-700' : 'bg-orange-50 text-orange-700 border-orange-100')) : (theme === 'dark' ? 'bg-gray-700 text-gray-400 border-gray-600' : 'bg-gray-50 text-gray-600 border-gray-200')}`}>{formatDecimal(transaction.QtyBal)}</span>
                   </td>
                   <td className="px-3 py-2">
                     <div className="space-y-1">
                       <div className="flex items-center gap-1">
-                        <div className={`flex-1 rounded-full h-1.5 ${
-                          theme === 'dark' ? 'bg-gray-700' : 'bg-gray-200'
-                        }`}>
-                          <div 
-                            className={`h-1.5 rounded-full ${
-                              progressPercentage >= 100 
-                                ? 'bg-green-500'
-                                : progressPercentage > 0
-                                ? transaction.Is25kgItem ? 'bg-yellow-500' : 'bg-yellow-500'
-                                : theme === 'dark' ? 'bg-gray-600' : 'bg-gray-300'
-                            }`}
-                            style={{ width: `${progressPercentage}%` }}
-                          ></div>
+                        <div className={`flex-1 rounded-full h-1.5 ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-200'}`}>
+                          <div className={`h-1.5 rounded-full ${progressPercentage >= 100 ? 'bg-green-500' : progressPercentage > 0 ? 'bg-yellow-500' : theme === 'dark' ? 'bg-gray-600' : 'bg-gray-300'}`} style={{ width: `${progressPercentage}%` }}></div>
                         </div>
-                        <span className={`font-bold min-w-[30px] text-right ${
-                          theme === 'dark' ? 'text-gray-300' : 'text-gray-700'
-                        }`}>
-                          {formattedProgress}%
-                        </span>
+                        <span className={`font-bold min-w-[30px] text-right ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>{formattedProgress}%</span>
                       </div>
-                      <div className={`text-[10px] text-center ${
-                        theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
-                      }`}>
-                        {formatDecimal(transaction.QtyBal)} / {transaction.MonthQuota}
-                        {transaction.Is25kgItem && (
-                          <span className={`ml-1 ${
-                            theme === 'dark' ? 'text-blue-400' : 'text-blue-600'
-                          }`}></span>
-                        )}
-                      </div>
+                      <div className={`text-[10px] text-center ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>{formatDecimal(transaction.QtyBal)} / {transaction.MonthQuota}</div>
                     </div>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded font-medium text-xs ${
-                      formattedProgress >= 100
-                        ? theme === 'dark'
-                          ? 'bg-green-900/30 text-green-300 border border-green-700/30' 
-                          : 'bg-green-100 text-green-800'
-                        : formattedProgress >= 70
-                        ? transaction.Is25kgItem 
-                          ? theme === 'dark'
-                            ? 'bg-blue-900/30 text-blue-300 border border-blue-700/30' 
-                            : 'bg-blue-100 text-blue-800'
-                          : theme === 'dark'
-                          ? 'bg-yellow-900/30 text-yellow-300 border border-yellow-700/30' 
-                          : 'bg-yellow-100 text-yellow-800'
-                        : theme === 'dark'
-                        ? 'bg-red-900/30 text-red-300 border border-red-700/30' 
-                        : 'bg-red-100 text-red-800'
-                    }`}>
-                      {formattedProgress >= 100 ? 'Eligible' : 
-                      formattedProgress >= 70 ? 'On Track' : 
-                      'Not Eligible'}
-                      {transaction.Is25kgItem && formattedProgress < 100 && (
-                        <span className={`ml-1 text-[10px] ${
-                          theme === 'dark' ? 'text-blue-400' : 'text-blue-500'
-                        }`}></span>
-                      )}
-                    </span>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded font-medium text-xs ${formattedProgress >= 100 ? (theme === 'dark' ? 'bg-green-900/30 text-green-300 border border-green-700/30' : 'bg-green-100 text-green-800') : formattedProgress >= 70 ? (theme === 'dark' ? 'bg-yellow-900/30 text-yellow-300 border border-yellow-700/30' : 'bg-yellow-100 text-yellow-800') : (theme === 'dark' ? 'bg-red-900/30 text-red-300 border border-red-700/30' : 'bg-red-100 text-red-800')}`}>{formattedProgress >= 100 ? 'Eligible' : formattedProgress >= 70 ? 'On Track' : 'Not Eligible'}</span>
                   </td>
                 </tr>
               );
@@ -5957,9 +4451,7 @@ const renderPercentageItemsTable = ({ access } = {}) => {
           ) : (
             <tr>
               <td colSpan={7} className="px-4 py-6 text-center">
-                <div className={theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}>
-                  No transactions found
-                </div>
+                <div className={theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}>No transactions found</div>
               </td>
             </tr>
           )}
@@ -5969,21 +4461,11 @@ const renderPercentageItemsTable = ({ access } = {}) => {
   };
 
   const renderPercentageTransactionTable = ({ access } = {}) => {
-    if (detailedTransactions.length === 0 || detailedTransactions.every(t => 
-      t.Item === 'No Transactions' || t.IsEmptyData || !t.ItemCode
-    )) {
+    if (detailedTransactions.length === 0 || detailedTransactions.every(t => t.Item === 'No Transactions' || t.IsEmptyData || !t.ItemCode)) {
       return (
         <table className="w-full text-xs">
-          <thead className={`sticky top-0 ${
-            theme === 'dark' 
-              ? 'bg-gradient-to-r from-gray-800 to-gray-900' 
-              : 'bg-gray-50'
-          }`}>
-            <tr className={`font-semibold uppercase tracking-wider border-b ${
-              theme === 'dark' 
-                ? 'border-gray-700 text-gray-300' 
-                : 'border-gray-200 text-gray-600'
-            }`}>
+          <thead className={`sticky top-0 ${theme === 'dark' ? 'bg-gradient-to-r from-gray-800 to-gray-900' : 'bg-gray-50'}`}>
+            <tr className={`font-semibold uppercase tracking-wider border-b ${theme === 'dark' ? 'border-gray-700 text-gray-300' : 'border-gray-200 text-gray-600'}`}>
               <th className="px-6 py-2 text-left w=[12%]">Date</th>
               <th className="px-3 py-2 text-left w=[25%]">Item</th>
               <th className="px-3 py-2 text-center w=[10%]">Act. Sales</th>
@@ -5996,107 +4478,55 @@ const renderPercentageItemsTable = ({ access } = {}) => {
           <tbody>
             <tr>
               <td colSpan={7} className="px-4 py-6 text-center">
-                <div className={theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}>
-                  No transactions found
-                </div>
+                <div className={theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}>No transactions found</div>
               </td>
             </tr>
           </tbody>
         </table>
       );
     }
-
-    // Get monthly quota data for this customer
     const monthlyQuotas = getFilteredMonthlyQuotas();
-    console.log('📊 Monthly quotas for percentage:', monthlyQuotas);
-
-    // Group transactions by month - only create entries for months with transactions
     const transactionsByMonth = {};
     detailedTransactions.forEach(transaction => {
       const monthKey = transaction.MonthKey || transaction.monthIndex || 1;
       const monthName = transaction.MonthName || `Month ${monthKey}`;
-      
       if (!transactionsByMonth[monthKey]) {
-        // Find quota for this month
-        const monthQuotaData = monthlyQuotas.find(q => 
-          q.monthKey === monthKey || q.monthIndex === monthKey || q.monthName === monthName
-        );
-        
+        const monthQuotaData = monthlyQuotas.find(q => q.monthKey === monthKey || q.monthIndex === monthKey || q.monthName === monthName);
         const quota = monthQuotaData?.quota || monthQuotaData?.target || 0;
-        
-        transactionsByMonth[monthKey] = {
-          monthKey,
-          monthName,
-          quota,
-          totalQtyForReb: 0,
-          transactions: [],
-          cumulativeQty: 0,
-          progress: 0
-        };
+        transactionsByMonth[monthKey] = { monthKey, monthName, quota, totalQtyForReb: 0, transactions: [], cumulativeQty: 0, progress: 0 };
       }
-      
       transactionsByMonth[monthKey].transactions.push(transaction);
       transactionsByMonth[monthKey].totalQtyForReb += transaction.QtyForReb || 0;
     });
-
-    // Calculate cumulative quantities and progress for each month
     Object.keys(transactionsByMonth).forEach(monthKey => {
       const monthData = transactionsByMonth[monthKey];
       monthData.cumulativeQty = monthData.totalQtyForReb;
-      
-      // Calculate progress: 100% if quota met, even if exceeded
       if (monthData.quota > 0) {
         monthData.progress = Math.min((monthData.cumulativeQty / monthData.quota) * 100, 100);
-        // If quota is met or exceeded, show 100%
-        if (monthData.cumulativeQty >= monthData.quota) {
-          monthData.progress = 100;
-        }
-      } else {
-        monthData.progress = 0;
-      }
+        if (monthData.cumulativeQty >= monthData.quota) monthData.progress = 100;
+      } else monthData.progress = 0;
     });
-
-    // Flatten transactions with monthly context
     const flattenedTransactions = [];
     Object.keys(transactionsByMonth).sort().forEach(monthKey => {
       const monthData = transactionsByMonth[monthKey];
-      
-      // Sort transactions within month
       monthData.transactions.sort((a, b) => new Date(a.Date) - new Date(b.Date));
-      
       let monthRunningTotal = 0;
-      
       monthData.transactions.forEach((transaction, index) => {
         const isFirstInMonth = index === 0;
         const qtyForReb = transaction.QtyForReb || 0;
-        
         monthRunningTotal += qtyForReb;
-        
-        // Calculate progress for this row (based on running total vs quota)
         let rowProgress = 0;
         if (monthData.quota > 0) {
           rowProgress = Math.min((monthRunningTotal / monthData.quota) * 100, 100);
-          // If quota is met or exceeded, show 100%
-          if (monthRunningTotal >= monthData.quota) {
-            rowProgress = 100;
-          }
+          if (monthRunningTotal >= monthData.quota) rowProgress = 100;
         }
-        
-        // Determine eligibility status
         let eligibilityStatus = 'Not Eligible';
-        if (rowProgress >= 100) {
-          eligibilityStatus = 'Eligible';
-        } else if (rowProgress >= 70) {
-          eligibilityStatus = 'On Track';
-        } else if (rowProgress > 0) {
-          eligibilityStatus = 'Not Eligible';
-        }
-        
-        // Calculate rebate amount for this transaction (percentage of actual sales)
+        if (rowProgress >= 100) eligibilityStatus = 'Eligible';
+        else if (rowProgress >= 70) eligibilityStatus = 'On Track';
+        else if (rowProgress > 0) eligibilityStatus = 'Not Eligible';
         const actualSales = transaction.ActualSales || 0;
         const percentage = transaction.Percentage || modalCustomer?.details?.rebateDetails?.percentageValue || 0;
         const rebateAmount = (actualSales * percentage) / 100;
-        
         flattenedTransactions.push({
           ...transaction,
           Date: transaction.Date,
@@ -6121,25 +4551,11 @@ const renderPercentageItemsTable = ({ access } = {}) => {
         });
       });
     });
-
-    // Get paginated data from flattened transactions
-    const paginatedData = flattenedTransactions.slice(
-      (transactionCurrentPage - 1) * transactionRowsPerPage,
-      transactionCurrentPage * transactionRowsPerPage
-    );
-
+    const paginatedData = flattenedTransactions.slice((transactionCurrentPage - 1) * transactionRowsPerPage, transactionCurrentPage * transactionRowsPerPage);
     return (
       <table className="w-full text-xs">
-        <thead className={`sticky top-0 ${
-          theme === 'dark' 
-            ? 'bg-gradient-to-r from-gray-800 to-gray-900' 
-            : 'bg-gray-50'
-        }`}>
-          <tr className={`font-semibold uppercase tracking-wider border-b ${
-            theme === 'dark' 
-              ? 'border-gray-700 text-gray-300' 
-              : 'border-gray-200 text-gray-600'
-          }`}>
+        <thead className={`sticky top-0 ${theme === 'dark' ? 'bg-gradient-to-r from-gray-800 to-gray-900' : 'bg-gray-50'}`}>
+          <tr className={`font-semibold uppercase tracking-wider border-b ${theme === 'dark' ? 'border-gray-700 text-gray-300' : 'border-gray-200 text-gray-600'}`}>
             <th className="px-6 py-2 text-left w=[12%]">Date</th>
             <th className="px-3 py-2 text-left w=[25%]">Item</th>
             <th className="px-3 py-2 text-center w=[10%]">Act. Sales</th>
@@ -6154,116 +4570,39 @@ const renderPercentageItemsTable = ({ access } = {}) => {
             paginatedData.map((transaction, index) => {
               const prevTransaction = index > 0 ? paginatedData[index - 1] : null;
               const isNewMonth = prevTransaction && prevTransaction.MonthKey !== transaction.MonthKey;
-              
-              // Add 25kg indicator to item name
               const itemName = transaction.Item || 'N/A';
-              const displayItemName = transaction.Is25kgItem ? 
-                `${itemName} (25kg)` : itemName;
-              
+              const displayItemName = transaction.Is25kgItem ? `${itemName} (25kg)` : itemName;
               return (
-                <tr key={index} className={`${
-                  theme === 'dark' ? 'hover:bg-gray-700/50' : 'hover:bg-gray-50'
-                } ${isNewMonth ? theme === 'dark' ? 'border-t-2 border-gray-600' : 'border-t-2 border-gray-300' : ''}`}>
+                <tr key={index} className={`${theme === 'dark' ? 'hover:bg-gray-700/50' : 'hover:bg-gray-50'} ${isNewMonth ? theme === 'dark' ? 'border-t-2 border-gray-600' : 'border-t-2 border-gray-300' : ''}`}>
                   <td className="px-6 py-2">
-                    <div className={`font-medium ${
-                      theme === 'dark' ? 'text-gray-100' : 'text-gray-900'
-                    }`}>
-                      {transaction.Date || 'N/A'}
-                    </div>
+                    <div className={`font-medium ${theme === 'dark' ? 'text-gray-100' : 'text-gray-900'}`}>{transaction.Date || 'N/A'}</div>
                   </td>
                   <td className="px-3 py-2">
-                    <div className={`font-medium truncate ${
-                      theme === 'dark' ? 'text-gray-100' : 'text-gray-900'
-                    }`}>
-                      {displayItemName}
-                    </div>
-                    <div className={`text-[10px] truncate ${
-                      theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
-                    }`}>
-                      {transaction.ItemCode || ''}
-                    </div>
+                    <div className={`font-medium truncate ${theme === 'dark' ? 'text-gray-100' : 'text-gray-900'}`}>{displayItemName}</div>
+                    <div className={`text-[10px] truncate ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>{transaction.ItemCode || ''}</div>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={`inline-block px-2 py-0.5 font-medium rounded border ${
-                      theme === 'dark'
-                        ? 'bg-blue-900/30 text-blue-300 border-blue-700' 
-                        : 'bg-blue-50 text-blue-700 border-blue-100'
-                    }`}>
-                      {formatDecimal(transaction.ActualSales)}
-                    </span>
+                    <span className={`inline-block px-2 py-0.5 font-medium rounded border ${theme === 'dark' ? 'bg-blue-900/30 text-blue-300 border-blue-700' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>{formatDecimal(transaction.ActualSales)}</span>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={`inline-block px-2 py-0.5 font-medium rounded border ${
-                      theme === 'dark'
-                        ? 'bg-purple-900/30 text-purple-300 border-purple-700' 
-                        : 'bg-purple-50 text-purple-700 border-purple-100'
-                    }`}>
-                      {formatDecimal(transaction.QtyForReb)}
-                    </span>
+                    <span className={`inline-block px-2 py-0.5 font-medium rounded border ${theme === 'dark' ? 'bg-purple-900/30 text-purple-300 border-purple-700' : 'bg-purple-50 text-purple-700 border-purple-100'}`}>{formatDecimal(transaction.QtyForReb)}</span>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={`inline-block px-2 py-0.5 font-bold rounded border ${
-                      transaction.QtyBal > 0
-                        ? transaction.QtyBal >= transaction.MonthQuota
-                          ? theme === 'dark'
-                            ? 'bg-green-900/30 text-green-300 border-green-700'
-                            : 'bg-green-100 text-green-800 border-green-300'
-                          : theme === 'dark'
-                          ? 'bg-orange-900/30 text-orange-300 border-orange-700'
-                          : 'bg-orange-50 text-orange-700 border-orange-100'
-                        : theme === 'dark'
-                        ? 'bg-gray-700 text-gray-400 border-gray-600'
-                        : 'bg-gray-50 text-gray-600 border-gray-200'
-                    }`}>
-                      {formatDecimal(transaction.QtyBal)}
-                    </span>
+                    <span className={`inline-block px-2 py-0.5 font-bold rounded border ${transaction.QtyBal > 0 ? (transaction.QtyBal >= transaction.MonthQuota ? (theme === 'dark' ? 'bg-green-900/30 text-green-300 border-green-700' : 'bg-green-100 text-green-800 border-green-300') : (theme === 'dark' ? 'bg-orange-900/30 text-orange-300 border-orange-700' : 'bg-orange-50 text-orange-700 border-orange-100')) : (theme === 'dark' ? 'bg-gray-700 text-gray-400 border-gray-600' : 'bg-gray-50 text-gray-600 border-gray-200')}`}>{formatDecimal(transaction.QtyBal)}</span>
                   </td>
                   <td className="px-3 py-2">
                     <div className="space-y-1">
                       <div className="flex items-center gap-1">
-                        <div className={`flex-1 rounded-full h-1.5 ${
-                          theme === 'dark' ? 'bg-gray-700' : 'bg-gray-200'
-                        }`}>
-                          <div 
-                            className={`h-1.5 rounded-full ${
-                              transaction.Progress >= 100 
-                                ? 'bg-green-500'
-                                : transaction.Progress > 0
-                                ? 'bg-yellow-500'
-                                : theme === 'dark' ? 'bg-gray-600' : 'bg-gray-300'
-                            }`}
-                            style={{ width: `${Math.min(transaction.Progress, 100)}%` }}
-                          ></div>
+                        <div className={`flex-1 rounded-full h-1.5 ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-200'}`}>
+                          <div className={`h-1.5 rounded-full ${transaction.Progress >= 100 ? 'bg-green-500' : transaction.Progress > 0 ? 'bg-yellow-500' : theme === 'dark' ? 'bg-gray-600' : 'bg-gray-300'}`} style={{ width: `${Math.min(transaction.Progress, 100)}%` }}></div>
                         </div>
-                        <span className={`font-bold min-w-[30px] text-right ${
-                          theme === 'dark' ? 'text-gray-300' : 'text-gray-700'
-                        }`}>
-                          {transaction.Progress.toFixed(1)}%
-                        </span>
+                        <span className={`font-bold min-w-[30px] text-right ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>{transaction.Progress.toFixed(1)}%</span>
                       </div>
-                      <div className={`text-[10px] text-center ${
-                        theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
-                      }`}>
-                        {formatDecimal(transaction.QtyBal)} / {formatDecimal(transaction.MonthQuota)}
-                      </div>
+                      <div className={`text-[10px] text-center ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>{formatDecimal(transaction.QtyBal)} / {formatDecimal(transaction.MonthQuota)}</div>
                     </div>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded font-medium text-xs ${
-                      transaction.EligibilityStatus === 'Eligible'
-                        ? theme === 'dark'
-                          ? 'bg-green-900/30 text-green-300 border border-green-700/30' 
-                          : 'bg-green-100 text-green-800'
-                        : transaction.EligibilityStatus === 'On Track'
-                        ? theme === 'dark'
-                          ? 'bg-yellow-900/30 text-yellow-300 border border-yellow-700/30' 
-                          : 'bg-yellow-100 text-yellow-800'
-                        : theme === 'dark'
-                        ? 'bg-red-900/30 text-red-300 border border-red-700/30' 
-                        : 'bg-red-100 text-red-800'
-                    }`}>
-                      {transaction.EligibilityStatus}
-                    </span>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded font-medium text-xs ${transaction.EligibilityStatus === 'Eligible' ? (theme === 'dark' ? 'bg-green-900/30 text-green-300 border border-green-700/30' : 'bg-green-100 text-green-800') : transaction.EligibilityStatus === 'On Track' ? (theme === 'dark' ? 'bg-yellow-900/30 text-yellow-300 border border-yellow-700/30' : 'bg-yellow-100 text-yellow-800') : (theme === 'dark' ? 'bg-red-900/30 text-red-300 border border-red-700/30' : 'bg-red-100 text-red-800')}`}>{transaction.EligibilityStatus}</span>
                   </td>
                 </tr>
               );
@@ -6271,9 +4610,7 @@ const renderPercentageItemsTable = ({ access } = {}) => {
           ) : (
             <tr>
               <td colSpan={7} className="px-4 py-6 text-center">
-                <div className={theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}>
-                  No transactions found
-                </div>
+                <div className={theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}>No transactions found</div>
               </td>
             </tr>
           )}
@@ -6282,14 +4619,13 @@ const renderPercentageItemsTable = ({ access } = {}) => {
     );
   };
 
-  // The JSX return statement
+  // The JSX return statement (unchanged)
   return (
     <div className="flex min-h-screen w-full bg-gradient-to-br from-slate-50 to-blue-50 font-poppins text-slate-900">
       <ToastContainer toasts={toasts} removeToast={removeToast} isDark={theme === 'dark'} />
 
       {loading && <Loading theme={theme} />}
 
-      {/* Use the Sidebar component */}
       <Sidebar
         collapsed={collapsed}
         setCollapsed={setCollapsed}
@@ -6302,11 +4638,7 @@ const renderPercentageItemsTable = ({ access } = {}) => {
         theme={theme}
       />
 
-      <main
-        className={`flex-1 flex flex-col min-h-screen transition-all duration-500 ${
-          collapsed ? "ml-20" : "ml-64"
-        }`}
-      >
+      <main className={`flex-1 flex flex-col min-h-screen transition-all duration-500 ${collapsed ? "ml-20" : "ml-64"}`}>
         <Header
           collapsed={collapsed}
           userName={userName}
@@ -6316,20 +4648,16 @@ const renderPercentageItemsTable = ({ access } = {}) => {
           theme={theme}
         />
 
-        <div className={`pt-16 flex-1 p-8 overflow-auto ${
-          theme === 'dark' 
-            ? 'bg-gradient-to-br from-gray-900 to-gray-800' 
-            : 'bg-gradient-to-br from-slate-50 to-blue-50'
-        }`}>
-        <div className={`p-8 w-full max-w-[1600px] mx-auto mt-6 `}>
-          <DashboardHeader
-            title="Rebate Analytics Dashboard"
-            userName={userName}
-            userCode={userCode}
-            onRefresh={handleRefresh}
-            showRefresh={true}
-            theme={theme}
-          />
+        <div className={`pt-16 flex-1 p-8 overflow-auto ${theme === 'dark' ? 'bg-gradient-to-br from-gray-900 to-gray-800' : 'bg-gradient-to-br from-slate-50 to-blue-50'}`}>
+          <div className={`p-8 w-full max-w-[1600px] mx-auto mt-6 `}>
+            <DashboardHeader
+              title="Rebate Analytics Dashboard"
+              userName={userName}
+              userCode={userCode}
+              onRefresh={handleRefresh}
+              showRefresh={true}
+              theme={theme}
+            />
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
               <MetricCard
@@ -6341,7 +4669,6 @@ const renderPercentageItemsTable = ({ access } = {}) => {
                 subtitle="Total amount disbursed"
                 theme={theme}
               />
-              
               <MetricCard
                 title="Total Unpaid Rebate"
                 value={dashboardMetrics.totalUnpaidRebateValue}
@@ -6351,7 +4678,6 @@ const renderPercentageItemsTable = ({ access } = {}) => {
                 subtitle="Total rebate outstanding"
                 theme={theme}
               />
-              
               <MetricCard
                 title="Active Customers"
                 value={parseInt(dashboardMetrics.activeCustomers) || 0}
@@ -6363,7 +4689,6 @@ const renderPercentageItemsTable = ({ access } = {}) => {
               />
             </div>
 
-            {/* Use the RebateProgramList component */}
             <RebateProgramList
               rebates={rebates}
               filteredRebates={filteredRebates}
@@ -6415,9 +4740,9 @@ const renderPercentageItemsTable = ({ access } = {}) => {
               onCustomerClick={handleCustomerClick}
               onClearFilters={clearAllFilters}
               onApplyFilters={applyFilters}
-              onFetchData={() => loadCustomerStatus(true)}   // calls your existing function, forceRefresh=true
-              fetchIntervalMs={3000}                       // refresh every 30 seconds
-              autoFetchEnabled={!selectedRebate && !modalCustomer}                        // flip to false to pause
+              onFetchData={() => loadCustomerStatus(true)}
+              fetchIntervalMs={3000}
+              autoFetchEnabled={!selectedRebate && !modalCustomer}
               isLoading={customersLoading}
               selectedProgramStatus={selectedProgramStatus}
               setSelectedProgramStatus={setSelectedProgramStatus}
@@ -6427,301 +4752,195 @@ const renderPercentageItemsTable = ({ access } = {}) => {
         </div>
       </main>
 
-            <RebateDetailsModal
-            selectedRebate={selectedRebate}
-            setSelectedRebate={setSelectedRebate}
-            rebateDetails={rebateDetails}
-            setRebateDetails={setRebateDetails}
-            originalRebateDetails={originalRebateDetails}
-            setOriginalRebateDetails={setOriginalRebateDetails}
-            editingCustomers={editingCustomers}
-            setEditingCustomers={setEditingCustomers}
-            editingItems={editingItems}
-            setEditingItems={setEditingItems}
-            theme={theme}
-            routePath="/Van_Dashboard" 
-            renderFixedCustomerTable={renderFixedCustomerTable}
-            renderIncrementalCustomerTable={renderIncrementalCustomerTable}
-            renderPercentageCustomerTable={renderPercentageCustomerTable}
-            renderFixedItemsTable={renderFixedItemsTable}
-            renderIncrementalItemsTable={renderIncrementalItemsTable}
-            renderPercentageItemsTable={renderPercentageItemsTable}
-            
-          />
+      <RebateDetailsModal
+        selectedRebate={selectedRebate}
+        setSelectedRebate={setSelectedRebate}
+        rebateDetails={rebateDetails}
+        setRebateDetails={setRebateDetails}
+        originalRebateDetails={originalRebateDetails}
+        setOriginalRebateDetails={setOriginalRebateDetails}
+        editingCustomers={editingCustomers}
+        setEditingCustomers={setEditingCustomers}
+        editingItems={editingItems}
+        setEditingItems={setEditingItems}
+        theme={theme}
+        routePath="/Van_Dashboard" 
+        renderFixedCustomerTable={renderFixedCustomerTable}
+        renderIncrementalCustomerTable={renderIncrementalCustomerTable}
+        renderPercentageCustomerTable={renderPercentageCustomerTable}
+        renderFixedItemsTable={renderFixedItemsTable}
+        renderIncrementalItemsTable={renderIncrementalItemsTable}
+        renderPercentageItemsTable={renderPercentageItemsTable}
+      />
 
-{modalCustomer && (
-  <div
-    className={`fixed inset-0 flex items-center justify-center z-50 backdrop-blur-sm transition-all duration-300 ${
-      theme === 'dark' ? 'bg-black/75' : 'bg-black/60'
-    }`}
-    onClick={() => setModalCustomer(null)}
-  >
-    <div
-      className={`flex flex-col rounded-2xl border shadow-2xl w-[88%] max-w-[1400px] h-[92vh] overflow-hidden relative font-sans ${
-        theme === 'dark'
-          ? 'bg-slate-900 border-slate-700/60'
-          : 'bg-slate-50 border-slate-200'
-      }`}
-      onClick={(e) => e.stopPropagation()}
-    >
-      {/* Loading overlay */}
-      {isLoadingCustomer && (
-        <div className="absolute inset-0 z-50">
-          <Loading theme={theme} />
+      {modalCustomer && (
+        <div className={`fixed inset-0 flex items-center justify-center z-50 backdrop-blur-sm transition-all duration-300 ${theme === 'dark' ? 'bg-black/75' : 'bg-black/60'}`} onClick={() => setModalCustomer(null)}>
+          <div className={`flex flex-col rounded-2xl border shadow-2xl w-[88%] max-w-[1400px] h-[92vh] overflow-hidden relative font-sans ${theme === 'dark' ? 'bg-slate-900 border-slate-700/60' : 'bg-slate-50 border-slate-200'}`} onClick={(e) => e.stopPropagation()}>
+            {isLoadingCustomer && (
+              <div className="absolute inset-0 z-50">
+                <Loading theme={theme} />
+              </div>
+            )}
+            <button onClick={() => setModalCustomer(null)} className={`absolute right-4 top-4 z-20 w-8 h-8 flex items-center justify-center rounded-lg border transition-all shadow-sm ${theme === 'dark' ? 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600 hover:text-slate-200' : 'bg-white border-slate-300 text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}>
+              <X size={16} />
+            </button>
+            <div className={`flex-shrink-0 border-b px-6 py-4 ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-gradient-to-br from-blue-600 to-indigo-700 shadow">
+                  <User size={17} className="text-white" />
+                </div>
+                <div>
+                  <h2 className={`text-sm font-bold leading-none ${theme === 'dark' ? 'text-slate-100' : 'text-slate-800'}`}>Customer Details</h2>
+                  <p className={`text-[11px] mt-0.5 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>View and manage customer monthly quotas, transactions, and earned rebates</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-5 gap-2.5">
+                <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${theme === 'dark' ? 'bg-rose-900/20 border-rose-700/30' : 'bg-rose-50 border-rose-200'}`}>
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-rose-500 to-red-600 shadow-sm">
+                    <User size={14} className="text-white" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Customer</p>
+                    <p className={`text-xs font-bold truncate ${theme === 'dark' ? 'text-slate-100' : 'text-slate-800'}`}>{modalCustomer.customer}</p>
+                  </div>
+                </div>
+                <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${theme === 'dark' ? 'bg-blue-900/20 border-blue-700/30' : 'bg-blue-50 border-blue-200'}`}>
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-blue-500 to-indigo-600 shadow-sm">
+                    <FileText size={14} className="text-white" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Rebate Type</p>
+                    <p className={`text-xs font-bold truncate ${theme === 'dark' ? 'text-slate-100' : 'text-slate-800'}`}>{modalCustomer.rebateType}</p>
+                  </div>
+                </div>
+                <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${theme === 'dark' ? 'bg-amber-900/20 border-amber-700/30' : 'bg-amber-50 border-amber-200'}`}>
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-amber-500 to-orange-500 shadow-sm">
+                    <UserCheck size={14} className="text-white" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Sales Employee</p>
+                    <p className={`text-xs font-bold truncate ${theme === 'dark' ? 'text-slate-100' : 'text-slate-800'}`}>{modalCustomer.agent}</p>
+                  </div>
+                </div>
+                <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${theme === 'dark' ? 'bg-violet-900/20 border-violet-700/30' : 'bg-violet-50 border-violet-200'}`}>
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-violet-500 to-purple-600 shadow-sm">
+                    <Clock size={14} className="text-white" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Frequency</p>
+                    <p className={`text-xs font-bold truncate ${theme === 'dark' ? 'text-slate-100' : 'text-slate-800'}`}>{modalCustomer.frequency || 'Quarterly'}</p>
+                  </div>
+                </div>
+                <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${theme === 'dark' ? 'bg-emerald-900/20 border-emerald-700/30' : 'bg-emerald-50 border-emerald-200'}`}>
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-emerald-500 to-teal-600 shadow-sm">
+                    <Calendar size={14} className="text-white" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${theme === 'dark' ? 'text-slate-400' : 'text-slate-500'}`}>Period</p>
+                    <p className={`text-xs font-bold truncate ${theme === 'dark' ? 'text-slate-100' : 'text-slate-800'}`}>
+                      {formatDateRange(modalCustomer.dateFrom, modalCustomer.dateTo) || formatDateRange(modalCustomer.details?.rebateDetails?.dateFrom, modalCustomer.details?.rebateDetails?.dateTo) || 'Not specified'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-col flex-1 min-h-0">
+              <div className={`flex-shrink-0 border-b px-6 py-2.5 ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <div className={`flex items-center gap-1 rounded-lg p-1 w-fit ${theme === 'dark' ? 'bg-slate-700/60' : 'bg-slate-100'}`}>
+                  {[
+                    { icon: TrendingUp, label: 'Analytics', value: 'quota' },
+                    { icon: FileText, label: 'Transaction Log', value: 'transaction' },
+                    { icon: CreditCard, label: 'Payout History', value: 'payout' },
+                  ].map((tab) => (
+                    <button
+                      key={tab.value}
+                      onClick={() => {
+                        if (customerModalTab !== tab.value) {
+                          setCustomerModalTab(tab.value);
+                          if ((tab.value === 'transaction' && detailedTransactions.length === 0) || (tab.value === 'payout' && detailedPayouts.length === 0)) {
+                            handleTabChange(tab.value);
+                          }
+                        }
+                      }}
+                      className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${customerModalTab === tab.value ? 'bg-blue-600 text-white shadow' : theme === 'dark' ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-800'}`}
+                    >
+                      <tab.icon size={14} />
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className={`flex-1 overflow-auto ${theme === 'dark' ? 'bg-slate-900/60' : 'bg-slate-50'}`}>
+                {customerModalTab === 'quota' && (
+                  <VanQuotaPerformance
+                    theme={theme}
+                    onCustomerClick={handleCustomerClick}
+                    customerModalTab={customerModalTab}
+                    modalCustomer={modalCustomer}
+                    isLoadingCustomer={isLoadingCustomer}
+                    getFilteredMonthlyQuotas={getFilteredMonthlyQuotas}
+                    formatDecimal={formatDecimal}
+                    periodFrom={periodFrom}
+                    periodTo={periodTo}
+                    setPeriodFrom={setPeriodFrom}
+                    setPeriodTo={setPeriodTo}
+                    handleApplyPeriodFilter={() => applyPeriodFilter('quota')}
+                    isAutoLoading={isAutoLoading}
+                  />
+                )}
+                {customerModalTab === 'transaction' && (
+                  <VanTransactionRecords
+                    theme={theme}
+                    modalCustomer={modalCustomer}
+                    filteredTransactions={filteredTransactions}
+                    transactionCurrentPage={transactionCurrentPage}
+                    setTransactionCurrentPage={setTransactionCurrentPage}
+                    transactionRowsPerPage={transactionRowsPerPage}
+                    setTransactionRowsPerPage={setTransactionRowsPerPage}
+                    isLoading={loadingTransactions[`${modalCustomer?.code}_transactions`] || false}
+                    renderTransactionTable={renderTransactionTable}
+                    periodFrom={periodFrom}
+                    periodTo={periodTo}
+                    setPeriodFrom={setPeriodFrom}
+                    setPeriodTo={setPeriodTo}
+                    handleApplyPeriodFilter={() => applyPeriodFilter('quota')}
+                    isAutoLoading={isAutoLoading}
+                  />
+                )}
+                {customerModalTab === 'payout' && (
+                  <VanPayoutHistory
+                    theme={theme}
+                    customerModalTab={customerModalTab}
+                    modalCustomer={modalCustomer}
+                    paginatedPayouts={paginatedPayouts}
+                    filteredPayouts={filteredPayouts}
+                    payoutCurrentPage={payoutCurrentPage}
+                    setPayoutCurrentPage={setPayoutCurrentPage}
+                    payoutRowsPerPage={payoutRowsPerPage}
+                    setPayoutRowsPerPage={setPayoutRowsPerPage}
+                    editingPayoutId={editingPayoutId}
+                    setEditingPayoutId={setEditingPayoutId}
+                    editedAmountReleased={editedAmountReleased}
+                    setEditedAmountReleased={setEditedAmountReleased}
+                    handlePayoutStatusChange={handlePayoutStatusChange}
+                    handleSaveAmountReleased={handleSaveAmountReleased}
+                    loadDetailedPayoutsData={loadDetailedPayoutsData}
+                    formatCurrency={formatCurrency}
+                    periodFrom={periodFrom}
+                    periodTo={periodTo}
+                    setPeriodFrom={setPeriodFrom}
+                    setPeriodTo={setPeriodTo}
+                    handleApplyPeriodFilter={() => applyPeriodFilter('quota')}
+                    isAutoLoading={isAutoLoading}
+                    setFilteredPayouts={() => {}}
+                    setPaginatedPayouts={() => {}}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
-
-      {/* ── Close button ─────────────────────────────────────────────── */}
-      <button
-        onClick={() => setModalCustomer(null)}
-        className={`absolute right-4 top-4 z-20 w-8 h-8 flex items-center justify-center rounded-lg border transition-all shadow-sm ${
-          theme === 'dark'
-            ? 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600 hover:text-slate-200'
-            : 'bg-white border-slate-300 text-slate-500 hover:bg-slate-100 hover:text-slate-800'
-        }`}
-      >
-        <X size={16} />
-      </button>
-
-      {/* ── Header ───────────────────────────────────────────────────── */}
-      <div className={`flex-shrink-0 border-b px-6 py-4 ${
-        theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
-      }`}>
-        {/* Title */}
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-gradient-to-br from-blue-600 to-indigo-700 shadow">
-            <User size={17} className="text-white" />
-          </div>
-          <div>
-            <h2 className={`text-sm font-bold leading-none ${
-              theme === 'dark' ? 'text-slate-100' : 'text-slate-800'
-            }`}>Customer Details</h2>
-            <p className={`text-[11px] mt-0.5 ${
-              theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
-            }`}>View and manage customer monthly quotas, transactions, and earned rebates</p>
-          </div>
-        </div>
-
-        {/* Info strip — 5 cards matching RebateDetailsModal */}
-        <div className="grid grid-cols-5 gap-2.5">
-          {/* Customer Name */}
-          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
-            theme === 'dark'
-              ? 'bg-rose-900/20 border-rose-700/30'
-              : 'bg-rose-50 border-rose-200'
-          }`}>
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-rose-500 to-red-600 shadow-sm">
-              <User size={14} className="text-white" />
-            </div>
-            <div className="min-w-0">
-              <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${
-                theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
-              }`}>Customer</p>
-              <p className={`text-xs font-bold truncate ${
-                theme === 'dark' ? 'text-slate-100' : 'text-slate-800'
-              }`}>{modalCustomer.customer}</p>
-            </div>
-          </div>
-
-          {/* Rebate Type */}
-          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
-            theme === 'dark'
-              ? 'bg-blue-900/20 border-blue-700/30'
-              : 'bg-blue-50 border-blue-200'
-          }`}>
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-blue-500 to-indigo-600 shadow-sm">
-              <FileText size={14} className="text-white" />
-            </div>
-            <div className="min-w-0">
-              <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${
-                theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
-              }`}>Rebate Type</p>
-              <p className={`text-xs font-bold truncate ${
-                theme === 'dark' ? 'text-slate-100' : 'text-slate-800'
-              }`}>{modalCustomer.rebateType}</p>
-            </div>
-          </div>
-
-          {/* Sales Employee */}
-          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
-            theme === 'dark'
-              ? 'bg-amber-900/20 border-amber-700/30'
-              : 'bg-amber-50 border-amber-200'
-          }`}>
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-amber-500 to-orange-500 shadow-sm">
-              <UserCheck size={14} className="text-white" />
-            </div>
-            <div className="min-w-0">
-              <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${
-                theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
-              }`}>Sales Employee</p>
-              <p className={`text-xs font-bold truncate ${
-                theme === 'dark' ? 'text-slate-100' : 'text-slate-800'
-              }`}>{modalCustomer.agent}</p>
-            </div>
-          </div>
-
-          {/* Frequency */}
-          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
-            theme === 'dark'
-              ? 'bg-violet-900/20 border-violet-700/30'
-              : 'bg-violet-50 border-violet-200'
-          }`}>
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-violet-500 to-purple-600 shadow-sm">
-              <Clock size={14} className="text-white" />
-            </div>
-            <div className="min-w-0">
-              <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${
-                theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
-              }`}>Frequency</p>
-              <p className={`text-xs font-bold truncate ${
-                theme === 'dark' ? 'text-slate-100' : 'text-slate-800'
-              }`}>{modalCustomer.frequency || 'Quarterly'}</p>
-            </div>
-          </div>
-
-          {/* Rebate Period */}
-          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${
-            theme === 'dark'
-              ? 'bg-emerald-900/20 border-emerald-700/30'
-              : 'bg-emerald-50 border-emerald-200'
-          }`}>
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-emerald-500 to-teal-600 shadow-sm">
-              <Calendar size={14} className="text-white" />
-            </div>
-            <div className="min-w-0">
-              <p className={`text-[10px] font-bold uppercase tracking-widest mb-0.5 ${
-                theme === 'dark' ? 'text-slate-400' : 'text-slate-500'
-              }`}>Period</p>
-              <p className={`text-xs font-bold truncate ${
-                theme === 'dark' ? 'text-slate-100' : 'text-slate-800'
-              }`}>
-                {formatDateRange(modalCustomer.dateFrom, modalCustomer.dateTo) ||
-                 formatDateRange(modalCustomer.details?.rebateDetails?.dateFrom, modalCustomer.details?.rebateDetails?.dateTo) ||
-                 'Not specified'}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Body ─────────────────────────────────────────────────────── */}
-      <div className="flex flex-col flex-1 min-h-0">
-
-        {/* ── Tab bar ─────────────────────────────────────────────────── */}
-        <div className={`flex-shrink-0 border-b px-6 py-2.5 ${
-          theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
-        }`}>
-          <div className={`flex items-center gap-1 rounded-lg p-1 w-fit ${
-            theme === 'dark' ? 'bg-slate-700/60' : 'bg-slate-100'
-          }`}>
-            {[
-              { icon: TrendingUp, label: 'Analytics',     value: 'quota'       },
-              { icon: FileText,   label: 'Transaction Log', value: 'transaction' },
-              { icon: CreditCard, label: 'Payout History',  value: 'payout'      },
-            ].map((tab) => (
-              <button
-                key={tab.value}
-                onClick={() => {
-                  if (customerModalTab !== tab.value) {
-                    setCustomerModalTab(tab.value);
-                    if (
-                      (tab.value === 'transaction' && detailedTransactions.length === 0) ||
-                      (tab.value === 'payout'      && detailedPayouts.length === 0)
-                    ) {
-                      handleTabChange(tab.value);
-                    }
-                  }
-                }}
-                className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                  customerModalTab === tab.value
-                    ? 'bg-blue-600 text-white shadow'
-                    : theme === 'dark'
-                      ? 'text-slate-400 hover:text-slate-200'
-                      : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <tab.icon size={14} />
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* ── Tab content ─────────────────────────────────────────────── */}
-        <div className={`flex-1 overflow-auto ${
-          theme === 'dark' ? 'bg-slate-900/60' : 'bg-slate-50'
-        }`}>
-          {customerModalTab === 'quota' && (
-            <VanQuotaPerformance
-              theme={theme}
-              onCustomerClick={handleCustomerClick}
-              customerModalTab={customerModalTab}
-              modalCustomer={modalCustomer}
-              isLoadingCustomer={isLoadingCustomer}
-              getFilteredMonthlyQuotas={getFilteredMonthlyQuotas}
-              formatDecimal={formatDecimal}
-              periodFrom={periodFrom}
-              periodTo={periodTo}
-              setPeriodFrom={setPeriodFrom}
-              setPeriodTo={setPeriodTo}
-              handleApplyPeriodFilter={() => applyPeriodFilter('quota')}
-              isAutoLoading={isAutoLoading}
-            />
-          )}
-          {customerModalTab === 'transaction' && (
-            <VanTransactionRecords
-              theme={theme}
-              modalCustomer={modalCustomer}
-              filteredTransactions={filteredTransactions}
-              transactionCurrentPage={transactionCurrentPage}
-              setTransactionCurrentPage={setTransactionCurrentPage}
-              transactionRowsPerPage={transactionRowsPerPage}
-              setTransactionRowsPerPage={setTransactionRowsPerPage}
-              isLoading={loadingTransactions[`${modalCustomer?.code}_transactions`] || false}
-              renderTransactionTable={renderTransactionTable}
-              periodFrom={periodFrom}
-              periodTo={periodTo}
-              setPeriodFrom={setPeriodFrom}
-              setPeriodTo={setPeriodTo}
-              handleApplyPeriodFilter={() => applyPeriodFilter('quota')}
-              isAutoLoading={isAutoLoading}
-            />
-          )}
-          {customerModalTab === 'payout' && (
-            <VanPayoutHistory
-              theme={theme}
-              customerModalTab={customerModalTab}
-              modalCustomer={modalCustomer}
-              paginatedPayouts={paginatedPayouts}
-              filteredPayouts={filteredPayouts}
-              payoutCurrentPage={payoutCurrentPage}
-              setPayoutCurrentPage={setPayoutCurrentPage}
-              payoutRowsPerPage={payoutRowsPerPage}
-              setPayoutRowsPerPage={setPayoutRowsPerPage}
-              editingPayoutId={editingPayoutId}
-              setEditingPayoutId={setEditingPayoutId}
-              editedAmountReleased={editedAmountReleased}
-              setEditedAmountReleased={setEditedAmountReleased}
-              handlePayoutStatusChange={handlePayoutStatusChange}
-              handleSaveAmountReleased={handleSaveAmountReleased}
-              loadDetailedPayoutsData={loadDetailedPayoutsData}
-              formatCurrency={formatCurrency}
-              periodFrom={periodFrom}
-              periodTo={periodTo}
-              setPeriodFrom={setPeriodFrom}
-              setPeriodTo={setPeriodTo}
-              handleApplyPeriodFilter={() => applyPeriodFilter('quota')}
-              isAutoLoading={isAutoLoading}
-              setFilteredPayouts={() => {}} 
-               setPaginatedPayouts={() => {}} 
-            />
-          )}
-        </div>
-      </div>
-    </div>
-  </div>
-)}
     </div>
   );
 }

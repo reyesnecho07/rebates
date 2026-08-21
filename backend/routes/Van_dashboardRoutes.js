@@ -1777,7 +1777,7 @@ res.json({
         T0.Quantity as ActualSales,
         --T0.DocEntry,
         T0.DocNum as InvoiceNumber,
-        T0.NumAtCard as CustomerReference,
+        --T0.NumAtCard as CustomerReference,
         T0.CardName as CustomerName
       FROM
         OINV T0
@@ -4179,11 +4179,17 @@ router.get('/metrics', async (req, res) => {
           FROM PayoutHistory
         `;
 
-        const totalUnpaidRebateQuery = `
-          SELECT 
-            SUM(ISNULL(RebateBalance, 0)) AS [Total Unpaid Rebate]
-          FROM PayoutHistory
-        `;
+      const totalUnpaidRebateQuery = `
+          SELECT SUM(ISNULL(p1.RebateBalance, 0)) AS [Total Unpaid Rebate]
+          FROM PayoutHistory p1
+          WHERE p1.CreatedDate = (
+              SELECT MAX(p2.CreatedDate)
+              FROM PayoutHistory p2
+              WHERE p2.CardCode = p1.CardCode
+                AND p2.RebateCode = p1.RebateCode
+          )
+          AND p1.CardCode IS NOT NULL
+      `;
 
         console.log('🔍 Executing SQL for Total Rebate Paid...');
         const paidResult = await pool.request().query(totalRebatePaidQuery);

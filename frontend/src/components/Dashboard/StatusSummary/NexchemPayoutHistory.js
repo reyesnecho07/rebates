@@ -18,7 +18,7 @@ const NexchemPayoutHistory = ({
   setEditedAmountReleased,
   saveMessage,
   setSaveMessage,
-  handlePayoutStatusChange,
+  handlePayoutStatusChange, // kept for compatibility but not used
   loadDetailedPayoutsData,
   formatCurrency,
   handleSaveAmountReleased,
@@ -130,9 +130,6 @@ const NexchemPayoutHistory = ({
     ><Icon size={14} /></button>
   );
 
-
-  
-
   // ── Badge helpers ──────────────────────────────────────────────────────────
   const badge = (value, color) => {
     const map = {
@@ -150,152 +147,130 @@ const NexchemPayoutHistory = ({
     return `inline-block px-2 py-0.5 rounded border font-semibold tabular-nums text-xs whitespace-nowrap ${map[color] || map.slate}`;
   };
 
-  const statusBadge = (status, editable) => {
-    if (!editable) return `inline-block px-2 py-0.5 rounded border text-xs font-semibold italic ${isDark ? 'bg-slate-700 text-slate-500 border-slate-600' : 'bg-slate-100 text-slate-400 border-slate-200'}`;
-    const map = {
-      // Add inside the map object:
-'Over-Released': isDark
-  ? 'bg-red-900/40 text-red-300 border-red-700/50'
-  : 'bg-red-50 text-red-700 border-red-300',
-      Paid:            isDark ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700/40' : 'bg-emerald-50 text-emerald-700 border-emerald-200',
-      'Partially Paid':isDark ? 'bg-amber-900/30 text-amber-300 border-amber-700/40'       : 'bg-amber-50 text-amber-700 border-amber-200',
-      Pending:         isDark ? 'bg-blue-900/30 text-blue-300 border-blue-700/40'          : 'bg-blue-50 text-blue-700 border-blue-200',
-      'No Payout':     isDark ? 'bg-slate-700 text-slate-400 border-slate-600'              : 'bg-slate-100 text-slate-500 border-slate-200',
-    };
-    return `appearance-none px-2 py-0.5 rounded border text-xs font-semibold cursor-pointer focus:outline-none ${map[status] || map['No Payout']}`;
+  // Map status to color for badge
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'Paid': return 'green';
+      case 'Partially Paid': return 'amber';
+      case 'Pending': return 'blue';
+      case 'No Payout': return 'slate';
+      case 'Over-Released': return 'overreleased';
+      default: return 'slate';
+    }
   };
 
   const formatBalanceForDisplay = (value) => {
-  const isNegative = value < 0;
-  const absValue = Math.abs(value);
-  const formattedNumber = new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(absValue);
-  return isNegative ? `-₱${formattedNumber}` : `₱${formattedNumber}`;
-};
+    const isNegative = value < 0;
+    const absValue = Math.abs(value);
+    const formattedNumber = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(absValue);
+    return isNegative ? `-₱${formattedNumber}` : `₱${formattedNumber}`;
+  };
 
-const renderPayoutRow = (payout, index) => {
-  if (payout.Date === 'Beginning Balance' || payout.isBeginningBalance) return null;
+  const renderPayoutRow = (payout, index) => {
+    if (payout.Date === 'Beginning Balance' || payout.isBeginningBalance) return null;
 
-  const hasTransactions      = payout.BaseAmount > 0 || payout.dailySalesRebate > 0;
-  const isEligible           = payout.TotalAmount > 0;
-  const isNotEligible        = !isEligible;
-  const isEditable           = payout.Status !== 'No Payout' && hasTransactions && isEligible;
-  const isQtr                = payout.isQtrRebate;
-  const hasPrevBal           = payout.PreviousBalance > 0;
-  const hasSapData           = payout.SapReleasedAmount > 0;
-  // Calculate balance directly from TotalAmount and AmountReleased
-  const calculatedBalance = (payout.TotalAmount || 0) - (payout.AmountReleased || 0);
-  const isOverReleased = calculatedBalance < 0;
+    const hasTransactions      = payout.BaseAmount > 0 || payout.dailySalesRebate > 0;
+    const isEligible           = payout.TotalAmount > 0;
+    const isNotEligible        = !isEligible;
+    const isEditable           = payout.Status !== 'No Payout' && hasTransactions && isEligible;
+    const isQtr                = payout.isQtrRebate;
+    const hasPrevBal           = payout.PreviousBalance > 0;
+    const hasSapData           = payout.SapReleasedAmount > 0;
+    const calculatedBalance = (payout.TotalAmount || 0) - (payout.AmountReleased || 0);
+    const isOverReleased = calculatedBalance < 0;
 
-  // Row accent
-  let rowAccent = '';
-  if (isQtr)      rowAccent = isDark ? 'border-l-2 border-l-blue-500' : 'border-l-2 border-l-blue-400';
-  if (hasSapData) rowAccent = isDark ? 'border-l-2 border-l-violet-500' : 'border-l-2 border-l-violet-400';
-  if (isOverReleased) rowAccent = isDark ? 'border-l-2 border-l-red-500' : 'border-l-2 border-l-red-400';
+    // Row accent
+    let rowAccent = '';
+    if (isQtr)      rowAccent = isDark ? 'border-l-2 border-l-blue-500' : 'border-l-2 border-l-blue-400';
+    if (hasSapData) rowAccent = isDark ? 'border-l-2 border-l-violet-500' : 'border-l-2 border-l-violet-400';
+    if (isOverReleased) rowAccent = isDark ? 'border-l-2 border-l-red-500' : 'border-l-2 border-l-red-400';
 
-  const rowOpacity = (payout.Status === 'No Payout' || isNotEligible) ? 'opacity-70' : '';
+    const rowOpacity = (payout.Status === 'No Payout' || isNotEligible) ? 'opacity-70' : '';
 
-  // Badge colors
-  const baseColor  = hasTransactions ? 'blue' : 'slate';
-  const totalColor = isNotEligible ? 'slate' : isQtr ? 'violet' : hasPrevBal ? 'amber' : payout.TotalAmount > 0 ? 'green' : 'slate';
-  let balColor = 'slate';
-  if (calculatedBalance < 0) {
-    balColor = 'overreleased';
-  } else if (calculatedBalance === 0) {
-    balColor = 'green';
-  } else if (calculatedBalance > 0 && isEditable) {
-    balColor = 'red';
-  }
+    // Badge colors
+    const baseColor  = hasTransactions ? 'blue' : 'slate';
+    const totalColor = isNotEligible ? 'slate' : isQtr ? 'violet' : hasPrevBal ? 'amber' : payout.TotalAmount > 0 ? 'green' : 'slate';
+    let balColor = 'slate';
+    if (calculatedBalance < 0) {
+      balColor = 'overreleased';
+    } else if (calculatedBalance === 0) {
+      balColor = 'green';
+    } else if (calculatedBalance > 0 && isEditable) {
+      balColor = 'red';
+    }
 
-  return (
-    <tr key={payout.Id || index} className={`transition-colors duration-100 border-b ${T.row} ${isDark ? 'border-slate-700/50' : 'border-slate-100'} ${rowAccent} ${rowOpacity}`}>
-      {/* Date */}
-      <td className="px-5 py-2.5">
-        <span className={`font-medium ${T.tp}`}>{payout.Date}</span>
-        {isQtr && <div className={`text-[10px] mt-0.5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>Quarter Rebate</div>}
-        {isNotEligible && <div className={`text-[10px] mt-0.5 ${T.tm}`}>{!hasTransactions ? 'No Transactions' : 'Not Eligible'}</div>}
-        {hasPrevBal && <div className={`text-[10px] mt-0.5 ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>+ Prev: {formatCurrency(payout.PreviousBalance)}</div>}
-      </td>
+    return (
+      <tr key={payout.Id || index} className={`transition-colors duration-100 border-b ${T.row} ${isDark ? 'border-slate-700/50' : 'border-slate-100'} ${rowAccent} ${rowOpacity}`}>
+        {/* Date */}
+        <td className="px-5 py-2.5">
+          <span className={`font-medium ${T.tp}`}>{payout.Date}</span>
+          {isQtr && <div className={`text-[10px] mt-0.5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>Quarter Rebate</div>}
+          {isNotEligible && <div className={`text-[10px] mt-0.5 ${T.tm}`}>{!hasTransactions ? 'No Transactions' : 'Not Eligible'}</div>}
+          {hasPrevBal && <div className={`text-[10px] mt-0.5 ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>+ Prev: {formatCurrency(payout.PreviousBalance)}</div>}
+        </td>
 
-      {/* Period */}
-      <td className="px-4 py-2.5">
-        <div className={`font-medium text-xs ${isNotEligible ? `${T.ts} italic` : isQtr ? (isDark ? 'text-violet-300' : 'text-violet-700') : T.tp}`}>
-          {payout.Period}
-        </div>
-        {payout.CalculationNote && !isNotEligible && (
-          <div className={`text-[10px] mt-0.5 ${T.tm}`}>{payout.CalculationNote}</div>
-        )}
-        {isNotEligible && (
-          <div className={`text-[10px] mt-0.5 ${T.tm}`}>
-            {!hasTransactions ? 'No transactions this month' : 'Quota not met'}
+        {/* Period */}
+        <td className="px-4 py-2.5">
+          <div className={`font-medium text-xs ${isNotEligible ? `${T.ts} italic` : isQtr ? (isDark ? 'text-violet-300' : 'text-violet-700') : T.tp}`}>
+            {payout.Period}
           </div>
-        )}
-      </td>
+          {payout.CalculationNote && !isNotEligible && (
+            <div className={`text-[10px] mt-0.5 ${T.tm}`}>{payout.CalculationNote}</div>
+          )}
+          {isNotEligible && (
+            <div className={`text-[10px] mt-0.5 ${T.tm}`}>
+              {!hasTransactions ? 'No transactions this month' : 'Quota not met'}
+            </div>
+          )}
+        </td>
 
-      {/* Rebate Earned */}
-      <td className="px-4 py-2.5 text-center">
-        <span className={badge(formatCurrency(payout.BaseAmount || 0), baseColor)}>
-          {formatCurrency(payout.BaseAmount || 0)}
-        </span>
-      </td>
+        {/* Rebate Earned */}
+        <td className="px-4 py-2.5 text-center">
+          <span className={badge(formatCurrency(payout.BaseAmount || 0), baseColor)}>
+            {formatCurrency(payout.BaseAmount || 0)}
+          </span>
+        </td>
 
-      {/* Total Amount */}
-      <td className="px-4 py-2.5 text-center">
-        <span className={badge(formatCurrency(payout.TotalAmount), totalColor)}>
-          {formatCurrency(payout.TotalAmount)}
-        </span>
-      </td>
+        {/* Total Amount */}
+        <td className="px-4 py-2.5 text-center">
+          <span className={badge(formatCurrency(payout.TotalAmount), totalColor)}>
+            {formatCurrency(payout.TotalAmount)}
+          </span>
+        </td>
 
-      {/* Status */}
-      <td className="px-4 py-2.5 text-right">
-{isOverReleased ? (
-  <span className={`inline-block px-2 py-0.5 rounded border text-xs font-semibold ${isDark ? 'bg-red-900/40 text-red-300 border-red-700/50' : 'bg-red-50 text-red-700 border-red-300'}`}>
-    Over-Released
-  </span>
-        ) : isEditable ? (
-      <select
-        value={payout.Status}
-        onChange={(e) => handlePayoutStatusChange(payout.Id, e.target.value)}
-        className={`
-          ${statusBadge(payout.Status, true)}
-          ${payout.Status === 'Over-Released' ? (isDark ? 'bg-red-900/40 text-red-300 border-red-700/50' : 'bg-red-50 text-red-700 border-red-300') : ''}
-        `}
-      >
-            <option value="No Payout">No Payout</option>
-            <option value="Partially Paid">Partially Paid</option>
-            <option value="Paid">Paid</option>
-            <option value="Over-Released">Over-Released</option>
-          </select>
-        ) : (
-          <span className={statusBadge(payout.Status, false)}>{payout.Status || 'No Payout'}</span>
-        )}
-      </td>
+        {/* Status - now center-aligned to match header */}
+        <td className="px-4 py-2.5 text-center">
+          <span className={badge(payout.Status || 'No Payout', getStatusColor(payout.Status))}>
+            {payout.Status || 'No Payout'}
+          </span>
+        </td>
 
-      {/* Amount Released */}
-      <td className="px-4 py-2.5 text-center">
-        <span className={badge(
-          payout.AmountReleased
-            ? new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(payout.AmountReleased)
-            : '0.00',
-          isNotEligible ? 'slate' : 'blue'
-        )}>
-          ₱{payout.AmountReleased
-            ? new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(payout.AmountReleased)
-            : '0.00'}
-        </span>
-      </td>
+        {/* Amount Released */}
+        <td className="px-4 py-2.5 text-center">
+          <span className={badge(
+            payout.AmountReleased
+              ? new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(payout.AmountReleased)
+              : '0.00',
+            isNotEligible ? 'slate' : 'blue'
+          )}>
+            ₱{payout.AmountReleased
+              ? new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(payout.AmountReleased)
+              : '0.00'}
+          </span>
+        </td>
 
-      {/* Balance */}
-      <td className="px-4 py-2.5 text-center">
-        <span className={badge(formatBalanceForDisplay(calculatedBalance), balColor)}>
-          {formatBalanceForDisplay(calculatedBalance)}
-        </span>
-      </td>
-    </tr>
-  );
-};
+        {/* Balance */}
+        <td className="px-4 py-2.5 text-center">
+          <span className={badge(formatBalanceForDisplay(calculatedBalance), balColor)}>
+            {formatBalanceForDisplay(calculatedBalance)}
+          </span>
+        </td>
+      </tr>
+    );
+  };
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -307,25 +282,7 @@ const renderPayoutRow = (payout, index) => {
           <h4 className={`text-xs font-bold uppercase tracking-widest ${T.tp}`}>Payout History</h4>
           <p className={`text-[11px] mt-0.5 ${T.ts}`}>Rebate payment records — balances carry over month to month</p>
         </div>
-      {/*  <div className="flex items-center gap-2">
-          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
-            isDark ? 'bg-slate-700 border-slate-600 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-600'
-          }`}>
-            {filteredPayouts.length} record{filteredPayouts.length !== 1 ? 's' : ''}
-          </span>
-          <button
-            onClick={handleSapSync}
-            disabled={syncingSap}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all ${
-              syncingSap
-                ? isDark ? 'bg-slate-700 border-slate-600 text-slate-500 cursor-not-allowed' : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
-                : isDark ? 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
-            }`}
-          >
-            <RefreshCw size={12} className={syncingSap ? 'animate-spin' : ''} />
-            SAP Sync
-          </button>
-        </div> */}
+        {/* SAP Sync button and record count commented out as in original */}
       </div>
 
       {/* SAP sync message */}
@@ -344,7 +301,7 @@ const renderPayoutRow = (payout, index) => {
         </div>
       )}
 
-{/* ── Table ───────────────────────────────────────────────────────── */}
+      {/* ── Table ───────────────────────────────────────────────────────── */}
       {(() => {
         const allPayouts = [...(paginatedPayouts || [])];
         const begBalRows = allPayouts.filter(p =>
