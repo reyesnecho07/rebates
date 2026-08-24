@@ -307,6 +307,7 @@ const rowTs = (r) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const RebateSelectionModal = ({ isDark, group, onClose, onSelectRebate }) => {
   const modalRef = useRef(null);
+  const [viewMode, setViewMode] = useState('quarter'); // 'quarter' | 'rebateCode'
   const T = {
     popup: isDark ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200",
     textPrimary: isDark ? "text-slate-100" : "text-slate-800",
@@ -314,6 +315,42 @@ const RebateSelectionModal = ({ isDark, group, onClose, onSelectRebate }) => {
     textMuted: isDark ? "text-slate-500" : "text-slate-400",
     row: isDark ? "hover:bg-slate-700/50 border-slate-700/50" : "hover:bg-slate-50 border-slate-100",
   };
+
+  // Group group.rows by quarter, derived from each row's dateFrom.
+  // Reuses the module-level rebateCodeNum() already defined above this component.
+  const getQuarterLabel = (row) => {
+    if (!row.dateFrom) return 'Unknown Period';
+    const d = new Date(row.dateFrom);
+    const q = Math.ceil((d.getMonth() + 1) / 3);
+    return `Q${q} ${d.getFullYear()}`;
+  };
+
+  const quarterGroups = useMemo(() => {
+    const map = new Map();
+    group.rows.forEach(row => {
+      const label = getQuarterLabel(row);
+      if (!map.has(label)) {
+        const d = row.dateFrom ? new Date(row.dateFrom) : null;
+        map.set(label, {
+          label,
+          year: d ? d.getFullYear() : 0,
+          quarter: d ? Math.ceil((d.getMonth() + 1) / 3) : 0,
+          rows: []
+        });
+      }
+      map.get(label).rows.push(row);
+    });
+    return Array.from(map.values())
+      .sort((a, b) => (b.year - a.year) || (b.quarter - a.quarter)); // newest quarter first
+  }, [group.rows]);
+
+  // Newest rebate code first (top), oldest (code 1) last (bottom)
+  const rowsByCode = useMemo(
+    () => [...group.rows].sort((a, b) => rebateCodeNum(b.rebateCode) - rebateCodeNum(a.rebateCode)),
+    [group.rows]
+  );
+
+  const [expandedQuarter, setExpandedQuarter] = useState(null);
   const fmt = (n) => {
     const num = n || 0;
     const abs = Math.abs(num);
@@ -381,9 +418,30 @@ const RebateSelectionModal = ({ isDark, group, onClose, onSelectRebate }) => {
             <X size={16} className={T.textSecondary} />
           </button>
         </div>
+        {/* View mode toggle */}
+        <div className={`flex gap-1.5 px-4 pt-3 pb-1 border-b ${isDark ? "border-slate-700" : "border-slate-100"}`}>
+          <button
+            onClick={() => setViewMode('quarter')}
+            className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+              viewMode === 'quarter'
+                ? "bg-blue-600 text-white"
+                : isDark ? "bg-slate-700 text-slate-300" : "bg-slate-100 text-slate-600"
+            }`}
+          >By Quarter</button>
+          <button
+            onClick={() => setViewMode('rebateCode')}
+            className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+              viewMode === 'rebateCode'
+                ? "bg-blue-600 text-white"
+                : isDark ? "bg-slate-700 text-slate-300" : "bg-slate-100 text-slate-600"
+            }`}
+          >By Rebate Code</button>
+        </div>
+
         <div className="max-h-[60vh] overflow-y-auto p-2">
-          <div className="space-y-1">
-            {group.rows.map((row, idx) => {
+          {/* Shared row renderer — same markup as before, just extracted */}
+          {(() => {
+            const renderRow = (row, idx) => {
               const van = isVanRow(row);
               const status = van ? getSimplifiedStatus(row) : null;
               const statusColor = status ? getStatusColor(status) : "";
@@ -429,8 +487,43 @@ const RebateSelectionModal = ({ isDark, group, onClose, onSelectRebate }) => {
                   )}
                 </button>
               );
-            })}
-          </div>
+            };
+
+            if (viewMode === 'rebateCode') {
+              // Newest rebate code on top, code #1 at the bottom
+              return <div className="space-y-1">{rowsByCode.map((row, idx) => renderRow(row, idx))}</div>;
+            }
+
+            // Quarter view — collapsible groups, newest quarter first
+            return (
+              <div className="space-y-1.5">
+                {quarterGroups.map(qg => (
+                  <div key={qg.label} className={`rounded-lg border ${isDark ? "border-slate-700/50" : "border-slate-100"}`}>
+                    <button
+                      onClick={() => setExpandedQuarter(expandedQuarter === qg.label ? null : qg.label)}
+                      className={`w-full flex items-center justify-between px-3 py-2 text-left ${T.row}`}
+                    >
+                      <span className={`text-xs font-bold ${T.textPrimary}`}>{qg.label}</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] ${T.textMuted}`}>
+                          {qg.rows.length} rebate{qg.rows.length > 1 ? 's' : ''}
+                        </span>
+                        <ChevronDown
+                          size={13}
+                          className={`${T.textMuted} transition-transform ${expandedQuarter === qg.label ? 'rotate-180' : ''}`}
+                        />
+                      </div>
+                    </button>
+                    {expandedQuarter === qg.label && (
+                      <div className={`px-2 pb-2 pt-1 space-y-1 border-t ${isDark ? "border-slate-700/50" : "border-slate-100"}`}>
+                        {qg.rows.map((row, idx) => renderRow(row, idx))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>,

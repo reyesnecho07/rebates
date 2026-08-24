@@ -282,6 +282,72 @@ router.get('/customer/:customerCode/payouts', async (req, res) => {
 
     console.log('📅 [VAN] Payout date range:', { startDate, endDate, dateSource });
 
+    // ============ Determine cross-rebate carry-over BEFORE calculating
+    // this rebate's own payouts, so the carried-in balance gets baked into
+    // the SAVED TotalAmount/RebateBalance below — and is therefore visible
+    // to the NEXT rebate code's carry-over lookup later. ============
+    let targetPayoutQuarter = null;
+    let currentQuarter = null;
+    let carryYear = null;
+    let previousBalance = 0;
+    let carrySourceNote = null;
+
+    if (rebateCode && startDate) {
+      const startDateObj = new Date(startDate);
+      const startMonth = startDateObj.getMonth() + 1;
+      currentQuarter = Math.ceil(startMonth / 3);
+      carryYear = startDateObj.getFullYear();
+      targetPayoutQuarter = `Q${currentQuarter} ${carryYear}`;
+
+      let prevQuarter, prevYear;
+      if (currentQuarter === 1) {
+        prevQuarter = 4;
+        prevYear = carryYear - 1;
+      } else {
+        prevQuarter = currentQuarter - 1;
+        prevYear = carryYear;
+      }
+
+      // Tier 1: LATEST row for THIS rebate code in the previous quarter.
+      // TOP 1 ordered by Id DESC — never SUM RebateBalance, since each
+      // row's RebateBalance is already cumulative for that rebate code.
+      const prevQuarterBalanceQuery = `
+        SELECT TOP 1 RebateBalance
+        FROM PayoutHistory
+        WHERE CardCode = @customerCode
+          AND RebateCode = @rebateCode
+          AND PayoutQuarter = @prevPayoutQuarter
+          AND Period NOT LIKE 'Balance of Q%'
+          AND PayoutId NOT LIKE 'SAP-%'
+        ORDER BY Id DESC
+      `;
+      const prevBalanceResult = await ownPool.request()
+        .input('customerCode', sql.NVarChar(50), customerCode)
+        .input('rebateCode', sql.NVarChar(50), rebateCode)
+        .input('prevPayoutQuarter', sql.NVarChar(20), `Q${prevQuarter} ${prevYear}`)
+        .query(prevQuarterBalanceQuery);
+
+      previousBalance = parseFloat(prevBalanceResult.recordset[0]?.RebateBalance || 0);
+
+      // Tier 2: nothing under this rebate code — find the nearest
+      // predecessor rebate code for this customer (any RebateType),
+      // whose DateFrom is closest to (but before) this rebate's own
+      // DateFrom. This naturally prefers a same-quarter sibling rebate
+      // code before reaching back into an earlier quarter.
+      if (previousBalance <= 0) {
+        const crossProgram = await resolveCarryOverSource(customerCode, rebateCode, ownPool);
+        if (crossProgram) {
+          previousBalance = crossProgram.amount;
+          carrySourceNote = `Carried from ${crossProgram.sourceRebateCode} (${crossProgram.sourceRebateType}) – ${crossProgram.sourcePeriod}`;
+          console.log(`🔗 Cross-program carry-over: ₱${previousBalance.toFixed(2)} from ${crossProgram.sourceRebateCode} → ${rebateCode}`);
+        }
+      }
+
+      if (previousBalance > 0) {
+        console.log(`💰 Carrying ₱${previousBalance.toFixed(2)} into ${targetPayoutQuarter} for ${rebateCode}`);
+      }
+    }
+
     // First, get transaction data to calculate amounts
     let monthlyData = [];
     if (rebateCode && rebateType) {
@@ -419,13 +485,15 @@ router.get('/customer/:customerCode/payouts', async (req, res) => {
     // Merge calculated data with existing records
     const mergedPayouts = mergePayoutData(monthlyData, existingPayouts, rebateType);
     
-    // Apply balance carry-over to merged payouts
-    const payoutsWithCarryOver = applyBalanceCarryOverToPayouts(mergedPayouts);
+    // Apply balance carry-over to merged payouts, seeded with any balance
+    // carried in from a predecessor rebate program (cross-rebate-code,
+    // cross-RebateType carry-over computed above)
+    const payoutsWithCarryOver = applyBalanceCarryOverToPayouts(mergedPayouts, previousBalance);
     
     // Save/update payout records in database (excluding beginning balances)
     try {
       const payoutsToSave = payoutsWithCarryOver.filter(p => !p.Period?.includes('Balance of Q'));
-      await savePayoutsToDatabase(payoutsToSave, ownPool);
+      await savePayoutsToDatabase(payoutsToSave, ownPool, previousBalance);
     } catch (saveError) {
       console.error('❌ [VAN] Error saving payouts to database:', saveError.message);
     }
@@ -478,204 +546,39 @@ router.get('/customer/:customerCode/payouts', async (req, res) => {
     }
 
     // ============== FIXED: Get beginning balances filtered by the current transaction period ==============
+    // ============== Beginning balance is computed dynamically (see the
+    // cross-rebate carry-over block above) — no DB row is read or written
+    // here. This keeps the displayed carry-over in lockstep with what was
+    // just saved into this rebate code's own payout rows, and never
+    // creates a persisted "Balance of Q..." record. ==============
     let beginningBalances = [];
-    try {
-      // Determine which quarter we're viewing based on the date range
-      let targetPayoutQuarter = null;
-      
-      if (startDate && endDate) {
-        // Get the start month to determine which quarter we're viewing
-        const startDateObj = new Date(startDate);
-        const startMonth = startDateObj.getMonth() + 1; // 1-12
-        const startYear = startDateObj.getFullYear();
-        
-        // Determine the quarter we're viewing based on the start date
-        // Jan-Mar = Q1, Apr-Jun = Q2, Jul-Sep = Q3, Oct-Dec = Q4
-        const viewingQuarter = Math.ceil(startMonth / 3);
-        
-        // For the current quarter's transactions, we want the beginning balance for that same quarter
-        // Example: When viewing Jan-Mar 2025 transactions, we want "Balance of Q1 2025"
-        targetPayoutQuarter = `Q${viewingQuarter} ${startYear}`;
-        
-        console.log(`🎯 Viewing Q${viewingQuarter} ${startYear} transactions - looking for beginning balance: ${targetPayoutQuarter}`);
-      }
-      
-      const begBalanceQuery = `
-        SELECT 
-          Id,
-          PayoutId,
-          CardCode,
-          RebateCode,
-          RebateType,
-          PayoutDate as Date,
-          Period,
-          PayoutQuarter,
-          BaseAmount,
-          TotalAmount as Amount,
-          Status,
-          AmountReleased,
-          ReleaseDate,
-          RebateBalance as Balance,
-          CreatedDate,
-          UpdatedDate
-        FROM PayoutHistory
-        WHERE CardCode = @customerCode
-          AND RebateType = @rebateType
-          AND Period LIKE 'Balance of Q%'
-          ${targetPayoutQuarter ? 'AND PayoutQuarter = @targetPayoutQuarter' : ''}
-        ORDER BY PayoutQuarter ASC, CreatedDate ASC
-      `;
-      
-      const begBalanceRequest = ownPool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('rebateType', sql.NVarChar(50), rebateType);
-        
-      if (targetPayoutQuarter) {
-        begBalanceRequest.input('targetPayoutQuarter', sql.NVarChar(20), targetPayoutQuarter);
-      }
-      
-      const begBalanceResult = await begBalanceRequest.query(begBalanceQuery);
-      beginningBalances = begBalanceResult.recordset;
-      
-      console.log(`📊 [VAN] Found ${beginningBalances.length} beginning balance for ${targetPayoutQuarter || 'all quarters'}`);
-      
-      // If no beginning balance found for this quarter, check if we need to create one from previous quarter
-      if (beginningBalances.length === 0 && targetPayoutQuarter && rebateCode) {
-        console.log(`⚠️ No beginning balance found for ${targetPayoutQuarter}, checking if we need to create one...`);
-        
-        // Parse the target quarter
-        const [quarter, year] = targetPayoutQuarter.split(' ');
-        const currentQuarter = parseInt(quarter.replace('Q', ''));
-        
-        // Determine previous quarter and year
-        let prevQuarter, prevYear;
-        if (currentQuarter === 1) {
-          prevQuarter = 4;
-          prevYear = parseInt(year) - 1;
-        } else {
-          prevQuarter = currentQuarter - 1;
-          prevYear = parseInt(year);
-        }
-        
-        // Calculate total balance from previous quarter
-        const prevQuarterBalanceQuery = `
-          SELECT 
-            SUM(RebateBalance) as TotalBalance
-          FROM PayoutHistory
-          WHERE CardCode = @customerCode
-            AND RebateType = @rebateType
-            AND RebateCode = @rebateCode
-            AND PayoutQuarter = @prevPayoutQuarter
-            AND Period NOT LIKE 'Balance of Q%'
-        `;
-        
-        const prevBalanceResult = await ownPool.request()
-          .input('customerCode', sql.NVarChar(50), customerCode)
-          .input('rebateType', sql.NVarChar(50), rebateType)
-          .input('rebateCode', sql.NVarChar(50), rebateCode)
-          .input('prevPayoutQuarter', sql.NVarChar(20), `Q${prevQuarter} ${prevYear}`)
-          .query(prevQuarterBalanceQuery);
-        
-        const previousBalance = parseFloat(prevBalanceResult.recordset[0]?.TotalBalance || 0);
-        
-        if (previousBalance > 0) {
-          console.log(`💰 Found previous quarter balance: ₱${previousBalance.toFixed(2)} from Q${prevQuarter} ${prevYear}`);
-          
-          // Create beginning balance for current quarter
-          const payoutId = `BAL-${customerCode}-${rebateCode}-Q${currentQuarter}-${year}`;
-          const beginningBalanceDate = new Date(parseInt(year), (currentQuarter - 1) * 3, 1);
-          const formattedDate = `${beginningBalanceDate.getMonth() + 1}.${beginningBalanceDate.getDate()}.${beginningBalanceDate.getFullYear().toString().slice(-2)}`;
-          
-          const insertQuery = `
-            INSERT INTO PayoutHistory (
-              PayoutId,
-              CardCode,
-              RebateCode,
-              RebateType,
-              Period,
-              PayoutQuarter,
-              PayoutDate,
-              BaseAmount,
-              TotalAmount,
-              AmountReleased,
-              RebateBalance,
-              Status,
-              CreatedDate,
-              UpdatedDate
-            )
-            VALUES (
-              @PayoutId,
-              @CardCode,
-              @RebateCode,
-              @RebateType,
-              @Period,
-              @PayoutQuarter,
-              @PayoutDate,
-              @BaseAmount,
-              @TotalAmount,
-              @AmountReleased,
-              @RebateBalance,
-              @Status,
-              GETDATE(),
-              GETDATE()
-            )
-          `;
-          
-          await ownPool.request()
-            .input('PayoutId', sql.NVarChar(100), payoutId)
-            .input('CardCode', sql.NVarChar(50), customerCode)
-            .input('RebateCode', sql.NVarChar(50), rebateCode)
-            .input('RebateType', sql.NVarChar(50), rebateType)
-            .input('Period', sql.NVarChar(100), `Balance of Q${currentQuarter} ${year}`)
-            .input('PayoutQuarter', sql.NVarChar(20), targetPayoutQuarter)
-            .input('PayoutDate', sql.NVarChar(20), formattedDate)
-            .input('BaseAmount', sql.Decimal(18, 2), 0)
-            .input('TotalAmount', sql.Decimal(18, 2), previousBalance)
-            .input('AmountReleased', sql.Decimal(18, 2), 0)
-            .input('RebateBalance', sql.Decimal(18, 2), previousBalance)
-            .input('Status', sql.NVarChar(50), 'Beginning Balance')
-            .query(insertQuery);
-          
-          console.log(`✅ Created missing beginning balance: Balance of Q${currentQuarter} ${year} = ₱${previousBalance.toFixed(2)}`);
-          
-          // Fetch the newly created beginning balance
-          const newBegBalanceResult = await ownPool.request()
-            .input('customerCode', sql.NVarChar(50), customerCode)
-            .input('rebateType', sql.NVarChar(50), rebateType)
-            .input('targetPayoutQuarter', sql.NVarChar(20), targetPayoutQuarter)
-            .query(`
-              SELECT 
-                Id,
-                PayoutId,
-                CardCode,
-                RebateCode,
-                RebateType,
-                PayoutDate as Date,
-                Period,
-                PayoutQuarter,
-                BaseAmount,
-                TotalAmount as Amount,
-                Status,
-                AmountReleased,
-                ReleaseDate,
-                RebateBalance as Balance,
-                CreatedDate,
-                UpdatedDate
-              FROM PayoutHistory
-              WHERE CardCode = @customerCode
-                AND RebateType = @rebateType
-                AND PayoutQuarter = @targetPayoutQuarter
-                AND Period LIKE 'Balance of Q%'
-            `);
-          
-          beginningBalances = newBegBalanceResult.recordset;
-        }
-      }
-      
-    } catch (balanceError) {
-      console.error('❌ Error fetching beginning balances:', balanceError.message);
-    }
+    if (previousBalance > 0 && targetPayoutQuarter) {
+      const beginningBalanceDate = new Date(carryYear, (currentQuarter - 1) * 3, 1);
+      const formattedDate = `${beginningBalanceDate.getMonth() + 1}.${beginningBalanceDate.getDate()}.${beginningBalanceDate.getFullYear().toString().slice(-2)}`;
 
+      beginningBalances = [{
+        Id: null,
+        PayoutId: `BAL-${customerCode}-${rebateCode}-Q${currentQuarter}-${carryYear}`,
+        CardCode: customerCode,
+        RebateCode: rebateCode,
+        RebateType: rebateType,
+        Date: formattedDate,
+        Period: `Balance of Q${currentQuarter} ${carryYear}`,
+        PayoutQuarter: targetPayoutQuarter,
+        BaseAmount: 0,
+        Amount: previousBalance,
+        Status: 'Beginning Balance',
+        AmountReleased: 0,
+        ReleaseDate: null,
+        Balance: previousBalance,
+        CreatedDate: new Date().toISOString(),
+        UpdatedDate: new Date().toISOString(),
+        isBeginningBalance: true,
+        CarrySourceNote: carrySourceNote
+      }];
+
+      console.log(`📊 [VAN] Beginning balance for ${targetPayoutQuarter}: ₱${previousBalance.toFixed(2)}${carrySourceNote ? ' (' + carrySourceNote + ')' : ''}`);
+    }
     // Combine regular payouts with beginning balances
     let combinedPayouts = combineWithCarryOver(finalPayouts, beginningBalances);
 
@@ -2853,7 +2756,7 @@ router.get('/debug/payout-table-structure', async (req, res) => {
   }
 });
 
-const applyBalanceCarryOverToPayouts = (payouts) => {
+const applyBalanceCarryOverToPayouts = (payouts, startingBalance = 0) => {
   console.log('🔄 Applying balance carry-over to payouts');
   
   if (!Array.isArray(payouts) || payouts.length === 0) {
@@ -2897,6 +2800,7 @@ const applyBalanceCarryOverToPayouts = (payouts) => {
   });
   
   const payoutsWithCarryOver = [];
+  let isFirstQuarterProcessed = false;
   
   // Sort quarters chronologically
   const sortedQuarterKeys = Object.keys(payoutsByQuarter).sort((a, b) => {
@@ -2925,7 +2829,13 @@ const applyBalanceCarryOverToPayouts = (payouts) => {
       return monthOrderA - monthOrderB;
     });
     
-    let previousBalance = 0;
+    // Seed only the first quarter processed with the cross-rebate carry-in.
+    // (beginningBalances here is always empty — mergedPayouts never
+    // contains beginning-balance items — so this never double-applies.)
+    let previousBalance = (!isFirstQuarterProcessed && beginningBalances.length === 0)
+      ? startingBalance
+      : 0;
+    isFirstQuarterProcessed = true;
     
     // 1. Process beginning balances first (if any)
     beginningBalances.forEach(balance => {
@@ -3725,12 +3635,14 @@ const generatePayoutId = (customerCode, rebateCode, identifier) => {
 };
 
 // Save payouts to database
-const savePayoutsToDatabase = async (payouts, pool) => {
+const savePayoutsToDatabase = async (payouts, pool, startingBalance = 0) => {
   try {
     console.log(`💾 Saving ${payouts.length} payout records to database`);
     
-    // First, apply carry-over to ensure consistent calculations
-    const payoutsWithCarryOver = applyBalanceCarryOverToPayouts(payouts);
+    // First, apply carry-over to ensure consistent calculations — reuse the
+    // same cross-rebate starting balance the caller already computed, so
+    // this second pass doesn't reset it back to 0.
+    const payoutsWithCarryOver = applyBalanceCarryOverToPayouts(payouts, startingBalance);
     
     for (const payout of payoutsWithCarryOver) {
       try {
@@ -5141,19 +5053,15 @@ export const getAllRebateProgramsForCustomer = async (
     // the same type and frequency.
     const siblingsResult = await pool.request()
       .input('customerCode', sql.NVarChar(50), customerCode)
-      .input('rebateType',   sql.NVarChar(50), RebateType)
-      .input('frequency',    sql.NVarChar(50), Frequency)
       .query(`
         SELECT DISTINCT rp.RebateCode, rp.DateFrom, rp.DateTo,
                         rp.IsActive,   rp.RebateType, rp.Frequency
         FROM RebateProgram rp
-        WHERE rp.RebateType = @rebateType
-          AND rp.Frequency  = @frequency
-          AND EXISTS (
-            SELECT 1 FROM PayoutHistory ph
-            WHERE ph.CardCode   = @customerCode
-              AND ph.RebateCode = rp.RebateCode
-          )
+        WHERE EXISTS (
+          SELECT 1 FROM PayoutHistory ph
+          WHERE ph.CardCode   = @customerCode
+            AND ph.RebateCode = rp.RebateCode
+        )
         ORDER BY rp.DateFrom ASC
       `);
  
@@ -5161,6 +5069,124 @@ export const getAllRebateProgramsForCustomer = async (
   } catch (err) {
     console.error('❌ [RESOLVER] getAllRebateProgramsForCustomer:', err.message);
     return [];
+  }
+};
+
+// AFTER — add these three missing helpers (resolveCarryOverSource depends on them)
+const getRebateProgramQuarter = (dateFrom) => {
+  const d = new Date(dateFrom);
+  return { quarter: Math.ceil((d.getMonth() + 1) / 3), year: d.getFullYear() };
+};
+
+const rebateCodeSortValue = (code) => {
+  const m = String(code).match(/(\d+)\s*$/);
+  return m ? parseInt(m[1], 10) : 0;
+};
+
+const getEndingBalanceForProgram = async (customerCode, rebateCode, pool) => {
+  const result = await pool.request()
+    .input('customerCode', sql.NVarChar(50), customerCode)
+    .input('rebateCode', sql.NVarChar(50), rebateCode)
+    .query(`
+      SELECT TOP 1 Period, PayoutQuarter, TotalAmount, AmountReleased
+      FROM PayoutHistory
+      WHERE CardCode = @customerCode
+        AND RebateCode = @rebateCode
+        AND Period NOT LIKE 'Balance of Q%'
+      ORDER BY Id DESC
+    `);
+  if (result.recordset.length === 0) return null;
+  const row = result.recordset[0];
+  const amount = Math.max(0, (parseFloat(row.TotalAmount) || 0) - (parseFloat(row.AmountReleased) || 0));
+  return { amount, period: row.Period, payoutQuarter: row.PayoutQuarter };
+};
+
+/**
+ * Find the ending balance of the customer's most recently active rebate
+ * program that started BEFORE currentRebateCode's own start date —
+ * regardless of RebateType. That balance is what should seed
+ * currentRebateCode's opening "Balance of Q…" row when currentRebateCode
+ * has no carry-over data of its own yet.
+ */
+const resolveCarryOverSource = async (customerCode, currentRebateCode, pool) => {
+  try {
+    const family = await getAllRebateProgramsForCustomer(customerCode, currentRebateCode, pool);
+
+    let currentProgram = family.find(p => p.RebateCode === currentRebateCode);
+    if (!currentProgram) {
+      const curResult = await pool.request()
+        .input('rc', sql.NVarChar(50), currentRebateCode)
+        .query(`SELECT RebateCode, RebateType, DateFrom, DateTo, IsActive FROM RebateProgram WHERE RebateCode = @rc`);
+      if (curResult.recordset.length === 0) return null;
+      currentProgram = curResult.recordset[0];
+      family.push(currentProgram);
+    }
+
+    const { quarter: curQuarter, year: curYear } = getRebateProgramQuarter(currentProgram.DateFrom);
+    const myOrder = rebateCodeSortValue(currentRebateCode);
+
+    // ── Step A: same-quarter siblings, ordered lowest → highest ──
+    const sameQuarterSiblings = family
+      .filter(p => p.RebateCode !== currentRebateCode)
+      .filter(p => {
+        const { quarter, year } = getRebateProgramQuarter(p.DateFrom);
+        return quarter === curQuarter && year === curYear;
+      })
+      .sort((a, b) => rebateCodeSortValue(a.RebateCode) - rebateCodeSortValue(b.RebateCode));
+
+    const predecessorsInQuarter = sameQuarterSiblings.filter(
+      p => rebateCodeSortValue(p.RebateCode) < myOrder
+    );
+
+    if (predecessorsInQuarter.length > 0) {
+      // Immediate predecessor = the closest lower rebate code in this same quarter
+      const predecessor = predecessorsInQuarter[predecessorsInQuarter.length - 1];
+      const balance = await getEndingBalanceForProgram(customerCode, predecessor.RebateCode, pool);
+      if (balance && balance.amount > 0) {
+        return {
+          amount: balance.amount,
+          sourceRebateCode: predecessor.RebateCode,
+          sourceRebateType: predecessor.RebateType,
+          sourcePeriod: balance.period,
+          sourcePayoutQuarter: balance.payoutQuarter,
+        };
+      }
+      return null; // predecessor exists but already fully released — nothing to carry
+    }
+
+    // ── Step B: I'm the first/lowest code in my quarter — pull from the ──
+    // ── LAST (highest-ordered) rebate code active in the most recent prior quarter ──
+    const priorCandidates = family
+      .filter(p => p.RebateCode !== currentRebateCode)
+      .map(p => ({ ...p, ...getRebateProgramQuarter(p.DateFrom) }))
+      .filter(p => p.year < curYear || (p.year === curYear && p.quarter < curQuarter));
+
+    if (priorCandidates.length === 0) return null;
+
+    priorCandidates.sort((a, b) => {
+      if (a.year !== b.year) return b.year - a.year;
+      if (a.quarter !== b.quarter) return b.quarter - a.quarter;
+      return rebateCodeSortValue(b.RebateCode) - rebateCodeSortValue(a.RebateCode);
+    });
+
+    const mostRecent = priorCandidates[0];
+    const lastInThatQuarter = priorCandidates
+      .filter(p => p.quarter === mostRecent.quarter && p.year === mostRecent.year)
+      .sort((a, b) => rebateCodeSortValue(b.RebateCode) - rebateCodeSortValue(a.RebateCode))[0];
+
+    const balance = await getEndingBalanceForProgram(customerCode, lastInThatQuarter.RebateCode, pool);
+    if (!balance || balance.amount <= 0) return null;
+
+    return {
+      amount: balance.amount,
+      sourceRebateCode: lastInThatQuarter.RebateCode,
+      sourceRebateType: lastInThatQuarter.RebateType,
+      sourcePeriod: balance.period,
+      sourcePayoutQuarter: balance.payoutQuarter,
+    };
+  } catch (error) {
+    console.error('❌ Error in resolveCarryOverSource:', error.message);
+    return null;
   }
 };
  
