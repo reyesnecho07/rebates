@@ -307,7 +307,8 @@ const rowTs = (r) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const RebateSelectionModal = ({ isDark, group, onClose, onSelectRebate }) => {
   const modalRef = useRef(null);
-  const [viewMode, setViewMode] = useState('quarter'); // 'quarter' | 'rebateCode'
+  // Default view is now "By Rebate Code"
+  const [viewMode, setViewMode] = useState('rebateCode'); // 'quarter' | 'rebateCode'
   const T = {
     popup: isDark ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200",
     textPrimary: isDark ? "text-slate-100" : "text-slate-800",
@@ -414,28 +415,24 @@ const RebateSelectionModal = ({ isDark, group, onClose, onSelectRebate }) => {
             <h3 className={`text-sm font-bold ${T.textPrimary}`}>{group.customer}</h3>
             <p className={`text-[10px] ${T.textSecondary}`}>{group.code}</p>
           </div>
-          <button onClick={onClose} className={`p-1 rounded ${isDark ? "hover:bg-slate-700" : "hover:bg-slate-100"}`}>
-            <X size={16} className={T.textSecondary} />
-          </button>
-        </div>
-        {/* View mode toggle */}
-        <div className={`flex gap-1.5 px-4 pt-3 pb-1 border-b ${isDark ? "border-slate-700" : "border-slate-100"}`}>
-          <button
-            onClick={() => setViewMode('quarter')}
-            className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
-              viewMode === 'quarter'
-                ? "bg-blue-600 text-white"
-                : isDark ? "bg-slate-700 text-slate-300" : "bg-slate-100 text-slate-600"
-            }`}
-          >By Quarter</button>
-          <button
-            onClick={() => setViewMode('rebateCode')}
-            className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
-              viewMode === 'rebateCode'
-                ? "bg-blue-600 text-white"
-                : isDark ? "bg-slate-700 text-slate-300" : "bg-slate-100 text-slate-600"
-            }`}
-          >By Rebate Code</button>
+          {/* Upper-right controls: view mode dropdown + close button */}
+          <div className="flex items-center gap-2">
+            <select
+              value={viewMode}
+              onChange={(e) => setViewMode(e.target.value)}
+              className={`px-2 py-1.5 rounded-md text-[11px] font-semibold border outline-none transition-all focus:ring-2 focus:ring-blue-500/20 ${
+                isDark
+                  ? "bg-slate-700 border-slate-600 text-slate-200"
+                  : "bg-white border-slate-300 text-slate-700"
+              }`}
+            >
+              <option value="rebateCode">By Rebate Code</option>
+              <option value="quarter">By Quarter</option>
+            </select>
+            <button onClick={onClose} className={`p-1 rounded ${isDark ? "hover:bg-slate-700" : "hover:bg-slate-100"}`}>
+              <X size={16} className={T.textSecondary} />
+            </button>
+          </div>
         </div>
 
         <div className="max-h-[60vh] overflow-y-auto p-2">

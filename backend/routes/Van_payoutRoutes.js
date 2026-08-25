@@ -490,12 +490,20 @@ router.get('/customer/:customerCode/payouts', async (req, res) => {
     // cross-RebateType carry-over computed above)
     const payoutsWithCarryOver = applyBalanceCarryOverToPayouts(mergedPayouts, previousBalance);
     
-    // Save/update payout records in database (excluding beginning balances)
     try {
       const payoutsToSave = payoutsWithCarryOver.filter(p => !p.Period?.includes('Balance of Q'));
       await savePayoutsToDatabase(payoutsToSave, ownPool, previousBalance);
     } catch (saveError) {
       console.error('❌ [VAN] Error saving payouts to database:', saveError.message);
+    }
+
+    // NEW: recompute Status across ALL of this customer's rebate codes
+    // in chronological order, so a period gets marked Paid once later
+    // releases (on any rebate code) have covered its base amount.
+    try {
+      await applyFifoPaidStatusAcrossCustomer(customerCode, ownPool);
+    } catch (fifoError) {
+      console.error('❌ [VAN] Error applying FIFO paid status:', fifoError.message);
     }
 
     // Get the final payouts from database after saving
@@ -730,36 +738,39 @@ const combineWithCarryOver = (regularPayouts, beginningBalances) => {
     return a.monthOrder - b.monthOrder;
   });
 
-  // Apply running balance
+  // Use the DB-computed TotalAmount/Balance/Status as-is — don't
+  // recompute them here. TotalAmount already has cross-rebate carry-over
+  // baked in (from applyBalanceCarryOverToPayouts at save time), and
+  // Balance/Status already reflect the customer-wide FIFO settlement
+  // pass (applyFifoPaidStatusAcrossCustomer). Recomputing a fresh
+  // per-quarter running balance here would silently discard both.
   const result = [];
-  let runningBalance = 0;
 
   for (const item of enriched) {
     const isBegBalance = item.typeOrder === 0;
-    const isQtrRebate = item.typeOrder === 2;
 
-    const baseAmount = parseFloat(item.BaseAmount || item.baseAmount || 0);
-    const amountReleased = parseFloat(item.AmountReleased || item.amountReleased || 0);
-
-    let totalAmount;
     if (isBegBalance) {
-      // Beginning balance: total = the balance itself
-      totalAmount = parseFloat(item.TotalAmount || item.Balance || 0);
-      runningBalance = totalAmount;
+      // Synthetic beginning-balance row — this one genuinely has no
+      // DB-persisted Balance of its own, so derive it from its amount.
+      const totalAmount = parseFloat(item.TotalAmount || item.Balance || 0);
+      result.push({
+        ...item,
+        TotalAmount: totalAmount,
+        totalAmount: totalAmount,
+        Balance: totalAmount,
+        balance: totalAmount,
+      });
     } else {
-      // Monthly or quarter rebate: total = base + previous balance
-      totalAmount = baseAmount + runningBalance;
-      runningBalance = totalAmount - amountReleased;
+      const totalAmount = parseFloat(item.TotalAmount ?? item.totalAmount ?? item.Amount ?? 0);
+      const balance = parseFloat(item.Balance ?? item.balance ?? 0);
+      result.push({
+        ...item,
+        TotalAmount: totalAmount,
+        totalAmount: totalAmount,
+        Balance: balance,
+        balance: balance,
+      });
     }
-
-    // Preserve original fields and add calculated totals
-    result.push({
-      ...item,
-      TotalAmount: totalAmount,
-      totalAmount: totalAmount,
-      Balance: runningBalance,
-      balance: runningBalance,
-    });
   }
 
   return result;
@@ -3617,6 +3628,95 @@ const calculateStatus = (existingStatus, isEligible, quotaMet = false, rebateTyp
   }
 };
 
+// Parse "M.D.YY" (e.g. "8.31.26") into a real Date, unambiguously —
+// avoids relying on SQL Server's TRY_CAST, whose interpretation of
+// dot-separated dates depends on connection language/DATEFORMAT
+// settings and can silently mis-sort (or return NULL for everyone).
+const parsePayoutDate = (payoutDate) => {
+  if (!payoutDate) return null;
+  const parts = String(payoutDate).split('.');
+  if (parts.length !== 3) return null;
+  const [m, d, yy] = parts.map(p => parseInt(p, 10));
+  if (!m || !d || Number.isNaN(yy)) return null;
+  const year = yy < 100 ? 2000 + yy : yy;
+  const dt = new Date(year, m - 1, d);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+};
+
+const applyFifoPaidStatusAcrossCustomer = async (customerCode, pool) => {
+  const allRowsResult = await pool.request()
+    .input('cc', sql.NVarChar(50), customerCode)
+    .query(`
+      SELECT Id, PayoutId, RebateCode, PayoutDate, Period, BaseAmount, AmountReleased, RebateBalance, Status
+      FROM PayoutHistory
+      WHERE CardCode = @cc
+        AND PayoutId NOT LIKE 'SAP-%'
+        AND Period NOT LIKE 'Balance of Q%'
+      ORDER BY Id ASC
+    `);
+
+  // Sort chronologically in JS using the unambiguous parsed date,
+  // falling back to Id order only when a date fails to parse.
+  const rows = [...allRowsResult.recordset].sort((a, b) => {
+    const dateA = parsePayoutDate(a.PayoutDate);
+    const dateB = parsePayoutDate(b.PayoutDate);
+    if (dateA && dateB && dateA.getTime() !== dateB.getTime()) {
+      return dateA - dateB;
+    }
+    return a.Id - b.Id;
+  });
+
+  if (rows.length === 0) return;
+
+  // Pool of all money released to date, in chronological row order.
+  // IMPORTANT: this reads from AmountReleased (raw, sync-controlled)
+  // and never writes back into it — AmountReleased must stay the raw
+  // per-period value so future syncSAPDataToPayouts runs (which only
+  // touch the currently-viewed rebate code's rows) stay accurate.
+  // Only Status and RebateBalance are derived/overwritten here, and
+  // that's safe to recompute on every request with no drift.
+  let releasedPool = rows.reduce((sum, r) => sum + (parseFloat(r.AmountReleased) || 0), 0);
+
+  for (const row of rows) {
+    const base = (parseFloat(row.BaseAmount) || 0) + (parseFloat(row.PreviousBalance) || 0);
+    let newStatus;
+    let allocated = 0; // how much of the FIFO pool this row's base absorbs
+
+    if (base <= 0) {
+      newStatus = 'No Payout';
+    } else if (releasedPool >= base) {
+      newStatus = 'Paid';
+      allocated = base;
+      releasedPool -= base;
+    } else if (releasedPool > 0) {
+      newStatus = 'Partially Paid';
+      allocated = releasedPool;
+      releasedPool = 0;
+    } else {
+      newStatus = row.Status === 'No Payout' ? 'No Payout' : 'Pending';
+    }
+
+    const newBalance = Math.max(0, parseFloat((base - allocated).toFixed(2)));
+    const oldBalance = parseFloat(row.RebateBalance) || 0;
+
+    if (newStatus !== row.Status || Math.abs(newBalance - oldBalance) > 0.01) {
+      await pool.request()
+        .input('id', sql.Int, row.Id)
+        .input('status', sql.NVarChar(50), newStatus)
+        .input('balance', sql.Decimal(18, 2), newBalance)
+        .query(`
+          UPDATE PayoutHistory
+          SET Status = @status, RebateBalance = @balance, UpdatedDate = GETDATE()
+          WHERE Id = @id
+        `);
+      console.log(
+        `💰 [FIFO] ${row.PayoutId} (${row.RebateCode}, ${row.Period}): ` +
+        `${row.Status} → ${newStatus}, Balance ${oldBalance.toFixed(2)} → ${newBalance.toFixed(2)}`
+      );
+    }
+  }
+};
+
 // Calculate balance
 const calculateBalance = (amount, amountReleased) => {
   const balance = Math.max(0, amount - amountReleased);
@@ -4287,20 +4387,25 @@ const fetchSAPJournalEntries = async (customerCode, periodFrom, periodTo, pool) 
 
     const startDate      = new Date(periodFrom);
     const programEndDate = new Date(periodTo);
-    const today          = new Date();
 
     /*
-     * KEY FIX: always extend the fetch window to today.
-     * If the rebate program ended in February but an AR was posted in
-     * April, we still retrieve it.  syncSAPDataToPayouts will classify
-     * it as out-of-period and create the appropriate OOP row.
+     * FIX: don't cap the fetch window by "today". Redemptions can be
+     * (and are, per your AP data) dated well past both the program's
+     * own end date AND today's real wall-clock date — e.g. a Q4 2026
+     * program (ends 12/31/26) redeemed with an AP invoice dated
+     * 1/1/2027. That row already exists in SAP the moment it's posted,
+     * so we search open-ended into the future from the program start
+     * instead of waiting for real calendar time to catch up to it.
+     * syncSAPDataToPayouts still classifies anything past programEndDate
+     * as out-of-period (OOP) and folds it into the latest existing
+     * payout row for this rebate code.
      */
-    const endDate = today > programEndDate ? today : programEndDate;
+    const endDate = new Date('2099-12-31');
 
     console.log(
       `📅 [SAP] Effective fetch window: ${startDate.toISOString().slice(0,10)} → ` +
       `${endDate.toISOString().slice(0,10)}` +
-      (endDate > programEndDate ? '  ⚡ extended past program end to capture post-period entries' : '')
+      (endDate > programEndDate ? '  ⚡ open-ended past program end to capture post-dated entries' : '')
     );
 
     /* ----------------------------------------------------------------
@@ -4924,6 +5029,21 @@ const syncSAPDataToPayouts = async (customerCode, rebateCode, sapEntries, pool) 
       const monthName = MN[month - 1];
       const twoDigit  = String(year).slice(-2);
 
+      // NEW: if another (later) rebate code already owns this period,
+      // let that rebate code's own sync call reflect the amount instead.
+      const winningRebateCode = await getWinningRebateCodeForPeriod(
+        customerCode, monthName, year, month, twoDigit, pool
+      );
+
+      if (winningRebateCode && winningRebateCode !== rebateCode) {
+        console.log(
+          `  ⏭️  PATH A: ${monthName} ${year} belongs to ${rebateCode}, but ` +
+          `${winningRebateCode} is the later rebate for this period — skipping ` +
+          `(₱${amount.toFixed(2)} will be reflected under ${winningRebateCode})`
+        );
+        continue;
+      }
+
       const rows = await pool.request()
         .input('cc',    sql.NVarChar(50),  customerCode)
         .input('rc',    sql.NVarChar(50),  rebateCode)
@@ -5081,6 +5201,43 @@ const getRebateProgramQuarter = (dateFrom) => {
 const rebateCodeSortValue = (code) => {
   const m = String(code).match(/(\d+)\s*$/);
   return m ? parseInt(m[1], 10) : 0;
+};
+
+// NEW
+const getWinningRebateCodeForPeriod = async (customerCode, monthName, year, month, twoDigit, pool) => {
+  const result = await pool.request()
+    .input('cc',    sql.NVarChar(50),  customerCode)
+    .input('exact', sql.NVarChar(100), `${monthName} ${year}`)
+    .input('short', sql.NVarChar(100), `%${monthName.substring(0,3)} ${year}%`)
+    .input('mpat',  sql.NVarChar(20),  `${month}.%.${twoDigit}`)
+    .query(`
+      SELECT DISTINCT ph.RebateCode, rp.DateFrom
+      FROM PayoutHistory ph
+      LEFT JOIN RebateProgram rp ON rp.RebateCode = ph.RebateCode
+      WHERE ph.CardCode   = @cc
+        AND ph.PayoutId   NOT LIKE 'SAP-%'
+        AND ph.Period     NOT LIKE 'Balance of %'
+        AND (
+          ph.Period      = @exact
+          OR ph.Period   LIKE @short
+          OR ph.PayoutDate LIKE @mpat
+        )
+    `);
+
+  if (result.recordset.length === 0) return null;
+  if (result.recordset.length === 1) return result.recordset[0].RebateCode;
+
+  // Multiple rebate codes (possibly different RebateType) share this period.
+  // The one with the most recent program start date wins; fall back to the
+  // numeric suffix of the rebate code if DateFrom is missing/tied.
+  const sorted = [...result.recordset].sort((a, b) => {
+    const dateA = a.DateFrom ? new Date(a.DateFrom).getTime() : 0;
+    const dateB = b.DateFrom ? new Date(b.DateFrom).getTime() : 0;
+    if (dateA !== dateB) return dateB - dateA;
+    return rebateCodeSortValue(b.RebateCode) - rebateCodeSortValue(a.RebateCode);
+  });
+
+  return sorted[0].RebateCode;
 };
 
 const getEndingBalanceForProgram = async (customerCode, rebateCode, pool) => {
