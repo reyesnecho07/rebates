@@ -1,0 +1,18 @@
+-- Update OITB [ZZZ_VAN_DB]
+
+TRUNCATE TABLE
+    ZZZ_VAN_DB.dbo.OITB
+
+INSERT INTO
+    ZZZ_VAN_DB.dbo.OITB
+SELECT
+    *
+FROM
+    (
+		SELECT
+			T0.ItmsGrpCod,
+			T0.ItmsGrpNam
+		FROM
+			[192.168.11.103].ZZZ_VAN_TEST.dbo.OITB T0
+
+    ) T0

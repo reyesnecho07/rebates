@@ -1,0 +1,18 @@
+-- Update OCRG [ZZZ_VAN_DB]
+
+TRUNCATE TABLE
+	ZZZ_VAN_DB.dbo.OCRG
+
+INSERT INTO
+    ZZZ_VAN_DB.dbo.OCRG
+SELECT
+    *
+FROM
+    (
+		SELECT
+			T0.GroupCode,
+			T0.GroupName
+		FROM
+			[192.168.11.103].ZZZ_VAN_TEST.dbo.OCRG T0
+			
+    ) T0

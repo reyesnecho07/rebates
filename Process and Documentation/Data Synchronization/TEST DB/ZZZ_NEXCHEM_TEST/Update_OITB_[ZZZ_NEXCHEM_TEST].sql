@@ -1,0 +1,18 @@
+-- Update OITB [ZZZ_NEXCHEM_DB]
+
+TRUNCATE TABLE
+    ZZZ_NEXCHEM_DB.dbo.OITB
+
+INSERT INTO
+    ZZZ_NEXCHEM_DB.dbo.OITB
+SELECT
+    *
+FROM
+    (
+		SELECT
+			T0.ItmsGrpCod,
+			T0.ItmsGrpNam
+		FROM
+			[192.168.11.103].ZZZ_NEXCHEM_TEST.dbo.OITB T0
+
+    ) T0
