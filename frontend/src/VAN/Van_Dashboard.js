@@ -4659,35 +4659,35 @@ const handleSaveItem = async (itemCode) => {
               theme={theme}
             />
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-              <MetricCard
-                title="Total Rebate Paid"
-                value={dashboardMetrics.totalRebatePaidValue}
-                icon={BanknoteArrowUp}
-                variant="emerald"
-                isCurrency={true}
-                subtitle="Total amount disbursed"
-                theme={theme}
-              />
-              <MetricCard
-                title="Total Unpaid Rebate"
-                value={dashboardMetrics.totalUnpaidRebateValue}
-                icon={BanknoteArrowDown}
-                variant="blue"
-                isCurrency={true}
-                subtitle="Total rebate outstanding"
-                theme={theme}
-              />
-              <MetricCard
-                title="Active Customers"
-                value={parseInt(dashboardMetrics.activeCustomers) || 0}
-                icon={UserCheck}
-                variant="amber"
-                subtitle="Engaged customers"
-                theme={theme}
-                noDecimals={true}
-              />
-            </div>
+<div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+  <MetricCard
+    title="Total Rebate Paid"
+    value={dashboardMetrics.totalRebatePaidValue}
+    icon={BanknoteArrowUp}
+    variant="christmas"
+    isCurrency={true}
+    subtitle="Total amount disbursed"
+    theme={theme}
+  />
+  <MetricCard
+    title="Total Unpaid Rebate"
+    value={dashboardMetrics.totalUnpaidRebateValue}
+    icon={BanknoteArrowDown}
+    variant="christmas"
+    isCurrency={true}
+    subtitle="Total rebate outstanding"
+    theme={theme}
+  />
+  <MetricCard
+    title="Active Customers"
+    value={parseInt(dashboardMetrics.activeCustomers) || 0}
+    icon={UserCheck}
+    variant="christmas"
+    subtitle="Engaged customers"
+    theme={theme}
+    noDecimals={true}
+  />
+</div>
 
             <RebateProgramList
               rebates={rebates}

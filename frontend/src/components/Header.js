@@ -298,7 +298,7 @@ const Header = ({
             {/* Original logo (visible in light mode) */}
             <img
             src={logo}
-            alt="Company Logo"
+            alt=""
             style={{ height: "90px", width: "auto" }}
             className={`object-contain ${isDark ? 'opacity-0' : 'opacity-100'}`}
             />
