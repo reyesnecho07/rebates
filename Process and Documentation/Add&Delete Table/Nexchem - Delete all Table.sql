@@ -1,7 +1,3 @@
---Drop first the Constraint
-ALTER TABLE dbo.FixCustQuota
-DROP CONSTRAINT FK__FixCustQu__CustR__6EF57B66;
-
 ALTER TABLE dbo.PerCustQuota
 DROP CONSTRAINT FK_PerCustQuota_PerCustRebate;
 
@@ -9,29 +5,33 @@ ALTER TABLE dbo.PerProdRebate
 DROP CONSTRAINT FK_PerProdRebate_RebateProgram;
 
 
---Delete all the data in each table
-TRUNCATE TABLE FixCustQuota;
-TRUNCATE TABLE FixCustRebate;
+/* =========================================================
+   2. DELETE ALL DATA
+   ========================================================= */
 
-TRUNCATE TABLE PerCustQuota;
-TRUNCATE TABLE PerCustRebate;
+TRUNCATE TABLE dbo.FixCustQuota;
+TRUNCATE TABLE dbo.FixCustRebate;
 
-TRUNCATE TABLE PerProdRebate;
-TRUNCATE TABLE RebateProgram;
+TRUNCATE TABLE dbo.PerCustQuota;
+TRUNCATE TABLE dbo.PerCustRebate;
 
-TRUNCATE TABLE FixProdRebate;
-TRUNCATE TABLE IncCustRange;
-TRUNCATE TABLE IncCustRebate;
-TRUNCATE TABLE IncItemRange;
-TRUNCATE TABLE IncItemRebate;
-TRUNCATE TABLE PayoutHistory;
+TRUNCATE TABLE dbo.PerProdRebate;
+TRUNCATE TABLE dbo.RebateProgram;
+
+TRUNCATE TABLE dbo.FixProdRebate;
+
+TRUNCATE TABLE dbo.IncCustRange;
+TRUNCATE TABLE dbo.IncCustRebate;
+
+TRUNCATE TABLE dbo.IncItemRange;
+TRUNCATE TABLE dbo.IncItemRebate;
+
+TRUNCATE TABLE dbo.PayoutHistory;
 
 
---Put back all the constraint
-ALTER TABLE dbo.FixCustQuota
-ADD CONSTRAINT FK__FixCustQu__CustR__6EF57B66
-FOREIGN KEY (CustRebateId)
-REFERENCES dbo.FixCustRebate(Id);
+/* =========================================================
+   3. RECREATE FOREIGN KEY CONSTRAINTS
+   ========================================================= */
 
 ALTER TABLE dbo.PerCustQuota
 ADD CONSTRAINT FK_PerCustQuota_PerCustRebate

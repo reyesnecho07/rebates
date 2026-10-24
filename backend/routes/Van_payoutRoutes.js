@@ -4,35 +4,21 @@ import sql from 'mssql';
 import { getPool } from '../services/databaseService.js';
 
 const router = express.Router();
-
+const REDEMPTION_PREFIX = 'Redemption';
 
 const getNextQuarterInfo = (currentQuarter, currentYear) => {
   let nextQuarter, nextYear;
-  
-  if (currentQuarter === 1) {
-    nextQuarter = 2;
-    nextYear = currentYear;
-  } else if (currentQuarter === 2) {
-    nextQuarter = 3;
-    nextYear = currentYear;
-  } else if (currentQuarter === 3) {
-    nextQuarter = 4;
-    nextYear = currentYear;
-  } else if (currentQuarter === 4) {
-    nextQuarter = 1;
-    nextYear = currentYear + 1;
-  }
-  
-  return { 
-    nextQuarter, 
-    nextYear,
+  if (currentQuarter === 1) { nextQuarter = 2; nextYear = currentYear; }
+  else if (currentQuarter === 2) { nextQuarter = 3; nextYear = currentYear; }
+  else if (currentQuarter === 3) { nextQuarter = 4; nextYear = currentYear; }
+  else { nextQuarter = 1; nextYear = currentYear + 1; }
+  return {
+    nextQuarter, nextYear,
     period: `Balance of Q${nextQuarter} ${nextYear}`,
     payoutQuarter: `Q${nextQuarter} ${nextYear}`
   };
 };
 
-
-// Helper function to get quarter from date
 const getQuarterFromDate = (date) => {
   const dateObj = new Date(date);
   const month = dateObj.getMonth() + 1;
@@ -41,2028 +27,289 @@ const getQuarterFromDate = (date) => {
   return { quarter, year };
 };
 
-
-// New function to get carried forward beginning balances
-const getCarriedForwardBeginningBalances = async (pool, customerCode, rebateType, startDate, endDate) => {
+/* ══════════════════════════════════════════════════════════════════
+   BEGINNING BALANCE — customer-wide, prior years only
+   ══════════════════════════════════════════════════════════════════ */
+const getBeginningBalanceForCustomer = async (customerCode, pool) => {
   try {
-    console.log(`🔍 Getting carried forward beginning balances for ${customerCode}, ${rebateType}`);
-    
-    // Get all quarters in the date range
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    
-    // Get quarter info for date range
-    const startQuarterInfo = getQuarterFromDate(start);
-    const endQuarterInfo = getQuarterFromDate(end);
-    
-    const quartersInRange = [];
-    let currentYear = startQuarterInfo.year;
-    let currentQuarter = startQuarterInfo.quarter;
-    
-    // Generate all quarters in range
-    while (currentYear < endQuarterInfo.year || 
-          (currentYear === endQuarterInfo.year && currentQuarter <= endQuarterInfo.quarter)) {
-      quartersInRange.push({
-        quarter: currentQuarter,
-        year: currentYear,
-        label: `Q${currentQuarter} ${currentYear}`
-      });
-      
-      // Move to next quarter
-      currentQuarter++;
-      if (currentQuarter > 4) {
-        currentQuarter = 1;
-        currentYear++;
-      }
-      
-      // Safety break
-      if (quartersInRange.length > 20) break;
-    }
-    
-    console.log(`📅 Quarters in range:`, quartersInRange.map(q => q.label));
-    
-    // Get all beginning balances for this customer and rebate type
-    const begBalanceQuery = `
-      SELECT 
-        Id,
-        PayoutId,
-        CardCode,
-        RebateCode,
-        RebateType,
-        Period,
-        PayoutQuarter,
-        TotalAmount as OriginalAmount,
-        CreatedDate
-      FROM PayoutHistory
-      WHERE CardCode = @customerCode
-        AND RebateType = @rebateType
-        AND Period LIKE 'Balance of Q%'
-      ORDER BY CreatedDate ASC
-    `;
-    
-    const begBalanceResult = await pool.request()
-      .input('customerCode', sql.NVarChar(50), customerCode)
-      .input('rebateType', sql.NVarChar(50), rebateType)
-      .query(begBalanceQuery);
-    
-    const beginningBalances = begBalanceResult.recordset;
-    console.log(`📊 Found ${beginningBalances.length} beginning balances in database`);
-    
-    // Check for regular payouts in each quarter to determine where to show beginning balances
-    const carriedForwardBalances = [];
-    
-    for (const quarterInfo of quartersInRange) {
-      // Check if there are regular payouts in this quarter
-      const regularPayoutsQuery = `
-        SELECT COUNT(*) as Count
+    const currentYear = new Date().getFullYear();
+
+    const earnedResult = await pool.request()
+      .input('cc', sql.NVarChar(50), customerCode)
+      .input('curYear', sql.Int, currentYear)
+      .query(`
+        SELECT ISNULL(SUM(BaseAmount), 0) AS TotalEarned
         FROM PayoutHistory
-        WHERE CardCode = @customerCode
-          AND RebateType = @rebateType
-          AND Period NOT LIKE 'Balance of Q%'
-          AND PayoutQuarter = @payoutQuarter
-      `;
-      
-      const regularPayoutsResult = await pool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('rebateType', sql.NVarChar(50), rebateType)
-        .input('payoutQuarter', sql.NVarChar(20), `Q${quarterInfo.quarter} ${quarterInfo.year}`)
-        .query(regularPayoutsQuery);
-      
-      const hasRegularPayouts = regularPayoutsResult.recordset[0].Count > 0;
-      
-      // If this quarter has regular payouts, check if we need to add beginning balance
-      if (hasRegularPayouts) {
-        // Check if beginning balance already exists for this quarter
-        const existingBegBalanceQuery = `
-          SELECT COUNT(*) as Count
-          FROM PayoutHistory
-          WHERE CardCode = @customerCode
-            AND RebateType = @rebateType
-            AND Period = @period
-        `;
-        
-        const targetPeriod = `Balance of Q${quarterInfo.quarter} ${quarterInfo.year}`;
-        
-        const existingBegBalanceResult = await pool.request()
-          .input('customerCode', sql.NVarChar(50), customerCode)
-          .input('rebateType', sql.NVarChar(50), rebateType)
-          .input('period', sql.NVarChar(100), targetPeriod)
-          .query(existingBegBalanceQuery);
-        
-        const begBalanceExists = existingBegBalanceResult.recordset[0].Count > 0;
-        
-        // If no beginning balance exists yet, check if we need to carry one forward
-        if (!begBalanceExists && beginningBalances.length > 0) {
-          // Find the most recent beginning balance that hasn't been applied yet
-          const latestBalance = beginningBalances[beginningBalances.length - 1];
-          
-          // Extract quarter info from the balance period
-          const match = latestBalance.Period.match(/Balance of Q(\d+) (\d+)/);
-          if (match) {
-            const balanceQuarter = parseInt(match[1]);
-            const balanceYear = parseInt(match[2]);
-            
-            // Check if this balance is for a previous quarter
-            if (balanceYear < quarterInfo.year || 
-                (balanceYear === quarterInfo.year && balanceQuarter < quarterInfo.quarter)) {
-              
-              // Create a carried forward balance
-              const carriedForwardBalance = {
-                ...latestBalance,
-                Id: null, // Will be generated
-                PayoutId: `CF-${customerCode}-${rebateType}-Q${quarterInfo.quarter}-${quarterInfo.year}`,
-                Period: targetPeriod,
-                PayoutQuarter: `Q${quarterInfo.quarter} ${quarterInfo.year}`,
-                Date: `${quarterInfo.quarter}.${quarterInfo.year.toString().slice(-2)}`,
-                isCarriedForward: true,
-                isBeginningBalance: true,
-                originalPeriod: latestBalance.Period,
-                originalPayoutQuarter: latestBalance.PayoutQuarter
-              };
-              
-              carriedForwardBalances.push(carriedForwardBalance);
-              console.log(`➡️ Carrying forward balance to ${targetPeriod}`);
-            }
-          }
-        }
-      }
-    }
-    
-    console.log(`✅ Found ${carriedForwardBalances.length} balances to carry forward`);
-    return carriedForwardBalances;
-    
-  } catch (error) {
-    console.error('❌ Error getting carried forward balances:', error);
-    return [];
+        WHERE CardCode = @cc
+          AND PayoutId NOT LIKE '${REDEMPTION_PREFIX}-%'
+          AND PayoutId NOT LIKE 'SAP-%'
+          AND PayoutId NOT LIKE 'SAPDOC-%'
+          AND PayoutId NOT LIKE 'BeginningBalance-%'
+          AND PayoutId NOT LIKE 'BAL-%'
+          AND PayoutId NOT LIKE 'BEGBAL-%'
+          AND PayoutId NOT LIKE 'CF-%'
+          AND Period IS NOT NULL
+          AND Period NOT LIKE 'Balance of %'
+          AND Period NOT LIKE 'Beginning Balance%'
+          AND ISNUMERIC(RIGHT(LTRIM(RTRIM(Period)), 4)) = 1
+          AND CAST(RIGHT(LTRIM(RTRIM(Period)), 4) AS INT) < @curYear
+      `);
+
+    const redResult = await pool.request()
+      .input('cc', sql.NVarChar(50), customerCode)
+      .input('curYear', sql.Int, currentYear)
+      .query(`
+        SELECT ISNULL(SUM(AmountReleased), 0) AS TotalReleased
+        FROM PayoutHistory
+        WHERE CardCode = @cc
+          AND PayoutId LIKE '${REDEMPTION_PREFIX}-%'
+          AND Period IS NOT NULL
+          AND ISNUMERIC(RIGHT(LTRIM(RTRIM(Period)), 4)) = 1
+          AND CAST(RIGHT(LTRIM(RTRIM(Period)), 4) AS INT) < @curYear
+      `);
+
+    const earned = parseFloat(earnedResult.recordset[0]?.TotalEarned) || 0;
+    const released = parseFloat(redResult.recordset[0]?.TotalReleased) || 0;
+    const bal = earned - released;
+
+    console.log(`💰 [VAN][BEG-BAL] ${customerCode} (year ${currentYear}): ₱${earned.toFixed(2)} − ₱${released.toFixed(2)} = ₱${bal.toFixed(2)}`);
+    return bal;
+  } catch (err) {
+    console.error('❌ getBeginningBalanceForCustomer:', err.message);
+    return 0;
   }
 };
 
-
-
-// routes/Van_payoutRoutes.js - Complete updated /customer/:customerCode/payouts endpoint
-
+/* ══════════════════════════════════════════════════════════════════
+   MAIN — /customer/:customerCode/payouts
+   ══════════════════════════════════════════════════════════════════ */
 router.get('/customer/:customerCode/payouts', async (req, res) => {
   try {
     const { customerCode } = req.params;
     const { db, rebateCode, rebateType, periodFrom, periodTo, useRebatePeriod } = req.query;
-    
-    console.log('💰 [VAN] Fetching payouts for customer:', {
-      customerCode,
-      rebateCode,
-      rebateType,
-      periodFrom,
-      periodTo,
-      useRebatePeriod
-    });
+
+    console.log('💰 [VAN] Fetching payouts:', { customerCode, rebateCode, rebateType, periodFrom, periodTo, useRebatePeriod });
 
     if (!customerCode || !rebateType) {
-      return res.status(400).json({
-        success: false,
-        message: 'Customer code and rebate type are required'
-      });
+      return res.status(400).json({ success: false, message: 'Customer code and rebate type are required' });
     }
 
     const databaseToUse = db || 'VAN';
     const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
-      });
-    }
+    if (!ownPool) return res.status(500).json({ success: false, message: 'Database pool not available' });
 
-    // Get rebate program period if rebateCode is provided
-    let rebateDateFrom = '';
-    let rebateDateTo = '';
-    let isActive = false;
-    
+    await ensureSAPColumnsExist(ownPool);
+    await createPayoutHistoryTable(ownPool);
+
+    // Rebate program period
+    let rebateDateFrom = '', rebateDateTo = '', isActive = false;
+    let frequency = 'Quarterly', quotaType = 'N/A';
     if (rebateCode) {
-      const rebatePeriodQuery = `
-        SELECT DateFrom, DateTo, IsActive
-        FROM RebateProgram
-        WHERE RebateCode = @rebateCode
-      `;
-
-      const rebatePeriodResult = await ownPool.request()
+      const rp = await ownPool.request()
         .input('rebateCode', sql.NVarChar(50), rebateCode)
-        .query(rebatePeriodQuery);
-
-      if (rebatePeriodResult.recordset.length > 0) {
-        rebateDateFrom = rebatePeriodResult.recordset[0].DateFrom ? 
-          new Date(rebatePeriodResult.recordset[0].DateFrom).toISOString().split('T')[0] : '';
-        rebateDateTo = rebatePeriodResult.recordset[0].DateTo ? 
-          new Date(rebatePeriodResult.recordset[0].DateTo).toISOString().split('T')[0] : '';
-        isActive = rebatePeriodResult.recordset[0].IsActive === 1;
+        .query(`SELECT DateFrom, DateTo, IsActive, Frequency, QuotaType FROM RebateProgram WHERE RebateCode = @rebateCode`);
+      if (rp.recordset.length > 0) {
+        const rec = rp.recordset[0];
+        rebateDateFrom = rec.DateFrom ? new Date(rec.DateFrom).toISOString().split('T')[0] : '';
+        rebateDateTo   = rec.DateTo   ? new Date(rec.DateTo).toISOString().split('T')[0]   : '';
+        isActive       = rec.IsActive === 1;
+        frequency      = rec.Frequency || 'Quarterly';
+        quotaType      = rec.QuotaType || 'N/A';
       }
     }
 
-    // Determine date range
-    let startDate, endDate;
-    let dateSource = 'manual';
-    
+    let startDate, endDate, dateSource = 'manual';
     if (periodFrom && periodTo) {
-      startDate = periodFrom;
-      endDate = periodTo;
-      dateSource = 'manual';
+      startDate = periodFrom; endDate = periodTo; dateSource = 'manual';
     } else if (useRebatePeriod === 'true' && rebateDateFrom && rebateDateTo && isActive) {
-      startDate = rebateDateFrom;
-      endDate = rebateDateTo;
-      dateSource = 'rebate_period';
+      startDate = rebateDateFrom; endDate = rebateDateTo; dateSource = 'rebate_period';
     } else if (rebateDateFrom && rebateDateTo) {
-      startDate = rebateDateFrom;
-      endDate = rebateDateTo;
-      dateSource = 'rebate_period_fallback';
+      startDate = rebateDateFrom; endDate = rebateDateTo; dateSource = 'rebate_period_fallback';
     } else {
-      const currentYear = new Date().getFullYear();
-      startDate = `${currentYear}-01-01`;
-      endDate = new Date().toISOString().split('T')[0];
-      dateSource = 'current_year';
+      const y = new Date().getFullYear();
+      startDate = `${y}-01-01`; endDate = new Date().toISOString().split('T')[0]; dateSource = 'current_year';
     }
 
-    console.log('📅 [VAN] Payout date range:', { startDate, endDate, dateSource });
+    console.log('📅 [VAN] Date range:', { startDate, endDate, dateSource, frequency, quotaType });
 
-    // ============ Determine cross-rebate carry-over BEFORE calculating
-    // this rebate's own payouts, so the carried-in balance gets baked into
-    // the SAVED TotalAmount/RebateBalance below — and is therefore visible
-    // to the NEXT rebate code's carry-over lookup later. ============
-    let targetPayoutQuarter = null;
-    let currentQuarter = null;
-    let carryYear = null;
-    let previousBalance = 0;
-    let carrySourceNote = null;
+    // SAP entries
+    const sapData = await fetchSAPJournalEntries(customerCode, startDate, endDate, ownPool);
+    if (sapData.success) console.log(`✅ [SAP] ${sapData.entries.length} periods`);
+    else console.log('⚠️ [SAP] Failed');
 
-    if (rebateCode && startDate) {
-      const startDateObj = new Date(startDate);
-      const startMonth = startDateObj.getMonth() + 1;
-      currentQuarter = Math.ceil(startMonth / 3);
-      carryYear = startDateObj.getFullYear();
-      targetPayoutQuarter = `Q${currentQuarter} ${carryYear}`;
-
-      let prevQuarter, prevYear;
-      if (currentQuarter === 1) {
-        prevQuarter = 4;
-        prevYear = carryYear - 1;
-      } else {
-        prevQuarter = currentQuarter - 1;
-        prevYear = carryYear;
-      }
-
-      // Tier 1: LATEST row for THIS rebate code in the previous quarter.
-      // TOP 1 ordered by Id DESC — never SUM RebateBalance, since each
-      // row's RebateBalance is already cumulative for that rebate code.
-      const prevQuarterBalanceQuery = `
-        SELECT TOP 1 RebateBalance
-        FROM PayoutHistory
-        WHERE CardCode = @customerCode
-          AND RebateCode = @rebateCode
-          AND PayoutQuarter = @prevPayoutQuarter
-          AND Period NOT LIKE 'Balance of Q%'
-          AND PayoutId NOT LIKE 'SAP-%'
-        ORDER BY Id DESC
-      `;
-      const prevBalanceResult = await ownPool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('rebateCode', sql.NVarChar(50), rebateCode)
-        .input('prevPayoutQuarter', sql.NVarChar(20), `Q${prevQuarter} ${prevYear}`)
-        .query(prevQuarterBalanceQuery);
-
-      previousBalance = parseFloat(prevBalanceResult.recordset[0]?.RebateBalance || 0);
-
-      // Tier 2: nothing under this rebate code — find the nearest
-      // predecessor rebate code for this customer (any RebateType),
-      // whose DateFrom is closest to (but before) this rebate's own
-      // DateFrom. This naturally prefers a same-quarter sibling rebate
-      // code before reaching back into an earlier quarter.
-      if (previousBalance <= 0) {
-        const crossProgram = await resolveCarryOverSource(customerCode, rebateCode, ownPool);
-        if (crossProgram) {
-          previousBalance = crossProgram.amount;
-          carrySourceNote = `Carried from ${crossProgram.sourceRebateCode} (${crossProgram.sourceRebateType}) – ${crossProgram.sourcePeriod}`;
-          console.log(`🔗 Cross-program carry-over: ₱${previousBalance.toFixed(2)} from ${crossProgram.sourceRebateCode} → ${rebateCode}`);
-        }
-      }
-
-      if (previousBalance > 0) {
-        console.log(`💰 Carrying ₱${previousBalance.toFixed(2)} into ${targetPayoutQuarter} for ${rebateCode}`);
-      }
-    }
-
-    // First, get transaction data to calculate amounts
+    // Calculate monthly earned
     let monthlyData = [];
-    if (rebateCode && rebateType) {
+    if (rebateCode) {
       try {
-        // Use internal dashboard endpoint for transactions
-        const transactionsResponse = await fetch(
+        const txRes = await fetch(
           `http://localhost:3009/api/van/dashboard/customer/${customerCode}/transactions?` +
           `db=${databaseToUse}&rebateCode=${rebateCode}&rebateType=${rebateType}&` +
           `periodFrom=${startDate}&periodTo=${endDate}&useRebatePeriod=${useRebatePeriod}`
         );
-        
-        if (transactionsResponse.ok) {
-          const transactionsData = await transactionsResponse.json();
-          
-          if (transactionsData.success && transactionsData.data.transactions) {
-            console.log(`📊 [VAN] Found ${transactionsData.data.transactions.length} transactions for payout calculation`);
-            
-            console.log(`📊 [SAP] Fetching journal entries for customer ${customerCode} from ${startDate} to ${endDate}`);
-            const sapData = await fetchSAPJournalEntries(customerCode, startDate, endDate, ownPool);
-
-            if (sapData.success) {
-              console.log(`✅ [SAP] Found ${sapData.entries.length} periods with journal entries`);
-              if (sapData.entries.length > 0) {
-                console.log('📊 [SAP] Periods with net amounts:', sapData.entries.map(e => 
-                  `${e.periodName}: ₱${e.totalAmount.toFixed(2)}`
-                ));
-              }
-            } else {
-              console.log('⚠️ [SAP] Could not fetch SAP journal entries');
-            }
-
-            const rebateProgramQuery = `
-              SELECT DateFrom, DateTo, IsActive, Frequency
-              FROM RebateProgram
-              WHERE RebateCode = @rebateCode
-            `;
-
-            const rebateProgramResult = await ownPool.request()
-              .input('rebateCode', sql.NVarChar(50), rebateCode)
-              .query(rebateProgramQuery);
-
-            let frequency = 'Quarterly';
-            if (rebateProgramResult.recordset.length > 0) {
-              rebateDateFrom = rebateProgramResult.recordset[0].DateFrom ? 
-                new Date(rebateProgramResult.recordset[0].DateFrom).toISOString().split('T')[0] : '';
-              rebateDateTo = rebateProgramResult.recordset[0].DateTo ? 
-                new Date(rebateProgramResult.recordset[0].DateTo).toISOString().split('T')[0] : '';
-              isActive = rebateProgramResult.recordset[0].IsActive === 1;
-              frequency = rebateProgramResult.recordset[0].Frequency || 'Quarterly';
-            }
-
-            console.log('📊 Rebate Program Details:', {
-              frequency,
-              dateFrom: rebateDateFrom,
-              dateTo: rebateDateTo,
-              isActive
-            });
-
+        if (txRes.ok) {
+          const txData = await txRes.json();
+          if (txData.success && txData.data.transactions) {
             monthlyData = await calculateMonthlyPayoutData(
-              transactionsData.data.transactions,
-              rebateType,
-              customerCode,
-              rebateCode,
-              ownPool,
-              frequency,
-              sapData.entries
+              txData.data.transactions, rebateType, customerCode, rebateCode,
+              ownPool, frequency, [], quotaType, startDate, endDate
             );
-
-            await ensureSAPColumnsExist(ownPool);
-
-            if (sapData.success && sapData.entries.length > 0) {
-              console.log('🔄 [SYNC] Auto-syncing SAP data to database...');
-              await syncSAPDataToPayouts(customerCode, rebateCode, sapData.entries, ownPool);
-            }
-            console.log(`📈 [VAN] Calculated ${monthlyData.length} monthly payout records`);
-          } else {
-            console.log('⚠️ [VAN] No transaction data found for payout calculation');
+            console.log(`📈 [VAN] Calculated ${monthlyData.length} earned records`);
           }
-        } else {
-          console.log('⚠️ [VAN] Could not fetch transaction data for payouts');
         }
-      } catch (transError) {
-        console.error('❌ [VAN] Error fetching transactions for payouts:', transError.message);
-      }
+      } catch (e) { console.error('❌ [VAN] transactions fetch:', e.message); }
     }
 
-    // Get existing payout records from PayoutHistory table (excluding beginning balances)
-    let existingPayouts = [];
-    try {
-      await createPayoutHistoryTable(ownPool);
-      
-      let existingPayoutsQuery = `
-        SELECT 
-          Id,
-          PayoutId,
-          CardCode,
-          RebateCode,
-          RebateType,
-          PayoutDate as Date,
-          Period,
-          BaseAmount,
-          TotalAmount as Amount,
-          Status,
-          AmountReleased,
-          ReleaseDate,
-          RebateBalance as Balance,
-          CreatedDate,
-          UpdatedDate
-        FROM PayoutHistory
-        WHERE CardCode = @customerCode 
-          AND RebateType = @rebateType
-          AND Period NOT LIKE 'Balance of Q%'
-      `;
-      
-      const request = ownPool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('rebateType', sql.NVarChar(50), rebateType);
-      
-      if (rebateCode) {
-        existingPayoutsQuery += ` AND RebateCode = @rebateCode`;
-        request.input('rebateCode', sql.NVarChar(50), rebateCode);
-      }
-      
-      existingPayoutsQuery += ` ORDER BY PayoutDate ASC, CreatedDate ASC`;
+    // Save earned rows (BaseAmount = TotalAmount = earned only)
+    try { await saveEarnedPayoutsToDatabase(monthlyData, ownPool, rebateCode, customerCode); }
+    catch (e) { console.error('❌ [VAN] saveEarned:', e.message); }
 
-      const existingPayoutsResult = await request.query(existingPayoutsQuery);
-      existingPayouts = existingPayoutsResult.recordset;
-      
-      console.log(`📊 [VAN] Found ${existingPayouts.length} existing payout records`);
-      
-    } catch (tableError) {
-      console.error('❌ [VAN] Error fetching existing payouts:', tableError.message);
+    // Insert redemption rows from SAP (only docs inside rebate period)
+    if (sapData.success && sapData.entries.length > 0) {
+      try {
+        const rebateFrom = startDate ? new Date(startDate) : null;
+        const rebateTo   = endDate   ? new Date(endDate)   : null;
+        if (rebateFrom) rebateFrom.setHours(0, 0, 0, 0);
+        if (rebateTo)   rebateTo.setHours(23, 59, 59, 999);
+        await insertRedemptionRows(customerCode, rebateCode, sapData.entries, ownPool, rebateFrom, rebateTo);
+      } catch (e) { console.error('❌ [VAN] redemption:', e.message); }
     }
 
-    // Merge calculated data with existing records
-    const mergedPayouts = mergePayoutData(monthlyData, existingPayouts, rebateType);
-    
-    // Apply balance carry-over to merged payouts, seeded with any balance
-    // carried in from a predecessor rebate program (cross-rebate-code,
-    // cross-RebateType carry-over computed above)
-    const payoutsWithCarryOver = applyBalanceCarryOverToPayouts(mergedPayouts, previousBalance);
-    
-    try {
-      const payoutsToSave = payoutsWithCarryOver.filter(p => !p.Period?.includes('Balance of Q'));
-      await savePayoutsToDatabase(payoutsToSave, ownPool, previousBalance);
-    } catch (saveError) {
-      console.error('❌ [VAN] Error saving payouts to database:', saveError.message);
+    // Beginning balance (customer-wide, prior years only)
+    const previousBalance = await getBeginningBalanceForCustomer(customerCode, ownPool);
+    let beginningBalanceRecord = null;
+    if (previousBalance > 0) {
+      beginningBalanceRecord = createBeginningBalanceRecord(customerCode, rebateCode, rebateType, previousBalance);
     }
 
-    // NEW: recompute Status across ALL of this customer's rebate codes
-    // in chronological order, so a period gets marked Paid once later
-    // releases (on any rebate code) have covered its base amount.
-    try {
-      await applyFifoPaidStatusAcrossCustomer(customerCode, ownPool);
-    } catch (fifoError) {
-      console.error('❌ [VAN] Error applying FIFO paid status:', fifoError.message);
-    }
-
-    // Get the final payouts from database after saving
+    // Final rows
     let finalPayouts = [];
     try {
-      let finalPayoutsQuery = `
-        SELECT 
-          Id,
-          PayoutId,
-          CardCode,
-          RebateCode,
-          RebateType,
-          PayoutDate as Date,
-          Period,
-          BaseAmount,
-          TotalAmount as Amount,
-          Status,
-          AmountReleased,
-          ReleaseDate,
-          RebateBalance as Balance,
-          CreatedDate,
-          UpdatedDate
+      let q = `
+        SELECT Id, PayoutId, CardCode, RebateCode, RebateType,
+               PayoutDate AS Date, Period, PayoutQuarter,
+               BaseAmount, TotalAmount AS Amount, TotalAmount,
+               Status, AmountReleased, SapReleasedAmount, SapLastSync,
+               DocumentType, DocumentNumber, ReleaseDate,
+               RebateBalance AS Balance, CreatedDate, UpdatedDate,
+               0 AS IsBeginningBalance
         FROM PayoutHistory
         WHERE CardCode = @customerCode
-          AND RebateType = @rebateType
-          AND Period NOT LIKE 'Balance of Q%'
+          AND ISNULL(Period, '') NOT LIKE 'Balance of %'
+          AND ISNULL(Period, '') NOT LIKE 'Beginning Balance%'
+          AND PayoutId NOT LIKE 'SAP-%'
+          AND PayoutId NOT LIKE 'SAPDOC-%'
+          AND PayoutId NOT LIKE 'BeginningBalance-%'
+          AND PayoutId NOT LIKE 'OOP-%'
+          AND PayoutId NOT LIKE 'BAL-%'
+          AND PayoutId NOT LIKE 'BEGBAL-%'
+          AND PayoutId NOT LIKE 'CF-%'
       `;
-      
-      const finalRequest = ownPool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('rebateType', sql.NVarChar(50), rebateType);
-      
-      if (rebateCode) {
-        finalPayoutsQuery += ` AND RebateCode = @rebateCode`;
-        finalRequest.input('rebateCode', sql.NVarChar(50), rebateCode);
-      }
-      
-      finalPayoutsQuery += ` ORDER BY PayoutDate ASC, CreatedDate ASC`;
+      const reqF = ownPool.request().input('customerCode', sql.NVarChar(50), customerCode);
+      if (rebateCode) { q += ` AND RebateCode = @rebateCode`; reqF.input('rebateCode', sql.NVarChar(50), rebateCode); }
+      q += ` ORDER BY Id ASC`;
+      const r = await reqF.query(q);
+      finalPayouts = r.recordset;
+      console.log(`📊 [VAN] Final rows: ${finalPayouts.length}`);
+    } catch (e) { console.error('❌ [VAN] final query:', e.message); }
 
-      const finalPayoutsResult = await finalRequest.query(finalPayoutsQuery);
-      finalPayouts = finalPayoutsResult.recordset;
-      
-      console.log(`📊 [VAN] Final regular payouts after save: ${finalPayouts.length} records`);
-      
-    } catch (error) {
-      console.error('❌ [VAN] Error fetching final payouts:', error.message);
-      finalPayouts = payoutsWithCarryOver;
-    }
+    const redemptions = finalPayouts.filter(p => p.DocumentType).map(p => ({
+      period: p.Period, sourceType: p.DocumentType,
+      documentNumber: p.DocumentNumber || '', documentType: p.DocumentType,
+      amount: parseFloat(p.AmountReleased) || 0, date: p.Date,
+    }));
+    const totalRedemptionSigned = redemptions.reduce((s, r) => s + r.amount, 0);
+    const totalEarned = finalPayouts.reduce((s, p) => p.DocumentType ? s : s + (parseFloat(p.BaseAmount) || 0), 0);
 
-    // ============== FIXED: Get beginning balances filtered by the current transaction period ==============
-    // ============== Beginning balance is computed dynamically (see the
-    // cross-rebate carry-over block above) — no DB row is read or written
-    // here. This keeps the displayed carry-over in lockstep with what was
-    // just saved into this rebate code's own payout rows, and never
-    // creates a persisted "Balance of Q..." record. ==============
-    let beginningBalances = [];
-    if (previousBalance > 0 && targetPayoutQuarter) {
-      const beginningBalanceDate = new Date(carryYear, (currentQuarter - 1) * 3, 1);
-      const formattedDate = `${beginningBalanceDate.getMonth() + 1}.${beginningBalanceDate.getDate()}.${beginningBalanceDate.getFullYear().toString().slice(-2)}`;
-
-      beginningBalances = [{
-        Id: null,
-        PayoutId: `BAL-${customerCode}-${rebateCode}-Q${currentQuarter}-${carryYear}`,
-        CardCode: customerCode,
-        RebateCode: rebateCode,
-        RebateType: rebateType,
-        Date: formattedDate,
-        Period: `Balance of Q${currentQuarter} ${carryYear}`,
-        PayoutQuarter: targetPayoutQuarter,
-        BaseAmount: 0,
-        Amount: previousBalance,
-        Status: 'Beginning Balance',
-        AmountReleased: 0,
-        ReleaseDate: null,
-        Balance: previousBalance,
-        CreatedDate: new Date().toISOString(),
-        UpdatedDate: new Date().toISOString(),
-        isBeginningBalance: true,
-        CarrySourceNote: carrySourceNote
-      }];
-
-      console.log(`📊 [VAN] Beginning balance for ${targetPayoutQuarter}: ₱${previousBalance.toFixed(2)}${carrySourceNote ? ' (' + carrySourceNote + ')' : ''}`);
-    }
-    // Combine regular payouts with beginning balances
-    let combinedPayouts = combineWithCarryOver(finalPayouts, beginningBalances);
-
-    // Filter payouts by date range
-    if (periodFrom && periodTo) {
-      const quartersInRange = new Set();
-      const start = new Date(periodFrom);
-      const end = new Date(periodTo);
-      let current = new Date(start);
-
-      while (current <= end) {
-        const year = current.getFullYear();
-        const month = current.getMonth() + 1;
-        const quarter = Math.ceil(month / 3);
-        quartersInRange.add(`Q${quarter} ${year}`);
-        current.setMonth(current.getMonth() + 1);
-      }
-
-      combinedPayouts = combinedPayouts.filter(payout => {
-        const payoutQuarter = payout.PayoutQuarter || payout.payoutQuarter;
-        return payoutQuarter && quartersInRange.has(payoutQuarter);
-      });
-
-      console.log(`📅 Filtered payouts to ${combinedPayouts.length} records for quarters:`, Array.from(quartersInRange));
-    }
+    const hasBeginningBalance = previousBalance > 0 && beginningBalanceRecord !== null;
 
     res.json({
       success: true,
       data: {
-        payouts: combinedPayouts,
-        beginningBalances: beginningBalances,
-        regularPayouts: finalPayouts,
-        customerCode: customerCode,
-        rebateCode: rebateCode,
-        rebateType: rebateType,
+        payouts: finalPayouts,
+        beginningBalances: hasBeginningBalance ? [beginningBalanceRecord] : [],
+        regularPayouts: finalPayouts.filter(p => !p.DocumentType),
+        previousBalance: hasBeginningBalance ? previousBalance : 0,
+        beginningBalanceRecord: hasBeginningBalance ? beginningBalanceRecord : null,
+        customerCode, rebateCode, rebateType, frequency, quotaType,
+        redemptions,
+        redemptionSummary: { netReleased: totalRedemptionSigned, documentCount: redemptions.length },
+        earnedSummary: { totalEarned },
+        sapData: {
+          available: sapData.success,
+          periodsFound: sapData.entries.length,
+          lastSync: new Date().toISOString(),
+        },
         dateRange: {
-          periodFrom: startDate,
-          periodTo: endDate,
-          autoLoaded: dateSource !== 'manual',
-          dateSource: dateSource,
+          periodFrom: startDate, periodTo: endDate,
+          autoLoaded: dateSource !== 'manual', dateSource,
           rebatePeriodAvailable: !!(rebateDateFrom && rebateDateTo),
-          rebatePeriod: {
-            from: rebateDateFrom,
-            to: rebateDateTo
-          }
-        }
+          rebatePeriod: { from: rebateDateFrom, to: rebateDateTo },
+        },
+        autoSynced: false,
       }
     });
-
   } catch (error) {
     console.error('❌ [VAN] Error fetching payouts:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching payout data',
-      error: error.message,
-      stack: error.stack
-    });
+    res.status(500).json({ success: false, message: 'Error fetching payout data', error: error.message, stack: error.stack });
   }
 });
 
-const getQuarterFromPayoutQuarter = (payoutQuarter) => {
-  if (!payoutQuarter) return null;
-  const match = payoutQuarter.match(/Q(\d+) (\d+)/);
-  if (match) {
-    return { quarter: parseInt(match[1]), year: parseInt(match[2]) };
-  }
-  return null;
+/* ══════════════════════════════════════════════════════════════════
+   BEGINNING BALANCE RECORD (prior-year)
+   ══════════════════════════════════════════════════════════════════ */
+const createBeginningBalanceRecord = (customerCode, rebateCode, rebateType, previousBalance) => {
+  try {
+    const currentYear = new Date().getFullYear();
+    const formattedDate = `12.31.${String(currentYear - 1).slice(-2)}`;
+    return {
+      Id: `BeginningBalance-${customerCode}-${rebateCode}-${Date.now()}`,
+      PayoutId: `BeginningBalance-${customerCode}-${rebateCode}`,
+      CardCode: customerCode, RebateCode: rebateCode, RebateType: rebateType,
+      Date: formattedDate, Period: 'Beginning Balance',
+      BaseAmount: 0, TotalAmount: 0, Amount: 0,
+      Status: 'Beginning Balance',
+      AmountReleased: 0, SapReleasedAmount: 0,
+      Balance: previousBalance, ReleaseDate: null,
+      CreatedDate: new Date().toISOString().split('T')[0],
+      UpdatedDate: new Date().toISOString().split('T')[0],
+      PreviousBalance: previousBalance,
+      isBeginningBalance: true,
+      CalculationNote: `Previous year balance carried forward: ₱${previousBalance.toFixed(2)}`,
+      displayType: 'beginning_balance',
+    };
+  } catch (e) { console.error('❌ createBeginningBalanceRecord:', e.message); return null; }
 };
 
-const getQuartersInRange = (startDateStr, endDateStr) => {
-  const start = new Date(startDateStr);
-  const end = new Date(endDateStr);
-  const quarters = new Set();
-  let current = new Date(start);
-  while (current <= end) {
-    const year = current.getFullYear();
-    const month = current.getMonth() + 1;
-    const quarter = Math.ceil(month / 3);
-    quarters.add(`Q${quarter} ${year}`);
-    // move to next month
-    current.setMonth(current.getMonth() + 1);
-  }
-  return quarters;
-};
-
-
-
-// ========================================================
-// NEW: Combine regular payouts with beginning balances and apply running balance
-// ========================================================
-const combineWithCarryOver = (regularPayouts, beginningBalances) => {
-  // Combine all items
-  const allItems = [...regularPayouts, ...beginningBalances];
-
-  // Enrich each item with sorting metadata
-  const enriched = allItems.map(item => {
-    const isBegBalance = item.Period && item.Period.includes('Balance of Q');
-    const isQtrRebate = item.Period && item.Period.includes('Quarter') && item.Period.includes('Rebate');
-
-    let year, quarter, monthOrder = 99, typeOrder = 1;
-
-    // Extract year and quarter from PayoutQuarter if available
-    if (item.PayoutQuarter) {
-      const match = item.PayoutQuarter.match(/Q(\d+) (\d+)/);
-      if (match) {
-        quarter = parseInt(match[1]);
-        year = parseInt(match[2]);
-      }
-    }
-
-    // Fallback: extract from Period
-    if (!year || !quarter) {
-      const yearMatch = item.Period.match(/\b(20\d{2})\b/);
-      year = yearMatch ? parseInt(yearMatch[1]) : new Date().getFullYear();
-
-      if (item.Period.includes('January') || item.Period.includes('February') || item.Period.includes('March')) quarter = 1;
-      else if (item.Period.includes('April') || item.Period.includes('May') || item.Period.includes('June')) quarter = 2;
-      else if (item.Period.includes('July') || item.Period.includes('August') || item.Period.includes('September')) quarter = 3;
-      else if (item.Period.includes('October') || item.Period.includes('November') || item.Period.includes('December')) quarter = 4;
-      else {
-        const qMatch = item.Period.match(/Quarter (\d+)/i);
-        quarter = qMatch ? parseInt(qMatch[1]) : 1;
-      }
-    }
-
-    // Determine month order for monthly payouts
-    if (!isBegBalance && !isQtrRebate) {
-      const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-      for (let i = 0; i < monthNames.length; i++) {
-        if (item.Period.includes(monthNames[i])) {
-          monthOrder = i + 1;
-          break;
-        }
-      }
-    }
-
-    // Type order: 0 = beginning balance, 1 = monthly, 2 = quarter rebate
-    if (isBegBalance) typeOrder = 0;
-    else if (isQtrRebate) typeOrder = 2;
-
-    return { ...item, year, quarter, monthOrder, typeOrder };
-  });
-
-  // Sort: by year, quarter, typeOrder (beg bal first), then monthOrder
-  enriched.sort((a, b) => {
-    if (a.year !== b.year) return a.year - b.year;
-    if (a.quarter !== b.quarter) return a.quarter - b.quarter;
-    if (a.typeOrder !== b.typeOrder) return a.typeOrder - b.typeOrder;
-    return a.monthOrder - b.monthOrder;
-  });
-
-  // Use the DB-computed TotalAmount/Balance/Status as-is — don't
-  // recompute them here. TotalAmount already has cross-rebate carry-over
-  // baked in (from applyBalanceCarryOverToPayouts at save time), and
-  // Balance/Status already reflect the customer-wide FIFO settlement
-  // pass (applyFifoPaidStatusAcrossCustomer). Recomputing a fresh
-  // per-quarter running balance here would silently discard both.
-  const result = [];
-
-  for (const item of enriched) {
-    const isBegBalance = item.typeOrder === 0;
-
-    if (isBegBalance) {
-      // Synthetic beginning-balance row — this one genuinely has no
-      // DB-persisted Balance of its own, so derive it from its amount.
-      const totalAmount = parseFloat(item.TotalAmount || item.Balance || 0);
-      result.push({
-        ...item,
-        TotalAmount: totalAmount,
-        totalAmount: totalAmount,
-        Balance: totalAmount,
-        balance: totalAmount,
-      });
-    } else {
-      const totalAmount = parseFloat(item.TotalAmount ?? item.totalAmount ?? item.Amount ?? 0);
-      const balance = parseFloat(item.Balance ?? item.balance ?? 0);
-      result.push({
-        ...item,
-        TotalAmount: totalAmount,
-        totalAmount: totalAmount,
-        Balance: balance,
-        balance: balance,
-      });
-    }
-  }
-
-  return result;
-};
-
-
-// Add this endpoint to fetch beginning balances by quarter
-router.get('/customer/:customerCode/beginning-balances', async (req, res) => {
-  try {
-    const { customerCode } = req.params;
-    const { db, rebateCode, quarter, year } = req.query;
-    
-    console.log('💰 [VAN] Fetching beginning balances for:', {
-      customerCode,
-      rebateCode,
-      quarter,
-      year
-    });
-
-    if (!customerCode) {
-      return res.status(400).json({
-        success: false,
-        message: 'Customer code is required'
-      });
-    }
-
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
-      });
-    }
-
-    const query = `
-      SELECT 
-        ph.*,
-        'beginning_balance' as RecordType
-      FROM PayoutHistory ph
-      WHERE ph.CardCode = @customerCode
-        AND ph.Period LIKE 'Balance of Q%'
-        ${quarter && year ? 'AND ph.PayoutQuarter = @payoutQuarter' : ''}
-        ${rebateCode ? 'AND ph.RebateCode = @rebateCode' : ''}
-      ORDER BY ph.PayoutQuarter ASC, ph.CreatedDate ASC
-    `;
-    
-    const request = ownPool.request()
-      .input('customerCode', sql.NVarChar(50), customerCode);
-    
-    if (quarter && year) {
-      request.input('payoutQuarter', sql.NVarChar(20), `Q${quarter} ${year}`);
-    }
-    
-    if (rebateCode) {
-      request.input('rebateCode', sql.NVarChar(50), rebateCode);
-    }
-    
-    const result = await request.query(query);
-    
-    // Group beginning balances by quarter
-    const balancesByQuarter = {};
-    result.recordset.forEach(balance => {
-      const quarterKey = balance.PayoutQuarter || 'Unknown Quarter';
-      if (!balancesByQuarter[quarterKey]) {
-        balancesByQuarter[quarterKey] = [];
-      }
-      balancesByQuarter[quarterKey].push(balance);
-    });
-    
-    res.json({
-      success: true,
-      data: {
-        beginningBalances: result.recordset,
-        balancesByQuarter: balancesByQuarter,
-        customerCode: customerCode,
-        rebateCode: rebateCode,
-        totalCount: result.recordset.length
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ [VAN] Error fetching beginning balances:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching beginning balance data',
-      error: error.message
-    });
-  }
-});
-
-
-
-const calculateMonthlyPayoutData = async (transactions, rebateType, customerCode, rebateCode, pool) => {
-  try {
-    console.log(`📊 Starting payout calculation for ${customerCode}, ${rebateCode}, type: ${rebateType}`);
-    
-    // Get rebate program period to generate ALL months
-    const rebatePeriodQuery = `
-      SELECT DateFrom, DateTo
-      FROM RebateProgram
-      WHERE RebateCode = @rebateCode
-    `;
-    
-    const rebatePeriodResult = await pool.request()
-      .input('rebateCode', sql.NVarChar(50), rebateCode)
-      .query(rebatePeriodQuery);
-    
-    let programStartDate = new Date();
-    let programEndDate = new Date();
-    
-    if (rebatePeriodResult.recordset.length > 0) {
-      const rebateDateFrom = rebatePeriodResult.recordset[0].DateFrom;
-      const rebateDateTo = rebatePeriodResult.recordset[0].DateTo;
-      
-      if (rebateDateFrom) programStartDate = new Date(rebateDateFrom);
-      if (rebateDateTo) programEndDate = new Date(rebateDateTo);
-    }
-    
-    // Generate ALL months in the period (keeping this for SAP mapping)
-    const allMonths = [];
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
-                       'July', 'August', 'September', 'October', 'November', 'December'];
-    
-    let currentDate = new Date(programStartDate);
-    
-    while (currentDate <= programEndDate) {
-      const year = currentDate.getFullYear();
-      const month = currentDate.getMonth();
-      const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`;
-      const monthName = monthNames[month];
-      const lastDay = new Date(year, month + 1, 0);
-      const payoutDate = `${lastDay.getMonth() + 1}.${lastDay.getDate()}.${lastDay.getFullYear().toString().slice(-2)}`;
-      const quarter = Math.floor(month / 3) + 1;
-      
-      allMonths.push({
-        monthKey: monthKey,
-        monthName: monthName,
-        monthNumber: month + 1,
-        year: year,
-        quarter: quarter,
-        payoutDate: payoutDate,
-        period: `${monthName} ${year}`,
-        totalActualSales: 0,
-        totalQtyForReb: 0,
-        totalAdjustedQtyForReb: 0,
-        hasTransactions: false
-      });
-      
-      // Move to next month
-      currentDate.setMonth(currentDate.getMonth() + 1);
-    }
-    
-    // Get percentage value from database for percentage rebates
-    let percentageValue = 0;
-    let qtrRebate = 0;
-    
-    if (rebateType === 'Percentage') {
-      try {
-        // Try to get percentage from PerProdRebate table
-        const percentageQuery = `
-          SELECT TOP 1 PercentagePerBag
-          FROM PerProdRebate
-          WHERE RebateCode = @rebateCode
-        `;
-        
-        const percentageResult = await pool.request()
-          .input('rebateCode', sql.NVarChar(50), rebateCode)
-          .query(percentageQuery);
-
-        if (percentageResult.recordset.length > 0) {
-          percentageValue = parseFloat(percentageResult.recordset[0].PercentagePerBag) || 0;
-          console.log(`📊 Percentage found: ${percentageValue}%`);
-        }
-        
-        // Get QTR rebate for percentage rebates
-        const qtrRebateQuery = `
-          SELECT QtrRebate 
-          FROM PerCustRebate
-          WHERE CardCode = @customerCode AND RebateCode = @rebateCode
-        `;
-
-        const qtrRebateResult = await pool.request()
-          .input('customerCode', sql.NVarChar(50), customerCode)
-          .input('rebateCode', sql.NVarChar(50), rebateCode)
-          .query(qtrRebateQuery);
-
-        if (qtrRebateResult.recordset.length > 0) {
-          qtrRebate = parseFloat(qtrRebateResult.recordset[0].QtrRebate) || 0;
-          console.log(`📊 QTR Rebate found: ${qtrRebate}`);
-        }
-      } catch (error) {
-        console.log('⚠️ Could not fetch percentage value:', error.message);
-      }
-    } else {
-      // For Fixed/Incremental, get QTR rebate
-      try {
-        let qtrRebateQuery;
-        if (rebateType === 'Fixed') {
-          qtrRebateQuery = `
-            SELECT QtrRebate 
-            FROM FixCustRebate 
-            WHERE CardCode = @customerCode AND RebateCode = @rebateCode
-          `;
-        } else {
-          qtrRebateQuery = `
-            SELECT QtrRebate 
-            FROM IncCustRebate 
-            WHERE CardCode = @customerCode AND RebateCode = @rebateCode
-          `;
-        }
-
-        const qtrRebateResult = await pool.request()
-          .input('customerCode', sql.NVarChar(50), customerCode)
-          .input('rebateCode', sql.NVarChar(50), rebateCode)
-          .query(qtrRebateQuery);
-
-        if (qtrRebateResult.recordset.length > 0) {
-          qtrRebate = parseFloat(qtrRebateResult.recordset[0].QtrRebate) || 0;
-          console.log(`📊 QTR Rebate found: ${qtrRebate}`);
-        }
-      } catch (qtrError) {
-        console.log('⚠️ Could not fetch QTR rebate:', qtrError.message);
-      }
-    }
-
-    // Group transactions by month
-    const monthlyGroups = {};
-    
-    if (Array.isArray(transactions) && transactions.length > 0) {
-      transactions.forEach((transaction, index) => {
-        try {
-          if (!transaction.Date) return;
-          
-          const date = new Date(transaction.Date);
-          if (isNaN(date.getTime())) return;
-          
-          const year = date.getFullYear();
-          const month = date.getMonth();
-          const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`;
-          
-          if (!monthlyGroups[monthKey]) {
-            const monthName = monthNames[month];
-            const lastDay = new Date(year, month + 1, 0);
-            const payoutDate = `${lastDay.getMonth() + 1}.${lastDay.getDate()}.${lastDay.getFullYear().toString().slice(-2)}`;
-            const quarter = Math.floor(month / 3) + 1;
-            
-            monthlyGroups[monthKey] = {
-              monthKey: monthKey,
-              monthName: monthName,
-              monthNumber: month + 1,
-              year: year,
-              quarter: quarter,
-              payoutDate: payoutDate,
-              period: `${monthName} ${year}`,
-              totalActualSales: 0,
-              totalQtyForReb: 0,
-              totalAdjustedQtyForReb: 0,
-              monthlyQuota: 0,
-              eligible: false,
-              status: 'No Payout',
-              rebatePerBag: 0,
-              baseAmount: 0,
-              amount: 0,
-              amountReleased: 0,
-              balance: 0,
-              quotaMet: false,
-              transactions: [],
-              qtrRebate: qtrRebate,
-              percentageValue: percentageValue,
-              hasTransactions: true
-            };
-          }
-          
-          // Check if this is a 25kg item
-          const is25kgItem = transaction.Is25kgItem || 
-            (transaction.Item && transaction.Item.toLowerCase().includes('25kg'));
-          
-          const actualSales = parseFloat(transaction.ActualSales) || 0;
-          const qtyForReb = parseFloat(transaction.QtyForReb) || 0;
-          
-          // Calculate adjusted quantity (divide by 2 for 25kg items)
-          const adjustedQtyForReb = is25kgItem ? qtyForReb / 2 : qtyForReb;
-          
-          monthlyGroups[monthKey].totalActualSales += actualSales;
-          monthlyGroups[monthKey].totalQtyForReb += qtyForReb;
-          monthlyGroups[monthKey].totalAdjustedQtyForReb += adjustedQtyForReb;
-          
-          monthlyGroups[monthKey].transactions.push({
-            ...transaction,
-            is25kgItem: is25kgItem,
-            actualSales: actualSales,
-            qtyForReb: qtyForReb,
-            adjustedQtyForReb: adjustedQtyForReb
-          });
-          
-        } catch (transError) {
-          console.error(`❌ Error processing transaction ${index}:`, transError.message);
-        }
-      });
-    }
-    
-    // Get rebate per bag from database for Fixed/Incremental
-    let baseRebatePerBag = 0;
-    if (rebateType === 'Fixed') {
-      try {
-        const rebateQuery = `
-          SELECT TOP 1 RebatePerBag
-          FROM FixProdRebate
-          WHERE RebateCode = @rebateCode
-        `;
-        
-        const rebateResult = await pool.request()
-          .input('rebateCode', sql.NVarChar(50), rebateCode)
-          .query(rebateQuery);
-
-        if (rebateResult.recordset.length > 0) {
-          baseRebatePerBag = parseFloat(rebateResult.recordset[0].RebatePerBag) || 0;
-          console.log(`📊 Fixed Rebate per bag: ${baseRebatePerBag}`);
-        }
-      } catch (rebateError) {
-        console.log('⚠️ Could not fetch rebate per bag:', rebateError.message);
-      }
-    } else if (rebateType === 'Incremental') {
-      try {
-        const rebateQuery = `
-          SELECT TOP 1 RebatePerBag
-          FROM IncCustRange
-          WHERE RebateCode = @rebateCode
-          ORDER BY RangeNo
-        `;
-        
-        const rebateResult = await pool.request()
-          .input('rebateCode', sql.NVarChar(50), rebateCode)
-          .query(rebateQuery);
-
-        if (rebateResult.recordset.length > 0) {
-          baseRebatePerBag = parseFloat(rebateResult.recordset[0].RebatePerBag) || 0;
-          console.log(`📊 Incremental Rebate per bag: ${baseRebatePerBag}`);
-        }
-      } catch (rebateError) {
-        console.log('⚠️ Could not fetch rebate per bag:', rebateError.message);
-      }
-    }
-
-    // Get customer quotas for Fixed and Percentage rebates
-    let customerQuotas = [];
-    if (rebateType === 'Fixed' || rebateType === 'Percentage') {
-      try {
-        let quotaQuery;
-        
-        if (rebateType === 'Fixed') {
-          quotaQuery = `
-            SELECT T2.Month, T2.TargetQty
-            FROM FixCustRebate T1
-            INNER JOIN FixCustQuota T2 ON T1.Id = T2.CustRebateId
-            WHERE T1.CardCode = @customerCode AND T1.RebateCode = @rebateCode
-          `;
-        } else {
-          quotaQuery = `
-            SELECT T2.Month, T2.TargetQty
-            FROM PerCustRebate T1
-            INNER JOIN PerCustQuota T2 ON T1.Id = T2.PerCustRebateId
-            WHERE T1.CardCode = @customerCode AND T1.RebateCode = @rebateCode
-          `;
-        }
-        
-        const quotaResult = await pool.request()
-          .input('customerCode', sql.NVarChar(50), customerCode)
-          .input('rebateCode', sql.NVarChar(50), rebateCode)
-          .query(quotaQuery);
-
-        console.log(`📊 Quota query result:`, {
-          rowCount: quotaResult.recordset.length,
-          sampleRows: quotaResult.recordset.slice(0, 3)
-        });
-
-        // Store quotas by month name
-        quotaResult.recordset.forEach(row => {
-          if (row.Month && row.TargetQty !== null) {
-            customerQuotas[row.Month] = row.TargetQty;
-          }
-        });
-        
-        console.log(`📊 Customer quotas found for ${customerCode}:`, customerQuotas);
-        
-      } catch (quotaError) {
-        console.log('⚠️ Could not fetch customer quotas:', quotaError.message);
-      }
-    }
-
-    // NEW: Fetch SAP journal entries for released amounts
-    let sapJournalEntries = [];
-    try {
-      const sapJournalQuery = `
-        SELECT 
-          PayoutId,
-          CardCode,
-          RebateCode,
-          Period,
-          Amount as ReleasedAmount,
-          JournalRemarks,
-          CreatedDate as JournalDate,
-          Status as JournalStatus
-        FROM SAPJournalEntries 
-        WHERE CardCode = @customerCode 
-          AND RebateCode = @rebateCode
-          AND Status = 'Posted'
-      `;
-      
-      const sapResult = await pool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('rebateCode', sql.NVarChar(50), rebateCode)
-        .query(sapJournalQuery);
-
-      if (sapResult.recordset.length > 0) {
-        sapJournalEntries = sapResult.recordset.map(entry => ({
-          payoutId: entry.PayoutId,
-          cardCode: entry.CardCode,
-          rebateCode: entry.RebateCode,
-          period: entry.Period,
-          releasedAmount: parseFloat(entry.ReleasedAmount) || 0,
-          journalRemarks: entry.JournalRemarks,
-          journalDate: entry.JournalDate,
-          journalStatus: entry.JournalStatus
-        }));
-        console.log(`📊 Found ${sapJournalEntries.length} SAP journal entries for released amounts`);
-      }
-    } catch (sapError) {
-      console.log('⚠️ Could not fetch SAP journal entries:', sapError.message);
-    }
-
-    // Calculate amounts for months WITH TRANSACTIONS ONLY
-    const monthlyData = [];
-
-    // Process only months that have transaction data (from monthlyGroups)
-    for (const monthKey in monthlyGroups) {
-      const monthWithData = monthlyGroups[monthKey];
-      const monthInfo = allMonths.find(m => m.monthKey === monthKey) || {
-        monthKey: monthKey,
-        monthName: monthWithData.monthName,
-        monthNumber: monthWithData.monthNumber,
-        year: monthWithData.year,
-        quarter: monthWithData.quarter,
-        payoutDate: monthWithData.payoutDate,
-        period: monthWithData.period
-      };
-      
-      let baseAmount = 0;
-      let quotaMet = false;
-      let eligible = false;
-      let status = 'No Payout';
-      let totalActualSales = monthWithData.totalActualSales;
-      let totalQtyForReb = monthWithData.totalQtyForReb;
-      let totalAdjustedQtyForReb = monthWithData.totalAdjustedQtyForReb;
-      let rebatePerBag = baseRebatePerBag;
-      let monthPercentageValue = percentageValue;
-      let calculationNote = '';
-      
-      // Generate payout ID for this month
-      const payoutId = generatePayoutId(customerCode, rebateCode, monthKey);
-      
-      // Check for SAP released amount
-      const sapEntry = sapJournalEntries.find(entry => 
-        entry.payoutId === payoutId || entry.period === monthInfo.period
-      );
-      
-      const releasedAmount = sapEntry ? sapEntry.releasedAmount : 0;
-      
-      if (rebateType === 'Fixed') {
-        // Get target quota for this specific month
-        const targetQuota = customerQuotas[monthInfo.monthName] || 0;
-        
-        if (targetQuota > 0 && totalQtyForReb > 0) {
-          quotaMet = totalQtyForReb >= targetQuota;
-          
-          if (quotaMet) {
-            // MONTHLY FIXED REBATE CALCULATION:
-            baseAmount = totalAdjustedQtyForReb * baseRebatePerBag;
-            
-            status = sapEntry ? 'Released' : 'Pending';
-            eligible = true;
-            
-            calculationNote = `Adjusted Qty: ${totalAdjustedQtyForReb.toFixed(2)} × ${baseRebatePerBag} = ₱${baseAmount.toFixed(2)}`;
-            
-            console.log(`📊 MONTHLY FIXED REBATE CALCULATION for ${monthKey}:`, {
-              totalQtyForReb: totalQtyForReb,
-              totalAdjustedQtyForReb: totalAdjustedQtyForReb,
-              rebatePerBag: baseRebatePerBag,
-              baseAmount: baseAmount,
-              formula: `MONTHLY: Adjusted Qty ${totalAdjustedQtyForReb.toFixed(2)} × ${baseRebatePerBag} = ₱${baseAmount.toFixed(2)}`,
-              targetQuota: targetQuota,
-              quotaMet: quotaMet,
-              monthName: monthInfo.monthName,
-              calculationNote: calculationNote,
-              releasedAmount: releasedAmount,
-              status: status
-            });
-          } else {
-            calculationNote = `Quota not met: ${totalQtyForReb.toFixed(2)} < ${targetQuota}`;
-          }
-        } else {
-          calculationNote = `No quota or transactions`;
-        }
-      } else if (rebateType === 'Percentage') {
-        // Get target quota for this specific month
-        const targetQuota = customerQuotas[monthInfo.monthName] || 0;
-        
-        if (targetQuota > 0 && totalQtyForReb > 0) {
-          quotaMet = totalQtyForReb >= targetQuota;
-          
-          if (quotaMet) {
-            // PERCENTAGE REBATE CALCULATION:
-            baseAmount = (totalActualSales * percentageValue) / 100;
-            
-            status = sapEntry ? 'Released' : 'Pending';
-            eligible = true;
-            
-            calculationNote = `Sales: ₱${totalActualSales.toFixed(2)} × ${percentageValue}% = ₱${baseAmount.toFixed(2)}`;
-            
-            console.log(`📊 PERCENTAGE REBATE CALCULATION for ${monthKey}:`, {
-              totalActualSales: totalActualSales,
-              percentageValue: percentageValue,
-              baseAmount: baseAmount,
-              formula: `Sales: ₱${totalActualSales.toFixed(2)} × ${percentageValue}% = ₱${baseAmount.toFixed(2)}`,
-              targetQuota: targetQuota,
-              quotaMet: quotaMet,
-              releasedAmount: releasedAmount,
-              status: status
-            });
-          } else {
-            calculationNote = `Quota not met: ${totalQtyForReb.toFixed(2)} < ${targetQuota}`;
-          }
-        } else {
-          calculationNote = `No quota or transactions`;
-        }
-      } else if (rebateType === 'Incremental') {
-        const eligibleTransactions = monthWithData.transactions.filter(t => 
-          t.EligibilityStatus === 'Eligible' && t.CurrentRange
-        );
-        
-        eligible = eligibleTransactions.length > 0;
-        quotaMet = eligible;
-        
-        if (eligible) {
-          const highestRange = Math.max(...eligibleTransactions.map(t => t.CurrentRange || 0));
-          const highestTransaction = eligibleTransactions.find(t => t.CurrentRange === highestRange);
-          rebatePerBag = parseFloat(highestTransaction?.RebatePerBag) || 0;
-          
-          // Incremental rebate calculation
-          baseAmount = totalAdjustedQtyForReb * rebatePerBag;
-          status = sapEntry ? 'Released' : 'Pending';
-          
-          calculationNote = `Adjusted Qty: ${totalAdjustedQtyForReb.toFixed(2)} × ${rebatePerBag.toFixed(2)} = ₱${baseAmount.toFixed(2)}`;
-        } else {
-          calculationNote = `No eligible transactions`;
-        }
-      }
-      
-      // Monthly amounts
-      let totalAmount = baseAmount;
-      let balance = totalAmount - releasedAmount;
-      
-      if (!eligible || !quotaMet) {
-        totalAmount = 0;
-        balance = 0;
-      }
-      
-      // Create monthly record with generated payout ID and SAP data
-      const monthlyRecord = {
-        id: payoutId,
-        type: 'monthly',
-        cardCode: customerCode,
-        rebateCode: rebateCode,
-        date: monthInfo.payoutDate,
-        period: monthInfo.period,
-        payoutQuarter: `Q${monthInfo.quarter} ${monthInfo.year}`,
-        monthKey: monthKey,
-        monthNumber: monthInfo.monthNumber,
-        quarter: monthInfo.quarter,
-        year: monthInfo.year,
-        baseAmount: parseFloat(baseAmount.toFixed(2)),
-        amount: parseFloat(totalAmount.toFixed(2)),
-        status: calculateStatus(status, eligible, quotaMet, rebateType),
-        amountReleased: releasedAmount,
-        balance: parseFloat(balance.toFixed(2)),
-        eligible: eligible,
-        quotaMet: quotaMet,
-        totalActualSales: totalActualSales,
-        totalQtyForReb: totalQtyForReb,
-        totalAdjustedQtyForReb: totalAdjustedQtyForReb,
-        rebatePerBag: baseRebatePerBag,
-        calculationNote: calculationNote,
-        qtrRebate: qtrRebate,
-        isCompleteQuarter: false,
-        hasTransactions: true,
-        transactionCount: monthWithData?.transactions?.length || 0,
-        isNonEligibleMonth: !eligible || !quotaMet,
-        rebateType: rebateType,
-        // SAP Journal Entry Data
-        hasSapJournal: !!sapEntry,
-        journalRemarks: sapEntry?.journalRemarks || null,
-        journalDate: sapEntry?.journalDate || null,
-        journalStatus: sapEntry?.journalStatus || null
-      };
-      
-      monthlyData.push(monthlyRecord);
-    }
-
-    console.log(`📊 Processed ${monthlyData.length} months with transactions (months without transactions excluded from display)`);
-
-    // Second pass: group by quarter and calculate QTR rebate rows
-    const quarterlyData = [];
-
-    // Group monthly data by quarter
-    const quarters = {};
-    monthlyData.forEach(month => {
-      const quarterKey = `Q${month.quarter}-${month.year}`;
-      if (!quarters[quarterKey]) {
-        quarters[quarterKey] = {
-          quarter: month.quarter,
-          year: month.year,
-          months: [],
-          totalActualSales: 0,
-          totalQtyForReb: 0,
-          totalAdjustedQtyForReb: 0,
-          eligibleMonths: 0,
-          totalMonths: 0,
-          isComplete: false,
-          releasedAmount: 0,
-          sapEntries: []
-        };
-      }
-      
-      quarters[quarterKey].months.push(month);
-      quarters[quarterKey].totalActualSales += month.totalActualSales;
-      quarters[quarterKey].totalQtyForReb += month.totalQtyForReb;
-      quarters[quarterKey].totalAdjustedQtyForReb += month.totalAdjustedQtyForReb;
-      quarters[quarterKey].totalMonths++;
-      
-      if (month.quotaMet) {
-        quarters[quarterKey].eligibleMonths++;
-      }
-      
-      // Track released amounts
-      quarters[quarterKey].releasedAmount += month.amountReleased || 0;
-      if (month.hasSapJournal) {
-        quarters[quarterKey].sapEntries.push(month);
-      }
-    });
-
-    // Check each quarter for completeness and add QTR rebate row if applicable
-    Object.keys(quarters).forEach(quarterKey => {
-      const quarter = quarters[quarterKey];
-      
-      // A quarter is complete if ALL 3 months in that quarter met quota
-      quarter.isComplete = quarter.eligibleMonths === 3 && quarter.totalMonths === 3;
-      
-      if (quarter.isComplete && qtrRebate > 0) {
-        let qtrRebateAmount = 0;
-        let calculationNote = '';
-        
-        // Generate payout ID for QTR rebate
-        const qtrPayoutId = generatePayoutId(customerCode, rebateCode, `QTR-${quarterKey}`);
-        
-        // Check if there's a SAP journal entry for this QTR rebate
-        const qtrSapEntry = sapJournalEntries.find(entry => 
-          entry.payoutId === qtrPayoutId || 
-          entry.period === `Quarter ${quarter.quarter} Rebate - ${quarter.year}`
-        );
-        
-        const qtrReleasedAmount = qtrSapEntry ? qtrSapEntry.releasedAmount : 0;
-        
-        if (rebateType === 'Percentage') {
-          qtrRebateAmount = quarter.totalActualSales * (qtrRebate / 100);
-          calculationNote = `QTR Rebate (Percentage): ${quarter.totalActualSales.toFixed(2)} × ${qtrRebate}% = ${qtrRebateAmount.toFixed(2)}`;
-        } else if (rebateType === 'Fixed' || rebateType === 'Incremental') {
-          qtrRebateAmount = quarter.totalAdjustedQtyForReb * qtrRebate;
-          calculationNote = `QTR Rebate (Fixed/Incremental): Adjusted Qty ${quarter.totalAdjustedQtyForReb.toFixed(2)} × ${qtrRebate} = ${qtrRebateAmount.toFixed(2)}`;
-        }
-        
-        const qtrBalance = qtrRebateAmount - qtrReleasedAmount;
-        
-        // Add QTR rebate as separate row with generated payout ID - mark as isQtrRebate
-        quarterlyData.push({
-          id: qtrPayoutId,
-          type: 'quarterly',
-          cardCode: customerCode,
-          rebateCode: rebateCode,
-          date: `${quarter.quarter}.${quarter.year.toString().slice(-2)}`,
-          period: `Quarter ${quarter.quarter} Rebate - ${quarter.year}`,
-          payoutQuarter: `Q${quarter.quarter} ${quarter.year}`,
-          quarter: quarter.quarter,
-          year: quarter.year,
-          totalActualSales: quarter.totalActualSales,
-          totalQtyForReb: quarter.totalQtyForReb,
-          totalAdjustedQtyForReb: quarter.totalAdjustedQtyForReb,
-          baseAmount: qtrRebateAmount,
-          amount: parseFloat(qtrRebateAmount.toFixed(2)),
-          status: qtrSapEntry ? 'Released' : calculateStatus('Pending', true, true, rebateType),
-          amountReleased: qtrReleasedAmount,
-          balance: parseFloat(qtrBalance.toFixed(2)),
-          eligible: true,
-          quotaMet: true,
-          qtrRebate: qtrRebate,
-          isQtrRebate: true, // IMPORTANT: Mark as quarter rebate
-          calculationNote: calculationNote,
-          rebateType: rebateType,
-          // SAP Journal Entry Data
-          hasSapJournal: !!qtrSapEntry,
-          journalRemarks: qtrSapEntry?.journalRemarks || null,
-          journalDate: qtrSapEntry?.journalDate || null,
-          journalStatus: qtrSapEntry?.journalStatus || null
-        });
-      }
-    });
-
-    // Combine monthly and quarterly data
-    const allData = [...monthlyData, ...quarterlyData];
-    
-    console.log(`✅ Completed payout calculation: ${monthlyData.length} monthly (with transactions), ${quarterlyData.length} quarterly, type: ${rebateType}`);
-    console.log(`📊 Total with SAP journal entries: ${allData.filter(d => d.hasSapJournal).length}`);
-    
-    return allData;
-    
-  } catch (error) {
-    console.error('❌ Error in calculateMonthlyPayoutData:', error);
-    return [];
-  }
-};
-
-// routes/Van_payoutRoutes.js - Update the main endpoint for payouts with beginning balances
-router.get('/customer/:customerCode/payouts-with-beginning-balances', async (req, res) => {
-  try {
-    const { customerCode } = req.params;
-    const { db, rebateCode, rebateType } = req.query;
-    
-    console.log('💰 [VAN] Fetching payouts with beginning balances for customer:', {
-      customerCode,
-      rebateCode,
-      rebateType
-    });
-
-    if (!customerCode) {
-      return res.status(400).json({
-        success: false,
-        message: 'Customer code is required'
-      });
-    }
-
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
-      });
-    }
-
-    // Ensure table exists
-    await createPayoutHistoryTable(ownPool);
-
-    // Get ALL payouts including beginning balances, grouped by quarter
-    let query = `
-      WITH PayoutData AS (
-        SELECT 
-          ph.*,
-          CASE 
-            WHEN ph.Period LIKE 'Balance of Q%' THEN 1
-            ELSE 0
-          END AS IsBeginningBalance,
-          -- Extract quarter and year from period
-          CASE 
-            WHEN ph.Period LIKE 'Balance of Q%' THEN
-              RIGHT(SUBSTRING(ph.Period, CHARINDEX('Q', ph.Period), 3), 1)  -- Q number
-            WHEN ph.Period LIKE 'January%' OR ph.Period LIKE 'February%' OR ph.Period LIKE 'March%' THEN '1'
-            WHEN ph.Period LIKE 'April%' OR ph.Period LIKE 'May%' OR ph.Period LIKE 'June%' THEN '2'
-            WHEN ph.Period LIKE 'July%' OR ph.Period LIKE 'August%' OR ph.Period LIKE 'September%' THEN '3'
-            WHEN ph.Period LIKE 'October%' OR ph.Period LIKE 'November%' OR ph.Period LIKE 'December%' THEN '4'
-            WHEN ph.Period LIKE 'Quarter 1%' THEN '1'
-            WHEN ph.Period LIKE 'Quarter 2%' THEN '2'
-            WHEN ph.Period LIKE 'Quarter 3%' THEN '3'
-            WHEN ph.Period LIKE 'Quarter 4%' THEN '4'
-            ELSE NULL
-          END AS Quarter,
-          -- Extract year from period
-          CASE 
-            WHEN ph.Period LIKE '%2025%' THEN 2025
-            WHEN ph.Period LIKE '%2024%' THEN 2024
-            WHEN ph.Period LIKE '%2023%' THEN 2023
-            WHEN ph.Period LIKE '%2022%' THEN 2022
-            WHEN ph.Period LIKE '%2021%' THEN 2021
-            WHEN ph.Period LIKE '%2020%' THEN 2020
-            ELSE YEAR(GETDATE())
-          END AS Year,
-          -- Sort order for beginning balances (first day of quarter)
-          CASE 
-            WHEN ph.Period LIKE 'Balance of Q%' THEN 
-              CAST(
-                CASE 
-                  WHEN ph.Period LIKE '%2025%' THEN '2025-'
-                  WHEN ph.Period LIKE '%2024%' THEN '2024-'
-                  WHEN ph.Period LIKE '%2023%' THEN '2023-'
-                  WHEN ph.Period LIKE '%2022%' THEN '2022-'
-                  ELSE CAST(YEAR(GETDATE()) AS VARCHAR) + '-'
-                END +
-                RIGHT('0' + SUBSTRING(ph.Period, CHARINDEX('Q', ph.Period) + 1, 1), 2) + '-01' 
-                AS DATE
-              )
-            -- For regular months, use month numbers for sorting
-            ELSE 
-              CASE 
-                WHEN ph.Period LIKE 'January%' THEN CAST(Year AS VARCHAR) + '-01-01'
-                WHEN ph.Period LIKE 'February%' THEN CAST(Year AS VARCHAR) + '-02-01'
-                WHEN ph.Period LIKE 'March%' THEN CAST(Year AS VARCHAR) + '-03-01'
-                WHEN ph.Period LIKE 'April%' THEN CAST(Year AS VARCHAR) + '-04-01'
-                WHEN ph.Period LIKE 'May%' THEN CAST(Year AS VARCHAR) + '-05-01'
-                WHEN ph.Period LIKE 'June%' THEN CAST(Year AS VARCHAR) + '-06-01'
-                WHEN ph.Period LIKE 'July%' THEN CAST(Year AS VARCHAR) + '-07-01'
-                WHEN ph.Period LIKE 'August%' THEN CAST(Year AS VARCHAR) + '-08-01'
-                WHEN ph.Period LIKE 'September%' THEN CAST(Year AS VARCHAR) + '-09-01'
-                WHEN ph.Period LIKE 'October%' THEN CAST(Year AS VARCHAR) + '-10-01'
-                WHEN ph.Period LIKE 'November%' THEN CAST(Year AS VARCHAR) + '-11-01'
-                WHEN ph.Period LIKE 'December%' THEN CAST(Year AS VARCHAR) + '-12-01'
-                WHEN ph.Period LIKE 'Quarter 1%' THEN CAST(Year AS VARCHAR) + '-01-01'
-                WHEN ph.Period LIKE 'Quarter 2%' THEN CAST(Year AS VARCHAR) + '-04-01'
-                WHEN ph.Period LIKE 'Quarter 3%' THEN CAST(Year AS VARCHAR) + '-07-01'
-                WHEN ph.Period LIKE 'Quarter 4%' THEN CAST(Year AS VARCHAR) + '-10-01'
-                ELSE CAST(YEAR(GETDATE()) AS VARCHAR) + '-01-01'
-              END
-          END AS SortDate,
-          -- Month order within quarter
-          CASE 
-            WHEN ph.Period LIKE 'January%' OR ph.Period LIKE 'April%' OR ph.Period LIKE 'July%' OR ph.Period LIKE 'October%' THEN 1
-            WHEN ph.Period LIKE 'February%' OR ph.Period LIKE 'May%' OR ph.Period LIKE 'August%' OR ph.Period LIKE 'November%' THEN 2
-            WHEN ph.Period LIKE 'March%' OR ph.Period LIKE 'June%' OR ph.Period LIKE 'September%' OR ph.Period LIKE 'December%' THEN 3
-            ELSE 0
-          END AS MonthOrder
-        FROM PayoutHistory ph
-        WHERE ph.CardCode = @customerCode 
-    `;
-    
-    const request = ownPool.request()
-      .input('customerCode', sql.NVarChar(50), customerCode);
-    
-    if (rebateCode) {
-      query += ` AND ph.RebateCode = @rebateCode`;
-      request.input('rebateCode', sql.NVarChar(50), rebateCode);
-    }
-    
-    if (rebateType) {
-      query += ` AND ph.RebateType = @rebateType`;
-      request.input('rebateType', sql.NVarChar(50), rebateType);
-    }
-    
-    query += `
-      )
-      SELECT *
-      FROM PayoutData
-      ORDER BY 
-        Year ASC,
-        Quarter ASC,
-        IsBeginningBalance DESC, -- Beginning balances first in each quarter
-        MonthOrder ASC,
-        SortDate ASC
-    `;
-    
-    const result = await request.query(query);
-    const allPayouts = result.recordset;
-    
-    console.log(`📊 [VAN] Found ${allPayouts.length} payout records for ${customerCode}`);
-    
-    // Group payouts by quarter for the response
-    const quarters = {};
-    
-    allPayouts.forEach(payout => {
-      const quarterKey = `Q${payout.Quarter}-${payout.Year}`;
-      
-      if (!quarters[quarterKey]) {
-        quarters[quarterKey] = {
-          quarter: parseInt(payout.Quarter),
-          year: payout.Year,
-          beginningBalance: null,
-          monthlyPayouts: [],
-          quarterRebates: [],
-          totalQuarterAmount: 0
-        };
-      }
-      
-      // Check if this is a beginning balance
-      if (payout.IsBeginningBalance === 1) {
-        quarters[quarterKey].beginningBalance = payout;
-      } 
-      // Check if this is a quarter rebate
-      else if (payout.Period && payout.Period.includes('Quarter') && payout.Period.includes('Rebate')) {
-        quarters[quarterKey].quarterRebates.push(payout);
-        quarters[quarterKey].totalQuarterAmount += parseFloat(payout.TotalAmount) || 0;
-      }
-      // Regular monthly payout
-      else {
-        quarters[quarterKey].monthlyPayouts.push(payout);
-        quarters[quarterKey].totalQuarterAmount += parseFloat(payout.TotalAmount) || 0;
-      }
-    });
-    
-    // Convert quarters object to array and sort chronologically
-    const sortedQuarters = Object.values(quarters).sort((a, b) => {
-      if (a.year !== b.year) return a.year - b.year;
-      return a.quarter - b.quarter;
-    });
-    
-    // Calculate total carried over balance
-    const totalCarriedOverBalance = allPayouts
-      .filter(p => p.IsBeginningBalance === 1)
-      .reduce((sum, p) => sum + (parseFloat(p.TotalAmount) || parseFloat(p.Balance) || 0), 0);
-    
-    res.json({
-      success: true,
-      data: {
-        allPayouts: allPayouts,
-        quarters: sortedQuarters,
-        totalCarriedOverBalance: totalCarriedOverBalance,
-        customerCode: customerCode,
-        rebateCode: rebateCode,
-        rebateType: rebateType,
-        beginningBalanceCount: allPayouts.filter(p => p.IsBeginningBalance === 1).length,
-        regularPayoutCount: allPayouts.filter(p => p.IsBeginningBalance === 0).length
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ [VAN] Error fetching payouts with beginning balances:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching payout data with beginning balances',
-      error: error.message
-    });
-  }
-});
-
-
-router.get('/customer/:customerCode/carried-forward-balances', async (req, res) => {
-  try {
-    const { customerCode } = req.params;
-    const { db, rebateType, startDate, endDate } = req.query;
-    
-    console.log('🔄 Checking for carried forward balances:', {
-      customerCode,
-      rebateType,
-      startDate,
-      endDate
-    });
-
-    if (!customerCode || !rebateType) {
-      return res.status(400).json({
-        success: false,
-        message: 'Customer code and rebate type are required'
-      });
-    }
-
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
-      });
-    }
-
-    const dateFrom = startDate || `${new Date().getFullYear()}-01-01`;
-    const dateTo = endDate || new Date().toISOString().split('T')[0];
-    
-    const carriedForwardBalances = await getCarriedForwardBeginningBalances(
-      ownPool,
-      customerCode,
-      rebateType,
-      dateFrom,
-      dateTo
-    );
-
-    res.json({
-      success: true,
-      data: {
-        carriedForwardBalances,
-        customerCode,
-        rebateType,
-        dateRange: { dateFrom, dateTo }
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Error checking carried forward balances:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error checking carried forward balances',
-      error: error.message
-    });
-  }
-});
-
-router.post('/carry-forward-balance', async (req, res) => {
-  try {
-    const { db, balanceId, targetQuarter, targetYear } = req.body;
-    
-    console.log('🔄 Carrying forward balance:', { balanceId, targetQuarter, targetYear });
-
-    if (!balanceId || !targetQuarter || !targetYear) {
-      return res.status(400).json({
-        success: false,
-        message: 'Balance ID, target quarter and year are required'
-      });
-    }
-
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
-      });
-    }
-
-    // Get the original balance
-    const getBalanceQuery = `
-      SELECT * FROM PayoutHistory WHERE Id = @balanceId
-    `;
-    
-    const balanceResult = await ownPool.request()
-      .input('balanceId', sql.Int, balanceId)
-      .query(getBalanceQuery);
-
-    if (balanceResult.recordset.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Balance not found'
-      });
-    }
-
-    const originalBalance = balanceResult.recordset[0];
-    
-    // Check if already exists in target quarter
-    const targetPeriod = `Balance of Q${targetQuarter} ${targetYear}`;
-    
-    const checkQuery = `
-      SELECT COUNT(*) as Count 
-      FROM PayoutHistory 
-      WHERE CardCode = @CardCode 
-        AND RebateType = @RebateType
-        AND Period = @Period
-    `;
-    
-    const checkResult = await ownPool.request()
-      .input('CardCode', sql.NVarChar(50), originalBalance.CardCode)
-      .input('RebateType', sql.NVarChar(50), originalBalance.RebateType)
-      .input('Period', sql.NVarChar(100), targetPeriod)
-      .query(checkQuery);
-
-    if (checkResult.recordset[0].Count > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Balance already exists for ${targetPeriod}`
-      });
-    }
-
-    // Create carried forward balance
-    const newPayoutId = `CF-${originalBalance.CardCode}-${originalBalance.RebateType}-Q${targetQuarter}-${targetYear}`;
-    
-    // Calculate date for beginning balance (first day of target quarter)
-    const balanceDate = new Date(targetYear, (targetQuarter - 1) * 3, 1);
-    const formattedDate = `${balanceDate.getMonth() + 1}.${balanceDate.getDate()}.${balanceDate.getFullYear().toString().slice(-2)}`;
-    
-    const insertQuery = `
-      INSERT INTO PayoutHistory (
-        PayoutId,
-        CardCode,
-        RebateCode,
-        RebateType,
-        Period,
-        PayoutQuarter,
-        PayoutDate,
-        BaseAmount,
-        TotalAmount,
-        AmountReleased,
-        RebateBalance,
-        Status,
-        CreatedDate,
-        UpdatedDate
-      )
-      VALUES (
-        @PayoutId,
-        @CardCode,
-        @RebateCode,
-        @RebateType,
-        @Period,
-        @PayoutQuarter,
-        @PayoutDate,
-        @BaseAmount,
-        @TotalAmount,
-        @AmountReleased,
-        @RebateBalance,
-        @Status,
-        GETDATE(),
-        GETDATE()
-      )
-    `;
-    
-    await ownPool.request()
-      .input('PayoutId', sql.NVarChar(100), newPayoutId)
-      .input('CardCode', sql.NVarChar(50), originalBalance.CardCode)
-      .input('RebateCode', sql.NVarChar(50), originalBalance.RebateCode)
-      .input('RebateType', sql.NVarChar(50), originalBalance.RebateType)
-      .input('Period', sql.NVarChar(100), targetPeriod)
-      .input('PayoutQuarter', sql.NVarChar(20), `Q${targetQuarter} ${targetYear}`)
-      .input('PayoutDate', sql.NVarChar(20), formattedDate)
-      .input('BaseAmount', sql.Decimal(18, 2), 0)
-      .input('TotalAmount', sql.Decimal(18, 2), originalBalance.TotalAmount)
-      .input('AmountReleased', sql.Decimal(18, 2), 0)
-      .input('RebateBalance', sql.Decimal(18, 2), originalBalance.TotalAmount)
-      .input('Status', sql.NVarChar(50), null)
-      .query(insertQuery);
-
-    console.log(`✅ Carried forward balance ${originalBalance.Id} to ${targetPeriod}`);
-
-    res.json({
-      success: true,
-      message: `Balance carried forward to ${targetPeriod}`,
-      data: {
-        originalBalanceId: originalBalance.Id,
-        newPeriod: targetPeriod,
-        amount: originalBalance.TotalAmount
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Error carrying forward balance:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error carrying forward balance',
-      error: error.message
-    });
-  }
-});
-
-// Add update status endpoint
-router.put('/payouts/:payoutId/status', async (req, res) => {
-  try {
-    const { payoutId } = req.params;
-    const { db, status, amountReleased } = req.body;
-    
-    console.log('🔄 [VAN] Updating payout status:', { payoutId, status, amountReleased });
-    
-    if (!payoutId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Payout ID is required'
-      });
-    }
-
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
-      });
-    }
-
-    // Get current payout record
-    const getQuery = `
-      SELECT Id, PayoutId, CardCode, RebateCode, BaseAmount, TotalAmount, AmountReleased, Status, RebateBalance
-      FROM PayoutHistory
-      WHERE PayoutId = @payoutId
-    `;
-    
-    const getResult = await ownPool.request()
-      .input('payoutId', sql.NVarChar(100), payoutId)
-      .query(getQuery);
-
-    if (getResult.recordset.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: `Payout with PayoutId ${payoutId} not found.`
-      });
-    }
-
-    const currentPayout = getResult.recordset[0];
-    const totalAmount = parseFloat(currentPayout.TotalAmount) || 0;
-    let newAmountReleased = parseFloat(amountReleased) || 0;
-    
-    // Validate amount
-    newAmountReleased = Math.min(Math.max(newAmountReleased, 0), totalAmount);
-    
-    // Calculate new balance
-    const newBalance = Math.max(0, totalAmount - newAmountReleased);
-    
-    // Determine new status
-    let newStatus = status || currentPayout.Status;
-    if (newAmountReleased === 0 && totalAmount > 0) {
-      newStatus = 'Pending';
-    } else if (newAmountReleased >= totalAmount) {
-      newStatus = 'Paid';
-    } else if (newAmountReleased > 0) {
-      newStatus = 'Partially Paid';
-    }
-    
-    // Determine release date
-    let releaseDate = currentPayout.ReleaseDate;
-    if (newAmountReleased > 0 && (!releaseDate || releaseDate === null)) {
-      releaseDate = new Date();
-    }
-
-    // Update payout
-    const updateQuery = `
-      UPDATE PayoutHistory 
-      SET 
-        Status = @status,
-        AmountReleased = @amountReleased,
-        ReleaseDate = @releaseDate,
-        RebateBalance = @balance,
-        UpdatedDate = GETDATE()
-      WHERE PayoutId = @payoutId
-    `;
-    
-    const result = await ownPool.request()
-      .input('status', sql.NVarChar(50), newStatus)
-      .input('amountReleased', sql.Decimal(18, 2), newAmountReleased)
-      .input('releaseDate', sql.DateTime, releaseDate)
-      .input('balance', sql.Decimal(18, 2), newBalance)
-      .input('payoutId', sql.NVarChar(100), payoutId)
-      .query(updateQuery);
-
-    console.log(`✅ [VAN] Updated payout ${payoutId}:`, {
-      totalAmount: totalAmount,
-      amountReleased: newAmountReleased,
-      balance: newBalance,
-      status: newStatus
-    });
-
-    res.json({
-      success: true,
-      message: `Payout updated successfully`,
-      data: {
-        payoutId: payoutId,
-        baseAmount: currentPayout.BaseAmount,
-        totalAmount: totalAmount,
-        status: newStatus,
-        amountReleased: newAmountReleased,
-        balance: newBalance,
-        releaseDate: releaseDate,
-        rowsAffected: result.rowsAffected[0]
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ [VAN] Error updating payout:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error updating payout',
-      error: error.message
-    });
-  }
-});
-
+/* ══════════════════════════════════════════════════════════════════
+   TABLE SETUP
+   ══════════════════════════════════════════════════════════════════ */
 const createPayoutHistoryTable = async (pool) => {
   try {
-    const tableCheckQuery = `
+    const q = `
       IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'PayoutHistory')
       BEGIN
         CREATE TABLE PayoutHistory (
           Id INT IDENTITY(1,1) PRIMARY KEY,
-          PayoutId NVARCHAR(100) NOT NULL,
+          PayoutId NVARCHAR(150) NOT NULL,
           CardCode NVARCHAR(50) NOT NULL,
           RebateType NVARCHAR(50) NOT NULL,
           RebateCode NVARCHAR(50) NOT NULL,
           PayoutDate NVARCHAR(20),
           Period NVARCHAR(100),
           PayoutQuarter NVARCHAR(20),
-          BaseAmount DECIMAL(18, 2) DEFAULT 0,
-          TotalAmount DECIMAL(18, 2) DEFAULT 0,
+          BaseAmount DECIMAL(18,2) DEFAULT 0,
+          TotalAmount DECIMAL(18,2) DEFAULT 0,
           Status NVARCHAR(50) DEFAULT 'Pending',
-          AmountReleased DECIMAL(18, 2) DEFAULT 0,
+          AmountReleased DECIMAL(18,2) DEFAULT 0,
+          SapReleasedAmount DECIMAL(18,2) DEFAULT 0,
+          SapLastSync DATETIME,
+          DocumentType NVARCHAR(50),
+          DocumentNumber NVARCHAR(100),
           ReleaseDate DATETIME,
-          RebateBalance DECIMAL(18, 2) DEFAULT 0,
+          RebateBalance DECIMAL(18,2) DEFAULT 0,
           CreatedDate DATETIME DEFAULT GETDATE(),
           UpdatedDate DATETIME DEFAULT GETDATE()
         )
-        
         CREATE INDEX IX_PayoutHistory_CardCode ON PayoutHistory(CardCode);
         CREATE INDEX IX_PayoutHistory_RebateCode ON PayoutHistory(RebateCode);
         CREATE INDEX IX_PayoutHistory_RebateType ON PayoutHistory(RebateType);
@@ -2072,1996 +319,815 @@ const createPayoutHistoryTable = async (pool) => {
       END
       ELSE
       BEGIN
-        -- Add PayoutQuarter column if it doesn't exist
-        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS 
-                       WHERE TABLE_NAME = 'PayoutHistory' AND COLUMN_NAME = 'PayoutQuarter')
-        BEGIN
+        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='PayoutHistory' AND COLUMN_NAME='PayoutQuarter')
           ALTER TABLE PayoutHistory ADD PayoutQuarter NVARCHAR(20);
-        END
+        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='PayoutHistory' AND COLUMN_NAME='SapReleasedAmount')
+          ALTER TABLE PayoutHistory ADD SapReleasedAmount DECIMAL(18,2) DEFAULT 0;
+        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='PayoutHistory' AND COLUMN_NAME='SapLastSync')
+          ALTER TABLE PayoutHistory ADD SapLastSync DATETIME;
+        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='PayoutHistory' AND COLUMN_NAME='DocumentType')
+          ALTER TABLE PayoutHistory ADD DocumentType NVARCHAR(50);
+        IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='PayoutHistory' AND COLUMN_NAME='DocumentNumber')
+          ALTER TABLE PayoutHistory ADD DocumentNumber NVARCHAR(100) NULL;
+        IF EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='PayoutHistory' AND COLUMN_NAME='DocumentType' AND CHARACTER_MAXIMUM_LENGTH < 50)
+          ALTER TABLE PayoutHistory ALTER COLUMN DocumentType NVARCHAR(50) NULL;
       END
     `;
-    
-    await pool.request().query(tableCheckQuery);
-    console.log('✅ [VAN] PayoutHistory table created/verified');
-    
-  } catch (error) {
-    console.error('❌ [VAN] Error creating/updating PayoutHistory table:', error);
-  }
+    await pool.request().query(q);
+  } catch (e) { console.error('❌ createPayoutHistoryTable:', e); }
 };
 
-// Helper function to get quarter string from period or date
-const getQuarterString = (period, date = null) => {
+const ensureSAPColumnsExist = async (pool) => {
+  try { await createPayoutHistoryTable(pool); }
+  catch (e) { console.error('❌ ensureSAPColumnsExist:', e); }
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   SAVE EARNED ROWS — only BaseAmount / TotalAmount / Status
+   ══════════════════════════════════════════════════════════════════ */
+const saveEarnedPayoutsToDatabase = async (payouts, pool, rebateCode, customerCode) => {
   try {
-    // For beginning balances, extract from period
-    if (period && period.includes('Balance of Q')) {
-      const match = period.match(/Balance of Q(\d+) (\d+)/);
-      if (match) {
-        const quarter = parseInt(match[1]);
-        const year = parseInt(match[2]);
-        return `Q${quarter} ${year}`;
-      }
-    }
-    
-    // For regular periods, extract quarter based on month
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
-                       'July', 'August', 'September', 'October', 'November', 'December'];
-    
-    // Check for month in period
-    for (let i = 0; i < monthNames.length; i++) {
-      if (period && period.includes(monthNames[i])) {
-        // Determine quarter (1-4)
-        const quarter = Math.floor(i / 3) + 1;
-        
-        // Try to extract year from period
-        const yearMatch = period.match(/\b(20\d{2})\b/);
-        let year = new Date().getFullYear();
-        
-        if (yearMatch) {
-          year = parseInt(yearMatch[1]);
-        } else if (date) {
-          // Try to get year from date
-          const dateObj = new Date(date);
-          if (!isNaN(dateObj)) {
-            year = dateObj.getFullYear();
-          }
+    console.log(`💾 [VAN] Saving ${payouts.length} earned rows`);
+    for (const payout of payouts) {
+      try {
+        const baseAmount = parseFloat(payout.baseAmount) || 0;
+        const totalAmount = baseAmount;
+        const isQuotaNotMet = payout.quotaMet === false && payout.eligible === false;
+        const finalBase = isQuotaNotMet ? 0 : baseAmount;
+        const finalTotal = isQuotaNotMet ? 0 : totalAmount;
+        const finalStatus = finalTotal === 0 ? 'No Payout' : (payout.status || 'Pending');
+
+        const check = await pool.request()
+          .input('PayoutId', sql.NVarChar(150), payout.id)
+          .query(`SELECT Id FROM PayoutHistory WHERE PayoutId = @PayoutId`);
+
+        if (check.recordset.length > 0) {
+          await pool.request()
+            .input('PayoutId', sql.NVarChar(150), payout.id)
+            .input('BaseAmount', sql.Decimal(18, 2), finalBase)
+            .input('TotalAmount', sql.Decimal(18, 2), finalTotal)
+            .input('Status', sql.NVarChar(50), finalStatus)
+            .input('RebateType', sql.NVarChar(50), payout.rebateType || 'Fixed')
+            .input('PayoutQuarter', sql.NVarChar(20), payout.payoutQuarter || null)
+            .query(`
+              UPDATE PayoutHistory
+              SET BaseAmount = @BaseAmount, TotalAmount = @TotalAmount,
+                  Status = @Status, RebateType = @RebateType,
+                  PayoutQuarter = @PayoutQuarter, UpdatedDate = GETDATE()
+              WHERE PayoutId = @PayoutId
+            `);
+        } else {
+          await pool.request()
+            .input('PayoutId', sql.NVarChar(150), payout.id)
+            .input('CardCode', sql.NVarChar(50), payout.cardCode || customerCode)
+            .input('RebateCode', sql.NVarChar(50), payout.rebateCode || rebateCode)
+            .input('RebateType', sql.NVarChar(50), payout.rebateType || 'Fixed')
+            .input('PayoutDate', sql.NVarChar(20), '')
+            .input('Period', sql.NVarChar(100), payout.period || '')
+            .input('PayoutQuarter', sql.NVarChar(20), payout.payoutQuarter || null)
+            .input('BaseAmount', sql.Decimal(18, 2), finalBase)
+            .input('TotalAmount', sql.Decimal(18, 2), finalTotal)
+            .input('Status', sql.NVarChar(50), finalStatus)
+            .input('AmountReleased', sql.Decimal(18, 2), 0)
+            .input('SapReleasedAmount', sql.Decimal(18, 2), 0)
+            .input('RebateBalance', sql.Decimal(18, 2), 0)
+            .query(`
+              INSERT INTO PayoutHistory (
+                PayoutId, CardCode, RebateCode, RebateType,
+                PayoutDate, Period, PayoutQuarter,
+                BaseAmount, TotalAmount, Status,
+                AmountReleased, SapReleasedAmount, RebateBalance
+              ) VALUES (
+                @PayoutId, @CardCode, @RebateCode, @RebateType,
+                @PayoutDate, @Period, @PayoutQuarter,
+                @BaseAmount, @TotalAmount, @Status,
+                @AmountReleased, @SapReleasedAmount, @RebateBalance
+              )
+            `);
         }
-        
-        return `Q${quarter} ${year}`;
-      }
+      } catch (e) { console.error(`❌ saveEarned ${payout?.id}:`, e.message); }
     }
-    
-    // Check for quarter patterns
-    const quarterMatch = period.match(/Q(\d+).*?(20\d{2}|\d{2})/i);
-    if (quarterMatch) {
-      const quarter = parseInt(quarterMatch[1]);
-      let year = quarterMatch[2];
-      
-      // Handle 2-digit year
-      if (year.length === 2) {
-        year = parseInt(year) < 50 ? `20${year}` : `19${year}`;
-      }
-      
-      return `Q${quarter} ${year}`;
-    }
-    
-    // Default to current quarter
-    const now = new Date();
-    const currentQuarter = Math.floor(now.getMonth() / 3) + 1;
-    return `Q${currentQuarter} ${now.getFullYear()}`;
-    
-  } catch (error) {
-    console.error('❌ Error getting quarter string:', error);
-    return 'Q1 2025';
-  }
+    console.log(`✅ [VAN] Saved ${payouts.length} earned rows`);
+  } catch (e) { console.error('❌ saveEarnedPayoutsToDatabase:', e); }
 };
 
-
-// Check if beginning balance calculation is needed
-router.get('/check-balance-calculation', async (req, res) => {
+/* ══════════════════════════════════════════════════════════════════
+   INSERT REDEMPTION ROWS
+   Skips docs outside rebate period → no cross-year duplication
+   ══════════════════════════════════════════════════════════════════ */
+const insertRedemptionRows = async (customerCode, rebateCode, sapEntries, pool, rebateFrom = null, rebateTo = null) => {
   try {
-    const { db, cardCode } = req.query;
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
+    await pool.request()
+      .input('cc', sql.NVarChar(50), customerCode)
+      .input('rc', sql.NVarChar(50), rebateCode)
+      .query(`
+        DELETE FROM PayoutHistory
+        WHERE CardCode = @cc AND RebateCode = @rc
+          AND (PayoutId LIKE '${REDEMPTION_PREFIX}-%'
+            OR PayoutId LIKE 'SAP-%'
+            OR PayoutId LIKE 'SAPDOC-%')
+      `);
+
+    let inserted = 0, skipped = 0;
+    for (const sapEntry of sapEntries) {
+      if (sapEntry.isRelatedCustomer) continue;
+      const { year, month, periodName, periodKey, entries } = sapEntry;
+      if (!Array.isArray(entries) || entries.length === 0) continue;
+
+      for (let i = 0; i < entries.length; i++) {
+        const doc = entries[i];
+        const rawType = String(doc.sourceType || '').toUpperCase().trim();
+        if (!rawType) continue;
+        const signedAmount = parseFloat(doc.netAmount) || 0;
+        if (Math.abs(signedAmount) < 0.01) continue;
+
+        const docDateRaw = doc.docDate || doc.DocDate;
+        const docDate = docDateRaw ? new Date(docDateRaw) : new Date(year, month - 1, 1);
+        if (rebateFrom && docDate < rebateFrom) { skipped++; continue; }
+        if (rebateTo && docDate > rebateTo) { skipped++; continue; }
+
+        const yy = String(docDate.getFullYear()).slice(-2);
+        const payoutDate = `${docDate.getMonth() + 1}.${docDate.getDate()}.${yy}`;
+        const documentNumber = rawType === 'JE'
+          ? String(doc.transId || doc.docNum || doc.baseRef || '')
+          : String(doc.baseRef || doc.docNum || doc.transId || '');
+
+        const unique = `${periodKey}-${rawType}-${documentNumber || i}-${i}`;
+        const redemptionId = `${REDEMPTION_PREFIX}-${customerCode}-${rebateCode}-${unique}`.slice(0, 150);
+        const twoDigit = String(year).slice(-2);
+        const pQuarter = `Q${Math.ceil(month / 3)} ${year}`;
+
+        await pool.request()
+          .input('PayoutId', sql.NVarChar(150), redemptionId)
+          .input('CardCode', sql.NVarChar(50), customerCode)
+          .input('RebateCode', sql.NVarChar(50), rebateCode)
+          .input('RebateType', sql.NVarChar(50), 'SAP-REDEMPTION')
+          .input('DocumentType', sql.NVarChar(50), rawType)
+          .input('DocumentNumber', sql.NVarChar(100), documentNumber || null)
+          .input('PayoutDate', sql.NVarChar(20), payoutDate)
+          .input('Period', sql.NVarChar(100), periodName || '')
+          .input('PayoutQuarter', sql.NVarChar(20), pQuarter)
+          .input('BaseAmount', sql.Decimal(18, 2), 0)
+          .input('TotalAmount', sql.Decimal(18, 2), signedAmount)
+          .input('Status', sql.NVarChar(50), 'Released')
+          .input('AmountReleased', sql.Decimal(18, 2), signedAmount)
+          .input('SapReleasedAmount', sql.Decimal(18, 2), signedAmount)
+          .input('RebateBalance', sql.Decimal(18, 2), 0)
+          .query(`
+            INSERT INTO PayoutHistory (
+              PayoutId, CardCode, RebateCode, RebateType,
+              DocumentType, DocumentNumber, PayoutDate, Period, PayoutQuarter,
+              BaseAmount, TotalAmount, Status,
+              AmountReleased, SapReleasedAmount, SapLastSync, RebateBalance
+            ) VALUES (
+              @PayoutId, @CardCode, @RebateCode, @RebateType,
+              @DocumentType, @DocumentNumber, @PayoutDate, @Period, @PayoutQuarter,
+              @BaseAmount, @TotalAmount, @Status,
+              @AmountReleased, @SapReleasedAmount, GETDATE(), @RebateBalance
+            )
+          `);
+        inserted++;
+      }
+    }
+    console.log(`📄 [REDEMPTION] Inserted ${inserted}, skipped ${skipped} for ${customerCode}/${rebateCode}`);
+  } catch (err) { console.error('❌ insertRedemptionRows:', err.message); }
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   calculateMonthlyPayoutData — earned only, unitPerQty/25kg consistent
+   Fixed / Percentage / Incremental all use qtyForReb = (sales / unitPerQty) / (25kg ? 2 : 1)
+   ══════════════════════════════════════════════════════════════════ */
+const calculateMonthlyPayoutData = async (
+  transactions, rebateType, customerCode, rebateCode, pool,
+  frequency = 'Quarterly', sapEntries = [], quotaType = 'N/A',
+  periodStart = null, periodEnd = null
+) => {
+  try {
+    console.log(`📊 [VAN] Calc: ${customerCode}/${rebateCode} type=${rebateType} freq=${frequency} quota=${quotaType}`);
+    const isDynamicFrequency = frequency && frequency !== 'Monthly' && frequency !== 'Quarterly';
+
+    // Program dates
+    const rp = await pool.request()
+      .input('rebateCode', sql.NVarChar(50), rebateCode)
+      .query(`SELECT DateFrom, DateTo FROM RebateProgram WHERE RebateCode = @rebateCode`);
+    let programStartDate = new Date(), programEndDate = new Date();
+    if (rp.recordset.length > 0) {
+      if (rp.recordset[0].DateFrom) programStartDate = new Date(rp.recordset[0].DateFrom);
+      if (rp.recordset[0].DateTo)   programEndDate   = new Date(rp.recordset[0].DateTo);
+    }
+
+    // Rate maps — populated by rebateType
+    let baseRebatePerBag = 0, percentageValue = 0, qtrRebate = 0;
+    let hasQtrRebate = false; // ← true only when this customer has a positive QtrRebate configured
+    const itemPercentageMap = new Map();
+    const fixedRebatePerBagMap = {};
+    const fixedUnitPerQtyMap = {};
+    let incrementalRanges = [];
+
+    if (rebateType === 'Percentage') {
+      try {
+        const r = await pool.request()
+          .input('rebateCode', sql.NVarChar(50), rebateCode)
+          .query(`SELECT ItemCode, PercentagePerBag FROM PerProdRebate WHERE RebateCode = @rebateCode`);
+        r.recordset.forEach(row => {
+          if (row.ItemCode && row.PercentagePerBag != null) {
+            itemPercentageMap.set(row.ItemCode, parseFloat(row.PercentagePerBag) || 0);
+          }
+        });
+        if (itemPercentageMap.size > 0) percentageValue = itemPercentageMap.values().next().value || 0;
+
+        const qr = await pool.request()
+          .input('customerCode', sql.NVarChar(50), customerCode)
+          .input('rebateCode', sql.NVarChar(50), rebateCode)
+          .query(`SELECT QtrRebate FROM PerCustRebate WHERE CardCode = @customerCode AND RebateCode = @rebateCode`);
+        if (qr.recordset.length > 0 && qr.recordset[0].QtrRebate != null) {
+          const v = parseFloat(qr.recordset[0].QtrRebate);
+          if (!isNaN(v) && v > 0) { qtrRebate = v; hasQtrRebate = true; }
+        }
+      } catch (e) { console.log('⚠️ [VAN] % load:', e.message); }
+    } else if (rebateType === 'Fixed') {
+      try {
+        const r = await pool.request()
+          .input('rebateCode', sql.NVarChar(50), rebateCode)
+          .query(`SELECT ItemCode, RebatePerBag, UnitPerQty FROM FixProdRebate WHERE RebateCode = @rebateCode`);
+        r.recordset.forEach(row => {
+          if (row.ItemCode) {
+            fixedRebatePerBagMap[row.ItemCode] = parseFloat(row.RebatePerBag) || 0;
+            fixedUnitPerQtyMap[row.ItemCode]   = parseFloat(row.UnitPerQty) || 1;
+          }
+        });
+        const rates = Object.values(fixedRebatePerBagMap);
+        baseRebatePerBag = rates.length > 0 ? rates[0] : 0;
+
+        const qr = await pool.request()
+          .input('customerCode', sql.NVarChar(50), customerCode)
+          .input('rebateCode', sql.NVarChar(50), rebateCode)
+          .query(`SELECT QtrRebate FROM FixCustRebate WHERE CardCode = @customerCode AND RebateCode = @rebateCode`);
+        if (qr.recordset.length > 0 && qr.recordset[0].QtrRebate != null) {
+          const v = parseFloat(qr.recordset[0].QtrRebate);
+          if (!isNaN(v) && v > 0) { qtrRebate = v; hasQtrRebate = true; }
+        }
+      } catch (e) { console.log('⚠️ [VAN] Fix load:', e.message); }
+    } else if (rebateType === 'Incremental') {
+      try {
+        const r = await pool.request()
+          .input('rebateCode', sql.NVarChar(50), rebateCode)
+          .query(`SELECT RangeNo, MinQty, MaxQty, RebatePerBag FROM IncCustRange WHERE RebateCode = @rebateCode ORDER BY RangeNo`);
+        incrementalRanges = r.recordset.map(x => ({
+          rangeNo: x.RangeNo, minQty: parseFloat(x.MinQty) || 0,
+          maxQty: parseFloat(x.MaxQty) || 0, rebatePerBag: parseFloat(x.RebatePerBag) || 0,
+        }));
+
+        const qr = await pool.request()
+          .input('customerCode', sql.NVarChar(50), customerCode)
+          .input('rebateCode', sql.NVarChar(50), rebateCode)
+          .query(`SELECT QtrRebate FROM IncCustRebate WHERE CardCode = @customerCode AND RebateCode = @rebateCode`);
+        if (qr.recordset.length > 0 && qr.recordset[0].QtrRebate != null) {
+          const v = parseFloat(qr.recordset[0].QtrRebate);
+          if (!isNaN(v) && v > 0) { qtrRebate = v; hasQtrRebate = true; }
+        }
+      } catch (e) { console.log('⚠️ [VAN] Inc load:', e.message); }
+    }
+
+    // Customer quotas (Fixed & Percentage)
+    const customerQuotas = {};
+    if (rebateType === 'Fixed' || rebateType === 'Percentage') {
+      try {
+        const quotaQuery = rebateType === 'Fixed'
+          ? `SELECT T2.Month, T2.TargetQty FROM FixCustRebate T1 INNER JOIN FixCustQuota T2 ON T1.Id = T2.CustRebateId WHERE T1.CardCode = @customerCode AND T1.RebateCode = @rebateCode`
+          : `SELECT T2.Month, T2.TargetQty FROM PerCustRebate T1 INNER JOIN PerCustQuota T2 ON T1.Id = T2.PerCustRebateId WHERE T1.CardCode = @customerCode AND T1.RebateCode = @rebateCode`;
+        const r = await pool.request()
+          .input('customerCode', sql.NVarChar(50), customerCode)
+          .input('rebateCode', sql.NVarChar(50), rebateCode)
+          .query(quotaQuery);
+        r.recordset.forEach(row => {
+          if (row.Month && row.TargetQty != null) customerQuotas[row.Month] = parseFloat(row.TargetQty) || 0;
+        });
+      } catch (e) { console.log('⚠️ [VAN] quota:', e.message); }
+    }
+
+    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const monthlyGroups = {};
+    const incrementalAccum = {};
+    const percentageQtyAccum = {};
+
+const computeQtyForReb = (txn, itemCode) => {
+  const actual = parseFloat(txn.ActualSales) || 0;
+  const itemName = txn.Item || txn.ItemName || '';
+  const is25kg = txn.Is25kgItem ||
+    (itemName && itemName.toLowerCase().includes('25kg')) ||
+    (txn.Weight && txn.Weight.toString().includes('25'));
+
+  // unitPerQty: per-item override → transaction → 1
+  const perItem = itemCode && fixedUnitPerQtyMap[itemCode] != null
+    ? fixedUnitPerQtyMap[itemCode]
+    : null;
+  const txnUnit = parseFloat(txn.UnitPerQty) || 1;
+  const unitPerQty = (perItem == null ? txnUnit : perItem) || 1;
+
+  // Trust backend QtyForReb when it exists (already adjusted upstream).
+  // Otherwise, only divide when UnitPerQty > 1. NO forced ÷2 for 25kg.
+  const backendQty = parseFloat(txn.QtyForReb);
+  let finalQty;
+  if (!isNaN(backendQty) && backendQty > 0) {
+    finalQty = backendQty;
+  } else {
+    finalQty = unitPerQty > 1 ? actual / unitPerQty : actual;
+  }
+
+  return { finalQty, is25kg, unitPerQty };
+};
+
+    if (Array.isArray(transactions) && transactions.length > 0) {
+      transactions.forEach((txn, index) => {
+        try {
+          if (!txn.Date) return;
+          const date = new Date(txn.Date);
+          if (isNaN(date.getTime())) return;
+
+          const year = date.getFullYear();
+          const month = date.getMonth();
+          const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`;
+
+          if (!monthlyGroups[monthKey]) {
+            const monthName = monthNames[month];
+            const lastDay = new Date(year, month + 1, 0);
+            const payoutDate = `${lastDay.getMonth() + 1}.${lastDay.getDate()}.${lastDay.getFullYear().toString().slice(-2)}`;
+            const quarter = Math.floor(month / 3) + 1;
+
+            monthlyGroups[monthKey] = {
+              monthKey, monthName, monthNumber: month + 1, year, quarter, payoutDate,
+              period: `${monthName} ${year}`,
+              totalBaseAmount: 0, totalActualSales: 0, totalPriceAfVAT: 0,
+              totalQtyForReb: 0, totalAdjustedQtyForReb: 0,
+              dailyTransactions: [], hasTransactions: true, itemBreakdown: new Map(),
+            };
+          }
+
+          const actualSales = parseFloat(txn.ActualSales) || 0;
+          const priceAfVAT  = parseFloat(txn.PriceAfVAT) || 0;
+          const itemCode    = txn.ItemCode || txn.Item || '';
+          const itemName    = txn.ItemName || txn.Item || `Item_${index}`;
+          const { finalQty, is25kg, unitPerQty, baseQty } = computeQtyForReb(txn, itemCode);
+
+          let dailyRebate = 0;
+          let calculationNote = '';
+          let percentageUsed = 0;
+
+          if (rebateType === 'Percentage') {
+            percentageUsed = (itemCode && itemPercentageMap.has(itemCode))
+              ? itemPercentageMap.get(itemCode) : percentageValue;
+            dailyRebate = (finalQty * priceAfVAT * percentageUsed) / 100;
+            calculationNote = `${actualSales}${unitPerQty > 1 ? ` ÷ ${unitPerQty}` : ''}${is25kg ? ' ÷ 2' : ''} = ${finalQty.toFixed(2)} bags × ₱${priceAfVAT.toFixed(2)} × ${percentageUsed}% = ₱${dailyRebate.toFixed(2)}`;
+          } else if (rebateType === 'Fixed') {
+            const rate = fixedRebatePerBagMap[itemCode] != null ? fixedRebatePerBagMap[itemCode] : baseRebatePerBag;
+            dailyRebate = finalQty * rate;
+            calculationNote = `${actualSales}${unitPerQty > 1 ? ` ÷ ${unitPerQty}` : ''}${is25kg ? ' ÷ 2' : ''} = ${finalQty.toFixed(2)} bags × ₱${rate.toFixed(2)} = ₱${dailyRebate.toFixed(2)}`;
+          } else if (rebateType === 'Incremental') {
+            dailyRebate = 0;
+            if (!incrementalAccum[monthKey]) {
+              incrementalAccum[monthKey] = { totalQty: 0, highestRange: null, rate: 0, hasEligible: false };
+            }
+            const acc = incrementalAccum[monthKey];
+            acc.totalQty += finalQty;
+            const txnRange = txn.CurrentRange || txn.RangeNo || null;
+            const txnRate = parseFloat(txn.RebatePerBag) || 0;
+            const txnEligible = txn.EligibilityStatus === 'Eligible' || (txnRange && txnRange > 0);
+            if (txnEligible && txnRange) {
+              acc.hasEligible = true;
+              if (!acc.highestRange || txnRange > acc.highestRange) {
+                acc.highestRange = txnRange;
+                if (txnRate > 0) acc.rate = txnRate;
+                else if (incrementalRanges.length > 0) {
+                  const rng = incrementalRanges.find(r => r.rangeNo === txnRange);
+                  if (rng) acc.rate = rng.rebatePerBag;
+                }
+              }
+            }
+            calculationNote = `Incremental qty ${finalQty.toFixed(2)} (month total: ${acc.totalQty.toFixed(2)})`;
+          }
+
+          const itemKey = itemCode || itemName;
+          if (!monthlyGroups[monthKey].itemBreakdown.has(itemKey)) {
+            monthlyGroups[monthKey].itemBreakdown.set(itemKey, {
+              itemCode, itemName, totalActualSales: 0, totalRebate: 0,
+              percentageUsed, transactionCount: 0,
+            });
+          }
+          const ib = monthlyGroups[monthKey].itemBreakdown.get(itemKey);
+          ib.totalActualSales += actualSales;
+          ib.totalRebate += dailyRebate;
+          ib.transactionCount++;
+
+          monthlyGroups[monthKey].dailyTransactions.push({
+            date: txn.Date, itemCode, itemName, actualSales, priceAfVAT,
+            dailyRebate, percentageUsed, calculationNote, is25kg,
+            EligibilityStatus: txn.EligibilityStatus,
+            CurrentRange: txn.CurrentRange,
+            RebatePerBag: parseFloat(txn.RebatePerBag || txn.rebatePerBag || 0),
+            QtyForReb: finalQty,
+          });
+
+          monthlyGroups[monthKey].totalBaseAmount += dailyRebate;
+          monthlyGroups[monthKey].totalActualSales += actualSales;
+          monthlyGroups[monthKey].totalPriceAfVAT += priceAfVAT;
+          monthlyGroups[monthKey].totalQtyForReb += actualSales;
+          monthlyGroups[monthKey].totalAdjustedQtyForReb += finalQty;
+
+          if (rebateType === 'Percentage') {
+            if (!percentageQtyAccum[monthKey]) percentageQtyAccum[monthKey] = 0;
+            percentageQtyAccum[monthKey] += finalQty;
+          }
+        } catch (e) { console.error(`❌ txn ${index}:`, e.message); }
       });
     }
 
-    // Get quarters that need beginning balance calculation
-    const checkQuery = `
-      WITH QuarterData AS (
-        SELECT 
-          CardCode,
-          RebateCode,
-          RebateType,
-          Period,
-          BaseAmount,
-          AmountReleased,
-          CASE 
-            WHEN Period LIKE 'January%' OR Period LIKE 'February%' OR Period LIKE 'March%' THEN 'Q1'
-            WHEN Period LIKE 'April%' OR Period LIKE 'May%' OR Period LIKE 'June%' THEN 'Q2'
-            WHEN Period LIKE 'July%' OR Period LIKE 'August%' OR Period LIKE 'September%' THEN 'Q3'
-            WHEN Period LIKE 'October%' OR Period LIKE 'November%' OR Period LIKE 'December%' THEN 'Q4'
-            WHEN Period LIKE 'Quarter 1%' THEN 'Q1'
-            WHEN Period LIKE 'Quarter 2%' THEN 'Q2'
-            WHEN Period LIKE 'Quarter 3%' THEN 'Q3'
-            WHEN Period LIKE 'Quarter 4%' THEN 'Q4'
-          END AS Quarter,
-          CASE 
-            WHEN Period LIKE '%2024%' THEN 2024
-            WHEN Period LIKE '%2023%' THEN 2023
-            WHEN Period LIKE '%2022%' THEN 2022
-            WHEN Period LIKE '%2025%' THEN 2025
-            ELSE YEAR(GETDATE())
-          END AS Year
-        FROM PayoutHistory
-        WHERE Period NOT LIKE 'Balance of Q%'
-      ),
-      QuarterTotals AS (
-        SELECT 
-          Quarter,
-          Year,
-          CardCode,
-          RebateCode,
-          RebateType,
-          SUM(BaseAmount) as TotalBaseAmount,
-          SUM(AmountReleased) as TotalAmountReleased,
-          SUM(BaseAmount) - SUM(AmountReleased) as CalculatedBalance
-        FROM QuarterData
-        GROUP BY Quarter, Year, CardCode, RebateCode, RebateType
-        HAVING SUM(BaseAmount) - SUM(AmountReleased) > 0
-      )
-      SELECT 
-        Quarter,
-        Year,
-        CardCode,
-        RebateCode,
-        RebateType,
-        TotalBaseAmount,
-        TotalAmountReleased,
-        CalculatedBalance
-      FROM QuarterTotals
-      WHERE CalculatedBalance > 0
-      ${cardCode ? 'AND CardCode = @cardCode' : ''}
-    `;
-    
-    const request = ownPool.request();
-    if (cardCode) {
-      request.input('cardCode', sql.NVarChar(50), cardCode);
-    }
-    
-    const result = await request.query(checkQuery);
-    
-    // Now check which quarters need beginning balances
-    let needsCalculation = false;
-    const quartersNeedingBalance = [];
-    
-    if (result.recordset.length > 0) {
-      for (const quarter of result.recordset) {
-        const targetQuarter = parseInt(quarter.Quarter.replace('Q', ''));
-        const targetYear = quarter.Year;
-        
-        // Determine next quarter and year
-        let nextQuarter, nextYear;
-        
-        if (targetQuarter === 1) {
-          nextQuarter = 2;
-          nextYear = targetYear;
-        } else if (targetQuarter === 2) {
-          nextQuarter = 3;
-          nextYear = targetYear;
-        } else if (targetQuarter === 3) {
-          nextQuarter = 4;
-          nextYear = targetYear;
-        } else if (targetQuarter === 4) {
-          nextQuarter = 1;
-          nextYear = targetYear + 1;
+    // Add empty months inside the period
+    if (periodStart && periodEnd) {
+      const s = new Date(periodStart), e = new Date(periodEnd);
+      let cur = new Date(s.getFullYear(), s.getMonth(), 1);
+      const last = new Date(e.getFullYear(), e.getMonth(), 1);
+      while (cur <= last) {
+        const y = cur.getFullYear(), m = cur.getMonth(), mn = m + 1;
+        const monthKey = `${y}-${String(mn).padStart(2, '0')}`;
+        if (!monthlyGroups[monthKey]) {
+          const monthName = monthNames[m];
+          const lastDay = new Date(y, mn, 0);
+          const payoutDate = `${lastDay.getMonth() + 1}.${lastDay.getDate()}.${lastDay.getFullYear().toString().slice(-2)}`;
+          monthlyGroups[monthKey] = {
+            monthKey, monthName, monthNumber: mn, year: y,
+            quarter: Math.floor(m / 3) + 1, payoutDate,
+            period: `${monthName} ${y}`,
+            totalBaseAmount: 0, totalActualSales: 0, totalPriceAfVAT: 0,
+            totalQtyForReb: 0, totalAdjustedQtyForReb: 0,
+            dailyTransactions: [], hasTransactions: false, itemBreakdown: new Map(),
+            isNoTransactionMonth: true,
+          };
         }
-        
-        const balancePeriod = `Balance of Q${nextQuarter} ${nextYear}`;
-        
-        const existsQuery = `
-          SELECT COUNT(*) as Count 
-          FROM PayoutHistory 
-          WHERE CardCode = @CardCode
-            AND RebateCode = @RebateCode
-            AND Period = @Period
-        `;
-        
-        const existsResult = await ownPool.request()
-          .input('CardCode', sql.NVarChar(50), quarter.CardCode)
-          .input('RebateCode', sql.NVarChar(50), quarter.RebateCode)
-          .input('Period', sql.NVarChar(100), balancePeriod)
-          .query(existsQuery);
-        
-        if (existsResult.recordset[0].Count === 0) {
-          needsCalculation = true;
-          quartersNeedingBalance.push({
-            ...quarter,
-            balancePeriod,
-            calculation: `${quarter.TotalBaseAmount} - ${quarter.TotalAmountReleased} = ${quarter.CalculatedBalance}`
+        cur = new Date(y, m + 1, 1);
+      }
+    }
+
+    const monthlyData = [];
+    const sortedMonthKeys = Object.keys(monthlyGroups).sort();
+
+    for (const monthKey of sortedMonthKeys) {
+      const monthWithData = monthlyGroups[monthKey];
+      let baseAmount = monthWithData.totalBaseAmount || 0;
+      let eligible = true, quotaMet = true, calculationNote = '';
+      let status = baseAmount > 0 ? 'Pending' : 'No Payout';
+
+      if (monthWithData.isNoTransactionMonth) {
+        baseAmount = 0; status = 'No Payout'; eligible = false; quotaMet = false;
+        calculationNote = 'No transactions this month';
+      } else if (rebateType === 'Fixed' && (frequency === 'Monthly' || isDynamicFrequency)) {
+        // Dynamic/monthly Fixed: cumulative quota
+        const totalQuota = Object.values(customerQuotas).reduce((s, q) => s + q, 0);
+        const hasQuota = totalQuota > 0;
+        // (cumulative accumulation handled below if needed; for now use month-level)
+        quotaMet = true; eligible = baseAmount > 0;
+        status = baseAmount > 0 ? 'Pending' : 'No Payout';
+      } else if (rebateType === 'Fixed') {
+        // Only enforce monthly quota if this customer actually has a QtrRebate configured
+        const targetQuota = customerQuotas[monthWithData.monthName] || 0;
+        if (hasQtrRebate && targetQuota > 0) {
+          quotaMet = (monthWithData.totalAdjustedQtyForReb || 0) >= targetQuota;
+          eligible = quotaMet;
+          if (!quotaMet) { baseAmount = 0; status = 'No Payout'; }
+        }
+      } else if (rebateType === 'Percentage' && quotaType === 'With Quota') {
+        // Only enforce quota if this customer actually has a QtrRebate configured
+        const targetQuota = customerQuotas[monthWithData.monthName] || 0;
+        if (hasQtrRebate && targetQuota > 0) {
+          const achievedQty = percentageQtyAccum[monthKey] || 0;
+          quotaMet = achievedQty >= targetQuota;
+          eligible = quotaMet;
+          if (!quotaMet) { baseAmount = 0; status = 'No Payout'; }
+        }
+      } else if (rebateType === 'Incremental') {
+        const acc = incrementalAccum[monthKey] || { totalQty: 0, highestRange: null, rate: 0, hasEligible: false };
+        const incEligible = acc.hasEligible && acc.rate > 0;
+        const incBase = incEligible ? acc.totalQty * acc.rate : 0;
+        baseAmount = incBase; eligible = incEligible; quotaMet = incEligible;
+        status = incBase > 0 ? 'Pending' : 'No Payout';
+        calculationNote = incEligible
+          ? `Incremental: ${acc.totalQty.toFixed(2)} × ₱${acc.rate.toFixed(2)} (Range ${acc.highestRange}) = ₱${incBase.toFixed(2)}`
+          : 'Incremental: No eligible transactions';
+      }
+
+      const monthName = monthWithData.monthName;
+      const quarter = monthWithData.quarter;
+      const year = monthWithData.year;
+
+      const monthlyRecord = {
+        id: `Month-${customerCode}-${rebateCode}-${monthKey}`,
+        type: 'monthly',
+        cardCode: customerCode, rebateCode,
+        date: monthWithData.payoutDate,
+        period: monthWithData.period,
+        payoutQuarter: `Q${quarter} ${year}`,
+        monthKey, monthNumber: monthWithData.monthNumber,
+        quarter, year,
+        baseAmount: parseFloat(baseAmount.toFixed(2)),
+        amount: parseFloat(baseAmount.toFixed(2)),
+        status, amountReleased: 0, sapReleasedAmount: 0, sapEntries: [],
+        balance: 0, eligible, quotaMet,
+        totalActualSales: monthWithData.totalActualSales,
+        totalPriceAfVAT: monthWithData.totalPriceAfVAT,
+        totalQtyForReb: monthWithData.totalQtyForReb,
+        totalAdjustedQtyForReb: monthWithData.totalAdjustedQtyForReb,
+        calculationNote,
+        qtrRebate, hasTransactions: !monthWithData.isNoTransactionMonth,
+        transactionCount: monthWithData.dailyTransactions.length,
+        isNonEligibleMonth: !eligible || !quotaMet,
+        rebateType, rebatePerBag: baseRebatePerBag, percentageValue, frequency,
+        hasQtrRebate,
+      };
+      monthlyData.push(monthlyRecord);
+    }
+
+    // Quarterly bonus — ONLY when this customer actually has a QtrRebate configured
+    const quarterlyData = [];
+    if (frequency === 'Quarterly' && hasQtrRebate && qtrRebate > 0) {
+      const quarters = {};
+      monthlyData.forEach(m => {
+        const qKey = `Q${m.quarter}-${m.year}`;
+        if (!quarters[qKey]) quarters[qKey] = { quarter: m.quarter, year: m.year, months: [], totalBaseAmount: 0, eligibleMonths: 0, totalMonths: 0 };
+        quarters[qKey].months.push(m);
+        quarters[qKey].totalBaseAmount += m.baseAmount;
+        quarters[qKey].totalMonths++;
+        if (m.hasTransactions) quarters[qKey].eligibleMonths++;
+      });
+
+      Object.keys(quarters).forEach(qKey => {
+        const q = quarters[qKey];
+        if (q.eligibleMonths === 3 && q.totalMonths === 3) {
+          const amt = rebateType === 'Percentage' ? q.totalBaseAmount * (qtrRebate / 100) : q.totalBaseAmount * qtrRebate;
+          quarterlyData.push({
+            id: `QtrRebate-${customerCode}-${rebateCode}-${qKey}`,
+            type: 'quarterly', cardCode: customerCode, rebateCode,
+            date: `${q.quarter}.${q.year.toString().slice(-2)}`,
+            period: `Quarter ${q.quarter} ${q.year}`,
+            payoutQuarter: `Q${q.quarter} ${q.year}`,
+            quarter: q.quarter, year: q.year,
+            baseAmount: amt, amount: parseFloat(amt.toFixed(2)),
+            status: 'Pending', amountReleased: 0, sapReleasedAmount: 0,
+            balance: 0, eligible: true, quotaMet: true, qtrRebate, isQtrRebate: true,
+            calculationNote: `QTR Rebate: ₱${q.totalBaseAmount.toFixed(2)} × ${qtrRebate}${rebateType === 'Percentage' ? '%' : ''} = ₱${amt.toFixed(2)}`,
+            rebateType, frequency,
           });
         }
-      }
-    }
-    
-    res.json({
-      success: true,
-      needsCalculation: needsCalculation,
-      quarterCount: result.recordset.length,
-      quartersNeedingBalance: quartersNeedingBalance,
-      calculationFormula: 'Beginning Balance = Sum(BaseAmount) - Sum(AmountReleased) for each quarter'
-    });
-    
-  } catch (error) {
-    console.error('❌ Error checking balance calculation:', error);
-    res.status(500).json({
-      success: false,
-      needsCalculation: false,
-      error: error.message
-    });
-  }
-});
-
-// Process pending balances and prepare for beginning balance calculation
-router.post('/process-pending-balances', async (req, res) => {
-  try {
-    const { db, cardCode, rebateType } = req.body;
-    
-    console.log(`🔄 Processing pending balances for:`, { db, cardCode, rebateType });
-    
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
       });
     }
 
-    // Ensure table exists
-    await createPayoutHistoryTable(ownPool);
-    
-    // First, ensure all calculated payouts are saved
-    if (cardCode) {
-      try {
-        // Trigger payout calculation for this customer
-        const rebateQuery = `
-          SELECT DISTINCT RebateCode, RebateType
-          FROM PayoutHistory
-          WHERE CardCode = @cardCode
-          ${rebateType ? 'AND RebateType = @rebateType' : ''}
-        `;
-        
-        const rebateRequest = ownPool.request()
-          .input('cardCode', sql.NVarChar(50), cardCode);
-        
-        if (rebateType) {
-          rebateRequest.input('rebateType', sql.NVarChar(50), rebateType);
-        }
-        
-        const rebateResult = await rebateRequest.query(rebateQuery);
-        
-        for (const rebate of rebateResult.recordset) {
-          // Trigger payout calculation for each rebate
-          const calcUrl = `http://localhost:3009/api/van/dashboard/customer/${cardCode}/payouts?db=${databaseToUse}&rebateCode=${rebate.RebateCode}&rebateType=${rebate.RebateType}`;
-          
-          try {
-            const response = await fetch(calcUrl);
-            if (response.ok) {
-              const result = await response.json();
-              console.log(`✅ Calculated payouts for ${cardCode} - ${rebate.RebateCode}: ${result.data?.payouts?.length || 0} records`);
-            }
-          } catch (calcError) {
-            console.log(`⚠️ Could not calculate payouts for ${rebate.RebateCode}:`, calcError.message);
-          }
-        }
-      } catch (error) {
-        console.error('❌ Error calculating payouts:', error.message);
-      }
-    }
-    
-    res.json({
-      success: true,
-      message: 'Pending balances processed successfully'
-    });
-    
+    return [...monthlyData, ...quarterlyData];
   } catch (error) {
-    console.error('❌ Error processing pending balances:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Also update the /add-quarter-balances endpoint to use the correct formula:
-router.post('/add-quarter-balances', async (req, res) => {
-  try {
-    const { db, cardCode, rebateType, forceRecalculate } = req.body;
-    
-    console.log(`💰 Adding quarter beginning balances for:`, { db, cardCode, rebateType });
-    
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
-      });
-    }
-
-    // Clear existing beginning balances if force recalculate
-    if (forceRecalculate) {
-      const clearQuery = cardCode 
-        ? `DELETE FROM PayoutHistory WHERE Period LIKE 'Balance of Q%' AND CardCode = @cardCode`
-        : `DELETE FROM PayoutHistory WHERE Period LIKE 'Balance of Q%'`;
-      
-      const clearRequest = ownPool.request();
-      if (cardCode) {
-        clearRequest.input('cardCode', sql.NVarChar(50), cardCode);
-      }
-      
-      await clearRequest.query(clearQuery);
-      console.log(`🧹 Cleared existing beginning balance records`);
-    }
-
-    // Get ALL payout data for quarters to calculate PROPER beginning balance
-    const quarterQuery = `
-      SELECT 
-        CardCode,
-        RebateCode,
-        RebateType,
-        Period,
-        BaseAmount,
-        TotalAmount,
-        AmountReleased,
-        RebateBalance,
-        CASE 
-          WHEN Period LIKE 'January%' OR Period LIKE 'February%' OR Period LIKE 'March%' THEN 'Q1'
-          WHEN Period LIKE 'April%' OR Period LIKE 'May%' OR Period LIKE 'June%' THEN 'Q2'
-          WHEN Period LIKE 'July%' OR Period LIKE 'August%' OR Period LIKE 'September%' THEN 'Q3'
-          WHEN Period LIKE 'October%' OR Period LIKE 'November%' OR Period LIKE 'December%' THEN 'Q4'
-          WHEN Period LIKE 'Quarter 1%' THEN 'Q1'
-          WHEN Period LIKE 'Quarter 2%' THEN 'Q2'
-          WHEN Period LIKE 'Quarter 3%' THEN 'Q3'
-          WHEN Period LIKE 'Quarter 4%' THEN 'Q4'
-        END AS Quarter,
-        CASE 
-          WHEN Period LIKE '%2024%' THEN 2024
-          WHEN Period LIKE '%2023%' THEN 2023
-          WHEN Period LIKE '%2022%' THEN 2022
-          WHEN Period LIKE '%2025%' THEN 2025
-          ELSE YEAR(GETDATE())
-        END AS Year
-      FROM PayoutHistory
-      WHERE Period NOT LIKE 'Balance of Q%'
-        ${cardCode ? 'AND CardCode = @cardCode' : ''}
-        ${rebateType ? 'AND RebateType = @rebateType' : ''}
-    `;
-    
-    const quarterRequest = ownPool.request();
-    if (cardCode) {
-      quarterRequest.input('cardCode', sql.NVarChar(50), cardCode);
-    }
-    if (rebateType) {
-      quarterRequest.input('rebateType', sql.NVarChar(50), rebateType);
-    }
-    
-    const quarterResult = await quarterRequest.query(quarterQuery);
-    const allPayouts = quarterResult.recordset;
-    
-    console.log(`📊 Found ${allPayouts.length} payout records for calculation`);
-    
-    // Group by customer, rebate code, quarter, and year
-    const quarterGroups = {};
-    
-    allPayouts.forEach(payout => {
-      if (!payout.Quarter || !payout.Year) return;
-      
-      const key = `${payout.CardCode}-${payout.RebateCode}-${payout.Quarter}-${payout.Year}`;
-      
-      if (!quarterGroups[key]) {
-        quarterGroups[key] = {
-          CardCode: payout.CardCode,
-          RebateCode: payout.RebateCode,
-          RebateType: payout.RebateType,
-          Quarter: payout.Quarter,
-          Year: payout.Year,
-          totalBaseAmount: 0,
-          totalAmountReleased: 0,
-          payouts: []
-        };
-      }
-      
-      const baseAmount = parseFloat(payout.BaseAmount) || 0;
-      const amountReleased = parseFloat(payout.AmountReleased) || 0;
-      
-      quarterGroups[key].totalBaseAmount += baseAmount;
-      quarterGroups[key].totalAmountReleased += amountReleased;
-      quarterGroups[key].payouts.push(payout);
-    });
-    
-    // Insert beginning balances for NEXT quarter
-    const insertedBalances = [];
-    
-    for (const key in quarterGroups) {
-      const group = quarterGroups[key];
-      const { 
-        CardCode, 
-        RebateCode, 
-        RebateType, 
-        Quarter, 
-        Year, 
-        totalBaseAmount, 
-        totalAmountReleased 
-      } = group;
-      
-      // Calculate PROPER beginning balance: Sum(BaseAmount) - Sum(AmountReleased)
-      const quarterBalance = Math.max(0, totalBaseAmount - totalAmountReleased);
-      
-      if (quarterBalance <= 0) {
-        console.log(`⏭️ No beginning balance for ${CardCode}-${RebateCode} ${Quarter} ${Year}: Balance = ${quarterBalance}`);
-        continue;
-      }
-      
-      // Determine next quarter and year
-      let nextQuarter, nextYear;
-      
-      if (Quarter === 'Q1') {
-        nextQuarter = 2;
-        nextYear = Year;
-      } else if (Quarter === 'Q2') {
-        nextQuarter = 3;
-        nextYear = Year;
-      } else if (Quarter === 'Q3') {
-        nextQuarter = 4;
-        nextYear = Year;
-      } else if (Quarter === 'Q4') {
-        nextQuarter = 1;
-        nextYear = Year + 1;
-      } else {
-        continue;
-      }
-      
-      const targetPeriod = `Balance of Q${nextQuarter} ${nextYear}`;
-      
-      // Check if beginning balance already exists
-      const checkQuery = `
-        SELECT COUNT(*) as Count 
-        FROM PayoutHistory 
-        WHERE CardCode = @CardCode 
-          AND RebateCode = @RebateCode
-          AND Period = @Period
-      `;
-      
-      const checkResult = await ownPool.request()
-        .input('CardCode', sql.NVarChar(50), CardCode)
-        .input('RebateCode', sql.NVarChar(50), RebateCode)
-        .input('Period', sql.NVarChar(100), targetPeriod)
-        .query(checkQuery);
-      
-      if (checkResult.recordset[0].Count === 0) {
-        // Generate unique payout ID for beginning balance
-        const payoutId = `BAL-${CardCode}-${RebateCode}-Q${nextQuarter}-${nextYear}`;
-        
-        // Calculate date for beginning balance (first day of next quarter)
-        const beginningBalanceDate = new Date(nextYear, (nextQuarter - 1) * 3, 1);
-        const formattedDate = `${beginningBalanceDate.getMonth() + 1}.${beginningBalanceDate.getDate()}.${beginningBalanceDate.getFullYear().toString().slice(-2)}`;
-        
-        // Add calculation note showing the formula
-        const calculationNote = `Sum(BaseAmount): ₱${totalBaseAmount.toFixed(2)} - Sum(AmountReleased): ₱${totalAmountReleased.toFixed(2)} = ₱${quarterBalance.toFixed(2)}`;
-        
-        // Insert beginning balance record
-        const insertQuery = `
-          INSERT INTO PayoutHistory (
-            PayoutId,
-            CardCode,
-            RebateCode,
-            RebateType,
-            Period,
-            PayoutQuarter, 
-            PayoutDate,
-            BaseAmount,
-            TotalAmount,
-            AmountReleased,
-            RebateBalance,
-            Status,
-            CreatedDate,
-            UpdatedDate
-          )
-          VALUES (
-            @PayoutId,
-            @CardCode,
-            @RebateCode,
-            @RebateType,
-            @Period,
-            @PayoutQuarter, 
-            @PayoutDate,
-            @BaseAmount,
-            @TotalAmount,
-            @AmountReleased,
-            @RebateBalance,
-            @Status,
-            GETDATE(),
-            GETDATE()
-          )
-        `;
-        
-        await ownPool.request()
-          .input('PayoutId', sql.NVarChar(100), payoutId)
-          .input('CardCode', sql.NVarChar(50), CardCode)
-          .input('RebateCode', sql.NVarChar(50), RebateCode)
-          .input('RebateType', sql.NVarChar(50), RebateType)
-          .input('Period', sql.NVarChar(100), targetPeriod)
-          .input('PayoutQuarter', sql.NVarChar(20), targetPayoutQuarter)
-          .input('PayoutDate', sql.NVarChar(20), formattedDate)
-          .input('BaseAmount', sql.Decimal(18, 2), 0)
-          .input('TotalAmount', sql.Decimal(18, 2), quarterBalance)
-          .input('AmountReleased', sql.Decimal(18, 2), 0)
-          .input('RebateBalance', sql.Decimal(18, 2), quarterBalance)
-          .input('Status', sql.NVarChar(50), null)
-          .input('CalculationNote', sql.NVarChar(500), calculationNote)
-          .query(insertQuery);
-        
-        insertedBalances.push({
-          cardCode: CardCode,
-          rebateCode: RebateCode,
-          rebateType: RebateType,
-          fromQuarter: Quarter,
-          fromYear: Year,
-          toQuarter: nextQuarter,
-          toYear: nextYear,
-          totalBaseAmount: totalBaseAmount,
-          totalAmountReleased: totalAmountReleased,
-          balance: quarterBalance,
-          calculation: `${totalBaseAmount.toFixed(2)} - ${totalAmountReleased.toFixed(2)} = ${quarterBalance.toFixed(2)}`
-        });
-        
-        console.log(`✅ Added beginning balance: ${CardCode} - ${RebateCode}:`);
-        console.log(`   Formula: ₱${totalBaseAmount.toFixed(2)} (BaseAmounts) - ₱${totalAmountReleased.toFixed(2)} (AmountReleased) = ₱${quarterBalance.toFixed(2)}`);
-        console.log(`   Added to: ${targetPeriod}`);
-      } else {
-        console.log(`⏭️ Beginning balance already exists for ${CardCode} - ${RebateCode} in ${targetPeriod}`);
-      }
-    }
-    
-    res.json({
-      success: true,
-      message: `Added ${insertedBalances.length} beginning balance records using correct formula`,
-      insertedBalances: insertedBalances
-    });
-    
-  } catch (error) {
-    console.error('❌ Error adding quarter balances:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Get payouts with beginning balances
-router.get('/payouts-with-balances/:cardCode?', async (req, res) => {
-  try {
-    const { cardCode } = req.params;
-    const { db, rebateType } = req.query;
-    
-    console.log(`📊 Fetching payouts with beginning balances for:`, { cardCode, rebateType });
-    
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
-      });
-    }
-
-    // Ensure table exists
-    await createPayoutHistoryTable(ownPool);
-    
-    let query = `
-      SELECT 
-        ph.*,
-        CASE 
-          WHEN ph.Period LIKE 'Balance of Q%' THEN 1
-          ELSE 0
-        END AS IsBeginningBalance,
-        CASE 
-          WHEN ph.Period LIKE 'Balance of Q%' THEN 
-            CAST(CONCAT(
-              SUBSTRING(ph.Period, PATINDEX('%[0-9][0-9][0-9][0-9]%', ph.Period), 4),
-              '-',
-              RIGHT('0' + SUBSTRING(ph.Period, CHARINDEX('Q', ph.Period) + 1, 1), 2),
-              '-01'
-            ) AS DATE)
-          ELSE TRY_CAST(ph.PayoutDate AS DATE)
-        END AS SortDate
-      FROM PayoutHistory ph
-      WHERE 1=1
-    `;
-    
-    if (cardCode) {
-      query += ` AND ph.CardCode = @CardCode`;
-    }
-    
-    if (rebateType) {
-      query += ` AND ph.RebateType = @RebateType`;
-    }
-    
-    query += ` ORDER BY SortDate ASC, ph.Id ASC`;
-    
-    const request = ownPool.request();
-    
-    if (cardCode) {
-      request.input('CardCode', sql.NVarChar(50), cardCode);
-    }
-    
-    if (rebateType) {
-      request.input('RebateType', sql.NVarChar(50), rebateType);
-    }
-    
-    const result = await request.query(query);
-    
-    res.json({
-      success: true,
-      data: result.recordset,
-      count: result.recordset.length
-    });
-    
-  } catch (error) {
-    console.error('❌ Error fetching payouts with balances:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Add this to payoutRoutes.js to debug table structure
-router.get('/debug/payout-table-structure', async (req, res) => {
-  try {
-    const { db } = req.query;
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
-      });
-    }
-
-    // Check table columns
-    const columnQuery = `
-      SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
-      FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_NAME = 'PayoutHistory'
-      ORDER BY ORDINAL_POSITION
-    `;
-    
-    const result = await ownPool.request().query(columnQuery);
-    
-    res.json({
-      success: true,
-      data: {
-        columns: result.recordset,
-        tableExists: result.recordset.length > 0
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Error checking table structure:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error checking table structure',
-      error: error.message
-    });
-  }
-});
-
-const applyBalanceCarryOverToPayouts = (payouts, startingBalance = 0) => {
-  console.log('🔄 Applying balance carry-over to payouts');
-  
-  if (!Array.isArray(payouts) || payouts.length === 0) {
-    return [];
-  }
-  
-  // First, group payouts by quarter and sort them properly
-  const payoutsByQuarter = {};
-  
-  payouts.forEach(payout => {
-    // Get quarter and year
-    const payoutDate = new Date(payout.Date || payout.PayoutDate || '');
-    const quarterInfo = getQuarterFromDate(payoutDate);
-    const quarter = payout.quarter || quarterInfo.quarter;
-    const year = payout.year || quarterInfo.year;
-    
-    const quarterKey = `Q${quarter}-${year}`;
-    
-    if (!payoutsByQuarter[quarterKey]) {
-      payoutsByQuarter[quarterKey] = {
-        quarter,
-        year,
-        beginningBalances: [],
-        monthlyPayouts: [],
-        quarterRebates: []
-      };
-    }
-    
-    // Categorize payout
-    const isBeginningBalance = payout.isBeginningBalance || 
-                              (payout.Period && payout.Period.includes('Balance of Q'));
-    const isQtrRebate = payout.isQtrRebate || payout.type === 'quarterly';
-    
-    if (isBeginningBalance) {
-      payoutsByQuarter[quarterKey].beginningBalances.push(payout);
-    } else if (isQtrRebate) {
-      payoutsByQuarter[quarterKey].quarterRebates.push(payout);
-    } else {
-      payoutsByQuarter[quarterKey].monthlyPayouts.push(payout);
-    }
-  });
-  
-  const payoutsWithCarryOver = [];
-  let isFirstQuarterProcessed = false;
-  
-  // Sort quarters chronologically
-  const sortedQuarterKeys = Object.keys(payoutsByQuarter).sort((a, b) => {
-    const [qA, yA] = a.split('-');
-    const [qB, yB] = b.split('-');
-    const yearA = parseInt(yA);
-    const yearB = parseInt(yB);
-    const quarterA = parseInt(qA.replace('Q', ''));
-    const quarterB = parseInt(qB.replace('Q', ''));
-    
-    if (yearA !== yearB) return yearA - yearB;
-    return quarterA - quarterB;
-  });
-  
-  // Process each quarter in order
-  sortedQuarterKeys.forEach(quarterKey => {
-    const quarterData = payoutsByQuarter[quarterKey];
-    const { quarter, year, beginningBalances, monthlyPayouts, quarterRebates } = quarterData;
-    
-    console.log(`📊 Processing ${quarterKey}: ${beginningBalances.length} beg balances, ${monthlyPayouts.length} monthly, ${quarterRebates.length} rebates`);
-    
-    // Sort monthly payouts by month order (January, February, March, etc.)
-    const sortedMonthly = [...monthlyPayouts].sort((a, b) => {
-      const monthOrderA = getMonthOrderFromPeriod(a.Period);
-      const monthOrderB = getMonthOrderFromPeriod(b.Period);
-      return monthOrderA - monthOrderB;
-    });
-    
-    // Seed only the first quarter processed with the cross-rebate carry-in.
-    // (beginningBalances here is always empty — mergedPayouts never
-    // contains beginning-balance items — so this never double-applies.)
-    let previousBalance = (!isFirstQuarterProcessed && beginningBalances.length === 0)
-      ? startingBalance
-      : 0;
-    isFirstQuarterProcessed = true;
-    
-    // 1. Process beginning balances first (if any)
-    beginningBalances.forEach(balance => {
-      const balanceAmount = parseFloat(balance.TotalAmount || balance.Amount || balance.Balance || 0);
-      
-      const begBalancePayout = {
-        ...balance,
-        Id: balance.Id || balance.PayoutId,
-        PayoutId: balance.PayoutId || balance.Id,
-        CardCode: balance.CardCode || balance.cardCode,
-        RebateCode: balance.RebateCode || balance.rebateCode,
-        RebateType: balance.RebateType || balance.rebateType,
-        Date: balance.Date || balance.PayoutDate,
-        Period: balance.Period || balance.period,
-        BaseAmount: 0,
-        TotalAmount: balanceAmount,
-        Amount: balanceAmount,
-        AmountReleased: 0,
-        Balance: balanceAmount,
-        Status: 'Beginning Balance',
-        ReleaseDate: balance.ReleaseDate || balance.releaseDate,
-        isBeginningBalance: true,
-        CalculationNote: `Balance carried from Q${quarter === 1 ? 4 : quarter - 1} ${quarter === 1 ? year - 1 : year}`
-      };
-      
-      payoutsWithCarryOver.push(begBalancePayout);
-      previousBalance = balanceAmount;
-    });
-    
-    // 2. Process monthly payouts
-    const processedMonths = [];
-    
-    sortedMonthly.forEach((payout, index) => {
-      const baseAmount = parseFloat(payout.BaseAmount || 0);
-      
-      // IMPORTANT: Add previous balance to this month's total
-      const totalAmount = baseAmount + previousBalance;
-      const amountReleased = parseFloat(payout.AmountReleased || 0);
-      const balance = Math.max(0, totalAmount - amountReleased);
-      
-      const monthPayout = {
-        ...payout,
-        Id: payout.Id || payout.PayoutId,
-        PayoutId: payout.PayoutId || payout.Id,
-        CardCode: payout.CardCode || payout.cardCode,
-        RebateCode: payout.RebateCode || payout.rebateCode,
-        RebateType: payout.RebateType || payout.rebateType,
-        Date: payout.Date || payout.PayoutDate,
-        Period: payout.Period || payout.period,
-        BaseAmount: baseAmount,
-        TotalAmount: totalAmount,
-        Amount: totalAmount,
-        AmountReleased: amountReleased,
-        Balance: balance,
-        Status: calculateStatus(
-          payout.Status || 'Pending',
-          payout.eligible,
-          payout.quotaMet,
-          payout.rebateType || payout.RebateType
-        ),
-        ReleaseDate: payout.ReleaseDate || payout.releaseDate,
-        PreviousBalance: previousBalance,
-        CalculationNote: previousBalance > 0 
-          ? `Base: ₱${baseAmount.toFixed(2)} + Previous: ₱${previousBalance.toFixed(2)} = ₱${totalAmount.toFixed(2)}`
-          : `Base: ₱${baseAmount.toFixed(2)}`
-      };
-      
-      payoutsWithCarryOver.push(monthPayout);
-      processedMonths.push(monthPayout);
-      
-      // Update previous balance for next month
-      previousBalance = balance;
-    });
-    
-    // 3. Process quarter rebates LAST - with the balance from the last month (March)
-    quarterRebates.forEach(rebate => {
-      // Get the base quarter rebate amount
-      const baseQtrRebateAmount = parseFloat(rebate.BaseAmount || rebate.TotalAmount || rebate.Amount || 0);
-      
-      // CRITICAL FIX: Add the previous balance (which now holds the balance from the last month - March)
-      // to the quarter rebate amount
-      const totalAmount = baseQtrRebateAmount + previousBalance;
-      
-      console.log(`💰 Quarter ${quarter} ${year} Rebate Calculation:`);
-      console.log(`   Base Qtr Rebate: ₱${baseQtrRebateAmount.toFixed(2)}`);
-      console.log(`   Previous Balance (from last month): ₱${previousBalance.toFixed(2)}`);
-      console.log(`   Total Amount: ₱${totalAmount.toFixed(2)}`);
-      
-      const amountReleased = parseFloat(rebate.AmountReleased || 0);
-      const balance = Math.max(0, totalAmount - amountReleased);
-      
-      const qtrPayout = {
-        ...rebate,
-        Id: rebate.Id || rebate.PayoutId,
-        PayoutId: rebate.PayoutId || rebate.Id,
-        CardCode: rebate.CardCode || rebate.cardCode,
-        RebateCode: rebate.RebateCode || rebate.rebateCode,
-        RebateType: rebate.RebateType || rebate.rebateType,
-        Date: rebate.Date || rebate.PayoutDate,
-        Period: rebate.Period || rebate.period,
-        BaseAmount: baseQtrRebateAmount,
-        TotalAmount: totalAmount,
-        Amount: totalAmount,
-        AmountReleased: amountReleased,
-        Balance: balance,
-        Status: calculateStatus(
-          rebate.Status || 'Pending',
-          rebate.eligible,
-          rebate.quotaMet,
-          rebate.rebateType || rebate.RebateType
-        ),
-        ReleaseDate: rebate.ReleaseDate || rebate.releaseDate,
-        isQtrRebate: true,
-        PreviousBalance: previousBalance,
-        CalculationNote: `Base Qtr: ₱${baseQtrRebateAmount.toFixed(2)} + Balance from last month: ₱${previousBalance.toFixed(2)} = ₱${totalAmount.toFixed(2)}`
-      };
-      
-      payoutsWithCarryOver.push(qtrPayout);
-      
-      // Update previous balance for next quarter (though quarter rebate is usually last)
-      previousBalance = balance;
-    });
-  });
-  
-  console.log(`✅ Applied carry-over to ${payoutsWithCarryOver.length} payouts`);
-  return payoutsWithCarryOver;
-};
-
-// Helper function to get month order from period string
-const getMonthOrderFromPeriod = (period) => {
-  if (!period) return 99;
-  
-  const monthOrder = {
-    'January': 1,
-    'February': 2,
-    'March': 3,
-    'April': 4,
-    'May': 5,
-    'June': 6,
-    'July': 7,
-    'August': 8,
-    'September': 9,
-    'October': 10,
-    'November': 11,
-    'December': 12
-  };
-  
-  for (const [monthName, order] of Object.entries(monthOrder)) {
-    if (period.includes(monthName)) {
-      return order;
-    }
-  }
-  
-  // Check for quarter patterns (should be high number to appear last)
-  if (period.includes('Quarter') && period.includes('Rebate')) {
-    return 100; // Quarter rebates go last
-  }
-  
-  return 99;
-};
-
-// Calculate and insert beginning balance for next quarter - SIMPLIFIED VERSION
-router.post('/calculate-beg-balance', async (req, res) => {
-  try {
-    const { db, cardCode, rebateType } = req.body;
-    
-    console.log(`🔍 Calculating beginning balance for database: ${db || 'VAN'}`);
-    
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
-      });
-    }
-
-    // Clear existing beginning balance records for this customer to avoid duplicates
-    let clearQuery = `DELETE FROM PayoutHistory WHERE Period LIKE 'Balance of Q%'`;
-    
-    const clearRequest = ownPool.request();
-    if (cardCode) {
-      clearQuery += ` AND CardCode = @cardCode`;
-      clearRequest.input('cardCode', sql.NVarChar(50), cardCode);
-    }
-    if (rebateType) {
-      clearQuery += ` AND RebateType = @rebateType`;
-      clearRequest.input('rebateType', sql.NVarChar(50), rebateType);
-    }
-    
-    await clearRequest.query(clearQuery);
-    console.log(`🧹 Cleared existing beginning balance records`);
-    
-    // Calculate balances from previous quarters
-    const balanceQuery = `
-      SELECT 
-        CardCode,
-        RebateCode,
-        RebateType,
-        CASE 
-          WHEN Period LIKE 'January%' OR Period LIKE 'February%' OR Period LIKE 'March%' THEN 'Q1'
-          WHEN Period LIKE 'April%' OR Period LIKE 'May%' OR Period LIKE 'June%' THEN 'Q2'
-          WHEN Period LIKE 'July%' OR Period LIKE 'August%' OR Period LIKE 'September%' THEN 'Q3'
-          WHEN Period LIKE 'October%' OR Period LIKE 'November%' OR Period LIKE 'December%' THEN 'Q4'
-        END AS Quarter,
-        CASE 
-          WHEN Period LIKE '%2027%' THEN 2027
-          WHEN Period LIKE '%2026%' THEN 2026
-          WHEN Period LIKE '%2025%' THEN 2025
-          WHEN Period LIKE '%2024%' THEN 2024
-          WHEN Period LIKE '%2023%' THEN 2023
-          WHEN Period LIKE '%2022%' THEN 2022
-          ELSE YEAR(GETDATE())
-        END AS Year,
-        SUM(RebateBalance) as QuarterBalance
-      FROM PayoutHistory
-      WHERE Period NOT LIKE 'Balance of Q%'
-        AND RebateBalance > 0
-        ${cardCode ? 'AND CardCode = @cardCode' : ''}
-        ${rebateType ? 'AND RebateType = @rebateType' : ''}
-      GROUP BY 
-        CardCode,
-        RebateCode,
-        RebateType,
-        CASE 
-          WHEN Period LIKE 'January%' OR Period LIKE 'February%' OR Period LIKE 'March%' THEN 'Q1'
-          WHEN Period LIKE 'April%' OR Period LIKE 'May%' OR Period LIKE 'June%' THEN 'Q2'
-          WHEN Period LIKE 'July%' OR Period LIKE 'August%' OR Period LIKE 'September%' THEN 'Q3'
-          WHEN Period LIKE 'October%' OR Period LIKE 'November%' OR Period LIKE 'December%' THEN 'Q4'
-        END,
-        CASE 
-          WHEN Period LIKE '%2027%' THEN 2027
-          WHEN Period LIKE '%2026%' THEN 2026
-          WHEN Period LIKE '%2025%' THEN 2025
-          WHEN Period LIKE '%2024%' THEN 2024
-          WHEN Period LIKE '%2023%' THEN 2023
-          WHEN Period LIKE '%2022%' THEN 2022
-          ELSE YEAR(GETDATE())
-        END
-      HAVING SUM(RebateBalance) > 0
-    `;
-    
-    const balanceRequest = ownPool.request();
-    if (cardCode) {
-      balanceRequest.input('cardCode', sql.NVarChar(50), cardCode);
-    }
-    if (rebateType) {
-      balanceRequest.input('rebateType', sql.NVarChar(50), rebateType);
-    }
-    
-    const result = await balanceRequest.query(balanceQuery);
-    const balances = result.recordset;
-    
-    console.log(`📊 Found ${balances.length} previous quarter balances to carry over`);
-    
-    // Insert beginning balance records for NEXT quarter
-    const insertedBalances = [];
-    
-    for (const balance of balances) {
-      const {
-        CardCode,
-        RebateCode,
-        RebateType,
-        Quarter,
-        Year,
-        QuarterBalance
-      } = balance;
-      
-      // Determine next quarter and year
-      let nextQuarter, nextYear;
-      
-      if (Quarter === 'Q1') {
-        nextQuarter = 2;
-        nextYear = Year;
-      } else if (Quarter === 'Q2') {
-        nextQuarter = 3;
-        nextYear = Year;
-      } else if (Quarter === 'Q3') {
-        nextQuarter = 4;
-        nextYear = Year;
-      } else if (Quarter === 'Q4') {
-        nextQuarter = 1;
-        nextYear = Year + 1;
-      } else {
-        continue; // Skip invalid quarters
-      }
-      
-      const targetPeriod = `Balance of Q${nextQuarter} ${nextYear}`;
-      
-      // Check if beginning balance already exists for this period
-      const checkQuery = `
-        SELECT COUNT(*) as Count 
-        FROM PayoutHistory 
-        WHERE CardCode = @CardCode 
-          AND RebateCode = @RebateCode
-          AND Period = @Period
-          AND Period LIKE 'Balance of Q%'
-      `;
-      
-      const checkResult = await ownPool.request()
-        .input('CardCode', sql.NVarChar(50), CardCode)
-        .input('RebateCode', sql.NVarChar(50), RebateCode)
-        .input('Period', sql.NVarChar(100), targetPeriod)
-        .query(checkQuery);
-      
-      if (checkResult.recordset[0].Count === 0) {
-        // Generate payout ID
-        const payoutId = `BEGBAL-${CardCode}-${RebateCode}-Q${nextQuarter}-${nextYear}`;
-        
-        // Insert beginning balance record (NO CalculationNote)
-        const insertQuery = `
-          INSERT INTO PayoutHistory (
-            PayoutId,
-            CardCode,
-            RebateCode,
-            RebateType,
-            Period,
-            PayoutDate,
-            BaseAmount,
-            TotalAmount,
-            AmountReleased,
-            RebateBalance,
-            Status,
-            CreatedDate,
-            UpdatedDate
-          )
-          VALUES (
-            @PayoutId,
-            @CardCode,
-            @RebateCode,
-            @RebateType,
-            @Period,
-            @PayoutDate,
-            @BaseAmount,
-            @TotalAmount,
-            @AmountReleased,
-            @RebateBalance,
-            @Status,
-            GETDATE(),
-            GETDATE()
-          )
-        `;
-        
-        await ownPool.request()
-          .input('PayoutId', sql.NVarChar(100), payoutId)
-          .input('CardCode', sql.NVarChar(50), CardCode)
-          .input('RebateCode', sql.NVarChar(50), RebateCode)
-          .input('RebateType', sql.NVarChar(50), RebateType)
-          .input('Period', sql.NVarChar(100), targetPeriod)
-          .input('PayoutDate', sql.Date, new Date())
-          .input('BaseAmount', sql.Decimal(18, 2), 0)
-          .input('TotalAmount', sql.Decimal(18, 2), QuarterBalance)
-          .input('AmountReleased', sql.Decimal(18, 2), 0)
-          .input('RebateBalance', sql.Decimal(18, 2), QuarterBalance)
-          .input('Status', sql.NVarChar(50), 'Pending')
-          .query(insertQuery);
-        
-        insertedBalances.push({
-          cardCode: CardCode,
-          rebateCode: RebateCode,
-          rebateType: RebateType,
-          fromQuarter: Quarter,
-          fromYear: Year,
-          toQuarter: nextQuarter,
-          toYear: nextYear,
-          amount: QuarterBalance
-        });
-        
-        console.log(`✅ Added beginning balance: ${CardCode} - ${RebateCode}: ₱${QuarterBalance} from ${Quarter} ${Year} to Q${nextQuarter} ${nextYear}`);
-      }
-    }
-    
-    res.json({ 
-      success: true, 
-      message: `Added ${insertedBalances.length} beginning balance records`,
-      insertedBalances: insertedBalances,
-      database: databaseToUse
-    });
-    
-  } catch (error) {
-    console.error('❌ Error calculating beginning balance:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message
-    });
-  }
-});
-
-// Add this endpoint to recalculate beginning balances
-router.post('/recalculate-beginning-balances', async (req, res) => {
-  try {
-    const { db, cardCode, rebateType } = req.body;
-    
-    console.log(`🔄 Recalculating beginning balances for:`, { db, cardCode, rebateType });
-    
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
-      });
-    }
-
-    // Delete existing beginning balances for this customer
-    const deleteQuery = `
-      DELETE FROM PayoutHistory 
-      WHERE Period LIKE 'Balance of Q%' 
-        ${cardCode ? 'AND CardCode = @cardCode' : ''}
-        ${rebateType ? 'AND RebateType = @rebateType' : ''}
-    `;
-    
-    const deleteRequest = ownPool.request();
-    if (cardCode) deleteRequest.input('cardCode', sql.NVarChar(50), cardCode);
-    if (rebateType) deleteRequest.input('rebateType', sql.NVarChar(50), rebateType);
-    
-    await deleteRequest.query(deleteQuery);
-    console.log(`🧹 Cleared existing beginning balances`);
-    
-    // Get all quarters with balances
-    const balanceQuery = `
-      SELECT 
-        CardCode,
-        RebateCode,
-        RebateType,
-        CASE 
-          WHEN Period LIKE 'January%' OR Period LIKE 'February%' OR Period LIKE 'March%' THEN 1
-          WHEN Period LIKE 'April%' OR Period LIKE 'May%' OR Period LIKE 'June%' THEN 2
-          WHEN Period LIKE 'July%' OR Period LIKE 'August%' OR Period LIKE 'September%' THEN 3
-          WHEN Period LIKE 'October%' OR Period LIKE 'November%' OR Period LIKE 'December%' THEN 4
-          WHEN Period LIKE 'Quarter 1%' THEN 1
-          WHEN Period LIKE 'Quarter 2%' THEN 2
-          WHEN Period LIKE 'Quarter 3%' THEN 3
-          WHEN Period LIKE 'Quarter 4%' THEN 4
-        END AS Quarter,
-        CASE 
-          WHEN Period LIKE '%2025%' THEN 2025
-          WHEN Period LIKE '%2024%' THEN 2024
-          WHEN Period LIKE '%2023%' THEN 2023
-          WHEN Period LIKE '%2022%' THEN 2022
-          ELSE YEAR(GETDATE())
-        END AS Year,
-        SUM(RebateBalance) as QuarterBalance
-      FROM PayoutHistory
-      WHERE Period NOT LIKE 'Balance of Q%'
-        AND RebateBalance > 0
-        ${cardCode ? 'AND CardCode = @cardCode' : ''}
-        ${rebateType ? 'AND RebateType = @rebateType' : ''}
-      GROUP BY 
-        CardCode,
-        RebateCode,
-        RebateType,
-        CASE 
-          WHEN Period LIKE 'January%' OR Period LIKE 'February%' OR Period LIKE 'March%' THEN 1
-          WHEN Period LIKE 'April%' OR Period LIKE 'May%' OR Period LIKE 'June%' THEN 2
-          WHEN Period LIKE 'July%' OR Period LIKE 'August%' OR Period LIKE 'September%' THEN 3
-          WHEN Period LIKE 'October%' OR Period LIKE 'November%' OR Period LIKE 'December%' THEN 4
-          WHEN Period LIKE 'Quarter 1%' THEN 1
-          WHEN Period LIKE 'Quarter 2%' THEN 2
-          WHEN Period LIKE 'Quarter 3%' THEN 3
-          WHEN Period LIKE 'Quarter 4%' THEN 4
-        END,
-        CASE 
-          WHEN Period LIKE '%2025%' THEN 2025
-          WHEN Period LIKE '%2024%' THEN 2024
-          WHEN Period LIKE '%2023%' THEN 2023
-          WHEN Period LIKE '%2022%' THEN 2022
-          ELSE YEAR(GETDATE())
-        END
-      HAVING SUM(RebateBalance) > 0
-    `;
-    
-    const balanceRequest = ownPool.request();
-    if (cardCode) balanceRequest.input('cardCode', sql.NVarChar(50), cardCode);
-    if (rebateType) balanceRequest.input('rebateType', sql.NVarChar(50), rebateType);
-    
-    const result = await balanceRequest.query(balanceQuery);
-    const balances = result.recordset;
-    
-    console.log(`📊 Found ${balances.length} quarters with balances to process`);
-    
-    const insertedBalances = [];
-    
-    // Create beginning balances for next quarter
-    for (const balance of balances) {
-      const { CardCode, RebateCode, RebateType, Quarter, Year, QuarterBalance } = balance;
-      
-      // Get next quarter info
-      const nextQuarterInfo = getNextQuarterInfo(Quarter, Year);
-      const { nextQuarter, nextYear, period: targetPeriod, payoutQuarter: targetPayoutQuarter } = nextQuarterInfo;
-      
-      // Create beginning balance
-      const payoutId = `BAL-${CardCode}-${RebateCode}-Q${nextQuarter}-${nextYear}`;
-      
-      const beginningBalanceDate = new Date(nextYear, (nextQuarter - 1) * 3, 1);
-      const formattedDate = `${beginningBalanceDate.getMonth() + 1}.${beginningBalanceDate.getDate()}.${beginningBalanceDate.getFullYear().toString().slice(-2)}`;
-      
-      const insertQuery = `
-        INSERT INTO PayoutHistory (
-          PayoutId,
-          CardCode,
-          RebateCode,
-          RebateType,
-          Period,
-          PayoutQuarter,
-          PayoutDate,
-          BaseAmount,
-          TotalAmount,
-          AmountReleased,
-          RebateBalance,
-          Status,
-          CreatedDate,
-          UpdatedDate
-        )
-        VALUES (
-          @PayoutId,
-          @CardCode,
-          @RebateCode,
-          @RebateType,
-          @Period,
-          @PayoutQuarter,
-          @PayoutDate,
-          @BaseAmount,
-          @TotalAmount,
-          @AmountReleased,
-          @RebateBalance,
-          @Status,
-          GETDATE(),
-          GETDATE()
-        )
-      `;
-      
-      await ownPool.request()
-        .input('PayoutId', sql.NVarChar(100), payoutId)
-        .input('CardCode', sql.NVarChar(50), CardCode)
-        .input('RebateCode', sql.NVarChar(50), RebateCode)
-        .input('RebateType', sql.NVarChar(50), RebateType)
-        .input('Period', sql.NVarChar(100), targetPeriod)
-        .input('PayoutQuarter', sql.NVarChar(20), targetPayoutQuarter)
-        .input('PayoutDate', sql.NVarChar(20), formattedDate)
-        .input('BaseAmount', sql.Decimal(18, 2), 0)
-        .input('TotalAmount', sql.Decimal(18, 2), QuarterBalance)
-        .input('AmountReleased', sql.Decimal(18, 2), 0)
-        .input('RebateBalance', sql.Decimal(18, 2), QuarterBalance)
-        .input('Status', sql.NVarChar(50), 'Beginning Balance')
-        .query(insertQuery);
-      
-      insertedBalances.push({
-        cardCode: CardCode,
-        rebateCode: RebateCode,
-        rebateType: RebateType,
-        fromQuarter: Quarter,
-        fromYear: Year,
-        toQuarter: nextQuarter,
-        toYear: nextYear,
-        amount: QuarterBalance,
-        period: targetPeriod
-      });
-      
-      console.log(`✅ Created beginning balance: ${CardCode} - ${targetPeriod}: ₱${QuarterBalance.toFixed(2)}`);
-    }
-    
-    res.json({
-      success: true,
-      message: `Recalculated ${insertedBalances.length} beginning balance records`,
-      insertedBalances: insertedBalances
-    });
-    
-  } catch (error) {
-    console.error('❌ Error recalculating beginning balances:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Get payout history with beginning balances included
-router.get('/payouts-with-balances/:cardCode?', async (req, res) => {
-  try {
-    const { cardCode } = req.params;
-    const { rebateType, period } = req.query;
-    
-    console.log(`📊 Fetching payout history with balances from database: ${req.database}`);
-    
-    let query = `
-      SELECT 
-        ph.*,
-        CASE 
-          WHEN ph.Period LIKE 'Balance of Q%' THEN 1
-          ELSE 0
-        END AS IsBeginningBalance,
-        CASE 
-          WHEN ph.Period LIKE 'Balance of Q%' THEN 
-            SUBSTRING(ph.Period, 13, 4) + '-' + 
-            RIGHT('0' + REPLACE(SUBSTRING(ph.Period, 11, 2), 'Q', ''), 2) + '-01'
-          ELSE ph.Date
-        END AS SortDate
-      FROM PayoutHistory ph
-      WHERE 1=1
-    `;
-    
-    if (cardCode) {
-      query += ` AND ph.CardCode = @CardCode`;
-    }
-    
-    if (rebateType) {
-      query += ` AND ph.RebateType = @RebateType`;
-    }
-    
-    if (period) {
-      query += ` AND ph.Period LIKE @Period`;
-    }
-    
-    query += ` ORDER BY SortDate DESC, ph.Id DESC`;
-    
-    const request = req.db.request();
-    
-    if (cardCode) {
-      request.input('CardCode', sql.NVarChar, cardCode);
-    }
-    
-    if (rebateType) {
-      request.input('RebateType', sql.NVarChar, rebateType);
-    }
-    
-    if (period) {
-      request.input('Period', sql.NVarChar, `%${period}%`);
-    }
-    
-    const result = await request.query(query);
-    
-    // Group by period to organize beginning balances with their respective months
-    const groupedData = {};
-    result.recordset.forEach(row => {
-      const periodKey = row.Period;
-      if (!groupedData[periodKey]) {
-        groupedData[periodKey] = [];
-      }
-      groupedData[periodKey].push(row);
-    });
-    
-    res.json({
-      success: true,
-      data: result.recordset,
-      groupedData: groupedData,
-      database: req.database,
-      count: result.recordset.length
-    });
-    
-  } catch (error) {
-    console.error('❌ Error fetching payout history with balances:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      database: req.database 
-    });
-  }
-});
-
-
-const mergePayoutData = (calculatedData, existingData, rebateType) => {
-  try {
-    console.log(`🔄 Merging payout data: ${calculatedData.length} calculated, ${existingData.length} existing`);
-
-    if (!Array.isArray(calculatedData)) calculatedData = [];
-    if (!Array.isArray(existingData)) existingData = [];
-
-    const merged = [];
-
-    calculatedData.forEach(calculated => {
-      try {
-        const existing = existingData.find(record => record.PayoutId === calculated.id);
-
-        // ── Always use fresh numbers from calculated – never freeze ──
-        const freshBase  = parseFloat(calculated.baseAmount ?? calculated.amount ?? 0);
-        const freshTotal = parseFloat(calculated.amount ?? 0);
-
-        // If the calculation provided a released amount (e.g. from SAPJournalEntries),
-        // use that; otherwise keep the manually set value from existing (if any).
-        const freshReleased = parseFloat(calculated.amountReleased || 0);
-        const amountReleased = freshReleased > 0
-          ? freshReleased
-          : parseFloat(existing?.AmountReleased || 0);
-
-        const balance = calculateBalance(freshTotal, amountReleased);
-
-        // Preserve manual status edits, but let quota/eligibility force "No Payout"
-        const status = calculateStatus(
-          existing?.Status,
-          calculated.eligible,
-          calculated.quotaMet,
-          rebateType
-        );
-
-        // ── Build the merged record ──
-        merged.push({
-          Id: existing?.Id || null,
-          PayoutId: existing?.PayoutId || calculated.id,
-          CardCode: existing?.CardCode || calculated.cardCode,
-          RebateCode: existing?.RebateCode || calculated.rebateCode,
-          RebateType: existing?.RebateType || rebateType,
-          Date: existing?.Date || calculated.date,
-          Period: existing?.Period || calculated.period,
-
-          // ⬇️ Always fresh – this is the core fix
-          BaseAmount: freshBase,
-          TotalAmount: freshTotal,
-          Amount: freshTotal,
-
-          Status: status,
-          AmountReleased: amountReleased,
-          Balance: balance,
-          ReleaseDate: existing?.ReleaseDate || null,
-          CreatedDate: existing?.CreatedDate || new Date().toISOString().split('T')[0],
-          UpdatedDate: new Date().toISOString().split('T')[0],
-
-          // Calculated metadata
-          monthKey: calculated.monthKey,
-          quarter: calculated.quarter,
-          year: calculated.year,
-          totalQtyForReb: calculated.totalQtyForReb || 0,
-          totalAdjustedQtyForReb: calculated.totalAdjustedQtyForReb || 0,
-          eligible: calculated.eligible,
-          quotaMet: calculated.quotaMet,
-          qtrRebate: calculated.qtrRebate,
-          isQtrRebate: calculated.type === 'quarterly',
-          calculationNote: calculated.calculationNote,
-          hasTransactions: calculated.hasTransactions || false,
-          transactionCount: calculated.transactionCount || 0,
-          // Include optional SAP journal fields if present
-          ...(calculated.hasSapJournal !== undefined && { hasSapJournal: calculated.hasSapJournal }),
-          ...(calculated.journalRemarks && { journalRemarks: calculated.journalRemarks }),
-          ...(calculated.journalDate && { journalDate: calculated.journalDate }),
-          ...(calculated.journalStatus && { journalStatus: calculated.journalStatus }),
-        });
-      } catch (mergeError) {
-        console.error(`❌ Error merging record:`, mergeError.message);
-      }
-    });
-
-    console.log(`✅ Merged ${merged.length} payout records`);
-    return merged;
-  } catch (error) {
-    console.error('❌ Error in mergePayoutData:', error);
+    console.error('❌ calculateMonthlyPayoutData:', error);
     return [];
   }
 };
 
-const calculateStatus = (existingStatus, isEligible, quotaMet = false, rebateType = 'Fixed') => {
-  if (rebateType === 'Fixed' || rebateType === 'Percentage') {
-    // For Fixed and Percentage rebates, use quotaMet to determine eligibility
-    if (!quotaMet) {
-      return 'No Payout';
-    }
-    
-    // If quota is met but no existing status, default to Pending
-    if (!existingStatus || existingStatus === 'No Payout') {
-      return 'Pending';
-    }
-    
-    // Keep existing status if already set
-    return existingStatus;
-  } else {
-    // For Incremental rebates, use isEligible
-    if (!isEligible) {
-      return 'No Payout';
-    }
-    
-    // If eligible but no existing status, default to Pending
-    if (!existingStatus || existingStatus === 'No Payout') {
-      return 'Pending';
-    }
-    
-    // Keep existing status if already set
-    return existingStatus;
-  }
+/* ══════════════════════════════════════════════════════════════════
+   SAP FETCH — OJDT only (JE/AR/AP/ARCM/APCM classified by DocumentType)
+   ══════════════════════════════════════════════════════════════════ */
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+const toPeriodMeta = (date) => {
+  const d = new Date(date);
+  const year = d.getFullYear(), month = d.getMonth() + 1;
+  return { year, month, periodKey: `${year}-${String(month).padStart(2, '0')}`, periodName: `${MONTH_NAMES[month - 1]} ${year}` };
 };
 
-// Parse "M.D.YY" (e.g. "8.31.26") into a real Date, unambiguously —
-// avoids relying on SQL Server's TRY_CAST, whose interpretation of
-// dot-separated dates depends on connection language/DATEFORMAT
-// settings and can silently mis-sort (or return NULL for everyone).
-const parsePayoutDate = (payoutDate) => {
-  if (!payoutDate) return null;
-  const parts = String(payoutDate).split('.');
-  if (parts.length !== 3) return null;
-  const [m, d, yy] = parts.map(p => parseInt(p, 10));
-  if (!m || !d || Number.isNaN(yy)) return null;
-  const year = yy < 100 ? 2000 + yy : yy;
-  const dt = new Date(year, m - 1, d);
-  return Number.isNaN(dt.getTime()) ? null : dt;
+const normalizeDocType = (rawType) => {
+  const t = String(rawType || '').trim().toUpperCase();
+  if (!t) return 'JE';
+  if (t === 'JE') return 'JE';
+  if (t.startsWith('A/R INVOICE')) return 'AR';
+  if (t.startsWith('A/R CREDIT MEMO')) return 'ARCM';
+  if (t.startsWith('A/P INVOICE')) return 'AP';
+  if (t.startsWith('A/P CREDIT MEMO')) return 'APCM';
+  return t;
 };
 
-const applyFifoPaidStatusAcrossCustomer = async (customerCode, pool) => {
-  const allRowsResult = await pool.request()
-    .input('cc', sql.NVarChar(50), customerCode)
-    .query(`
-      SELECT Id, PayoutId, RebateCode, PayoutDate, Period, BaseAmount, AmountReleased, RebateBalance, Status
-      FROM PayoutHistory
-      WHERE CardCode = @cc
-        AND PayoutId NOT LIKE 'SAP-%'
-        AND Period NOT LIKE 'Balance of Q%'
-      ORDER BY Id ASC
-    `);
+const makeBucket = ({ periodKey, periodName, year, month }) => ({
+  periodKey, periodName, year, month,
+  totalAmount: 0, arcmDeduction: 0, entries: [], transactionIds: new Set(),
+  sourceBreakdown: { JE: 0, AR: 0, AP: 0, ARCM: 0, APCM: 0 },
+});
 
-  // Sort chronologically in JS using the unambiguous parsed date,
-  // falling back to Id order only when a date fails to parse.
-  const rows = [...allRowsResult.recordset].sort((a, b) => {
-    const dateA = parsePayoutDate(a.PayoutDate);
-    const dateB = parsePayoutDate(b.PayoutDate);
-    if (dateA && dateB && dateA.getTime() !== dateB.getTime()) {
-      return dateA - dateB;
-    }
-    return a.Id - b.Id;
-  });
-
-  if (rows.length === 0) return;
-
-  // Pool of all money released to date, in chronological row order.
-  // IMPORTANT: this reads from AmountReleased (raw, sync-controlled)
-  // and never writes back into it — AmountReleased must stay the raw
-  // per-period value so future syncSAPDataToPayouts runs (which only
-  // touch the currently-viewed rebate code's rows) stay accurate.
-  // Only Status and RebateBalance are derived/overwritten here, and
-  // that's safe to recompute on every request with no drift.
-  let releasedPool = rows.reduce((sum, r) => sum + (parseFloat(r.AmountReleased) || 0), 0);
-
-  for (const row of rows) {
-    const base = (parseFloat(row.BaseAmount) || 0) + (parseFloat(row.PreviousBalance) || 0);
-    let newStatus;
-    let allocated = 0; // how much of the FIFO pool this row's base absorbs
-
-    if (base <= 0) {
-      newStatus = 'No Payout';
-    } else if (releasedPool >= base) {
-      newStatus = 'Paid';
-      allocated = base;
-      releasedPool -= base;
-    } else if (releasedPool > 0) {
-      newStatus = 'Partially Paid';
-      allocated = releasedPool;
-      releasedPool = 0;
-    } else {
-      newStatus = row.Status === 'No Payout' ? 'No Payout' : 'Pending';
-    }
-
-    const newBalance = Math.max(0, parseFloat((base - allocated).toFixed(2)));
-    const oldBalance = parseFloat(row.RebateBalance) || 0;
-
-    if (newStatus !== row.Status || Math.abs(newBalance - oldBalance) > 0.01) {
-      await pool.request()
-        .input('id', sql.Int, row.Id)
-        .input('status', sql.NVarChar(50), newStatus)
-        .input('balance', sql.Decimal(18, 2), newBalance)
-        .query(`
-          UPDATE PayoutHistory
-          SET Status = @status, RebateBalance = @balance, UpdatedDate = GETDATE()
-          WHERE Id = @id
-        `);
-      console.log(
-        `💰 [FIFO] ${row.PayoutId} (${row.RebateCode}, ${row.Period}): ` +
-        `${row.Status} → ${newStatus}, Balance ${oldBalance.toFixed(2)} → ${newBalance.toFixed(2)}`
-      );
-    }
-  }
-};
-
-// Calculate balance
-const calculateBalance = (amount, amountReleased) => {
-  const balance = Math.max(0, amount - amountReleased);
-  return parseFloat(balance.toFixed(2));
-};
-
-const generatePayoutId = (customerCode, rebateCode, identifier) => {
-  const cleanCustomerCode = customerCode.replace(/[^a-zA-Z0-9]/g, '');
-  const cleanRebateCode = rebateCode.replace(/[^a-zA-Z0-9]/g, '');
-  const cleanIdentifier = identifier.replace(/[^a-zA-Z0-9-]/g, '');
-  
-  const payoutId = `PAY-${cleanCustomerCode}-${cleanRebateCode}-${cleanIdentifier}`;
-  
-  console.log(`🆔 Generated payout ID: ${payoutId}`);
-  return payoutId;
-};
-
-// Save payouts to database
-const savePayoutsToDatabase = async (payouts, pool, startingBalance = 0) => {
+const fetchSAPJournalEntries = async (customerCode, periodFrom, periodTo, pool) => {
   try {
-    console.log(`💾 Saving ${payouts.length} payout records to database`);
-    
-    // First, apply carry-over to ensure consistent calculations — reuse the
-    // same cross-rebate starting balance the caller already computed, so
-    // this second pass doesn't reset it back to 0.
-    const payoutsWithCarryOver = applyBalanceCarryOverToPayouts(payouts, startingBalance);
-    
-    for (const payout of payoutsWithCarryOver) {
-      try {
-        const baseAmount = parseFloat(payout.BaseAmount) || 0;
-        const totalAmount = parseFloat(payout.TotalAmount) || 0;
-        const amountReleased = parseFloat(payout.AmountReleased) || 0;
-        const rebateType = payout.RebateType || payout.rebateType || 'Fixed';
-        const balance = calculateBalance(totalAmount, amountReleased);
-        const status = calculateStatus(
-          payout.Status, 
-          payout.eligible, 
-          payout.quotaMet, 
-          rebateType
-        );
-        
-        // Force status to 'No Payout' for months with 0 total amount
-        const finalStatus = totalAmount === 0 ? 'No Payout' : status;
-        
-        // Get quarter string
-        const payoutQuarter = getQuarterString(payout.Period, payout.Date);
-        
-        // Check if record with this PayoutId already exists
-        const checkQuery = `
-          SELECT Id, PayoutId FROM PayoutHistory WHERE PayoutId = @PayoutId
-        `;
-        
-        const checkResult = await pool.request()
-          .input('PayoutId', sql.NVarChar(100), payout.PayoutId)
-          .query(checkQuery);
-        
-        if (checkResult.recordset.length > 0) {
-          // UPDATE existing record
-          const updateQuery = `
-            UPDATE PayoutHistory 
-            SET 
-              BaseAmount = @BaseAmount,
-              TotalAmount = @TotalAmount,
-              Status = @Status,
-              AmountReleased = @AmountReleased,
-              RebateBalance = @RebateBalance,
-              RebateType = @RebateType,
-              PayoutQuarter = @PayoutQuarter,
-              UpdatedDate = GETDATE()
-            WHERE PayoutId = @PayoutId
-          `;
-          
-          await pool.request()
-            .input('PayoutId', sql.NVarChar(100), payout.PayoutId)
-            .input('BaseAmount', sql.Decimal(18, 2), baseAmount)
-            .input('TotalAmount', sql.Decimal(18, 2), totalAmount)
-            .input('Status', sql.NVarChar(50), finalStatus)
-            .input('AmountReleased', sql.Decimal(18, 2), amountReleased)
-            .input('RebateBalance', sql.Decimal(18, 2), balance)
-            .input('RebateType', sql.NVarChar(50), rebateType)
-            .input('PayoutQuarter', sql.NVarChar(20), payoutQuarter)
-            .query(updateQuery);
-            
-          console.log(`✅ Updated payout ${payout.PayoutId}: Quarter=${payoutQuarter}, Base=${baseAmount}, Total=${totalAmount}`);
-        } else {
-          // INSERT new record
-          const insertQuery = `
-            INSERT INTO PayoutHistory (
-              PayoutId, CardCode, RebateCode, RebateType, PayoutDate, Period, 
-              PayoutQuarter, BaseAmount, TotalAmount, Status, AmountReleased, RebateBalance
-            )
-            VALUES (
-              @PayoutId, @CardCode, @RebateCode, @RebateType, @PayoutDate, @Period,
-              @PayoutQuarter, @BaseAmount, @TotalAmount, @Status, @AmountReleased, @RebateBalance
-            )
-          `;
-          
-          await pool.request()
-            .input('PayoutId', sql.NVarChar(100), payout.PayoutId)
-            .input('CardCode', sql.NVarChar(50), payout.CardCode || '')
-            .input('RebateCode', sql.NVarChar(50), payout.RebateCode || '')
-            .input('RebateType', sql.NVarChar(50), rebateType)
-            .input('PayoutDate', sql.NVarChar(20), payout.Date || '')
-            .input('Period', sql.NVarChar(100), payout.Period || '')
-            .input('PayoutQuarter', sql.NVarChar(20), payoutQuarter)
-            .input('BaseAmount', sql.Decimal(18, 2), baseAmount)
-            .input('TotalAmount', sql.Decimal(18, 2), totalAmount)
-            .input('Status', sql.NVarChar(50), finalStatus)
-            .input('AmountReleased', sql.Decimal(18, 2), amountReleased)
-            .input('RebateBalance', sql.Decimal(18, 2), balance)
-            .query(insertQuery);
-            
-          console.log(`✅ Inserted payout ${payout.PayoutId}: Quarter=${payoutQuarter}, Base=${baseAmount}, Total=${totalAmount}`);
-        }
-        
-      } catch (payoutError) {
-        console.error(`❌ Error saving payout ${payout?.PayoutId}:`, payoutError.message);
-      }
-    }
-    
-    console.log(`✅ Completed saving ${payouts.length} payout records with carry-over`);
-    
+    console.log(`📊 [SAP][VAN] Fetching OJDT for ${customerCode} ${periodFrom}→${periodTo}`);
+    const sapPool = getPool('VAN');
+    if (!sapPool) return { success: false, entries: [] };
+
+    const startDate = new Date(periodFrom);
+    const programEndDate = new Date(periodTo);
+    const today = new Date();
+    const endDate = today > programEndDate ? today : programEndDate;
+
+    const ojdtQuery = `
+      SELECT
+        ISNULL(T0.DocumentType, 'JE') AS DocumentType,
+        T0.ShortName AS CardCode, T0.CardName, T0.RefDate AS DocDate,
+        T0.TransId AS TransId, T0.BaseRef AS BaseRef,
+        T0.Account, T0.AcctName, T0.Debit, T0.Credit, T0.Memo, T0.LineMemo, T0.RefDate
+      FROM OJDT T0
+      WHERE T0.ShortName = @customerCode
+        AND T0.AcctName LIKE '%Rebate%'
+        AND T0.RefDate >= @periodFrom
+        AND T0.RefDate <= @endDate
+      ORDER BY T0.RefDate ASC, T0.TransId ASC
+    `;
+
+    const r = await sapPool.request()
+      .input('customerCode', sql.NVarChar(50), customerCode)
+      .input('periodFrom', sql.Date, startDate)
+      .input('endDate', sql.Date, endDate)
+      .query(ojdtQuery);
+
+    console.log(`📊 [SAP][VAN] Raw OJDT rows: ${r.recordset.length}`);
+
+    const entriesByPeriod = {};
+    const getOrCreate = (key, meta) => {
+      if (!entriesByPeriod[key]) entriesByPeriod[key] = makeBucket(meta);
+      return entriesByPeriod[key];
+    };
+
+    r.recordset.forEach(row => {
+      const docType = normalizeDocType(row.DocumentType);
+      const meta = toPeriodMeta(row.DocDate);
+      const bucket = getOrCreate(meta.periodKey, meta);
+      const debit = parseFloat(row.Debit) || 0;
+      const credit = parseFloat(row.Credit) || 0;
+      const netAmount = debit - credit;
+
+      bucket.totalAmount += netAmount;
+      bucket.sourceBreakdown[docType] = (bucket.sourceBreakdown[docType] || 0) + netAmount;
+      if (docType === 'ARCM' || docType === 'APCM') bucket.arcmDeduction += Math.abs(netAmount);
+
+      bucket.entries.push({
+        sourceType: docType, docNum: row.TransId, transId: row.TransId,
+        baseRef: row.BaseRef ?? null, docDate: row.DocDate,
+        account: row.Account, acctName: row.AcctName,
+        debit, credit, netAmount,
+        memo: row.Memo || row.LineMemo || '',
+        cardCode: row.CardCode, cardName: row.CardName,
+      });
+    });
+
+    const resultArray = Object.values(entriesByPeriod)
+      .map(({ transactionIds, ...rest }) => rest)
+      .sort((a, b) => a.year !== b.year ? a.year - b.year : a.month - b.month);
+
+    return { success: true, entries: resultArray, rawEntries: { ojdt: r.recordset } };
   } catch (error) {
-    console.error('❌ Error in savePayoutsToDatabase:', error);
+    console.error('❌ [SAP][VAN] fetch:', error);
+    return { success: false, entries: [], error: error.message };
   }
 };
 
+/* ══════════════════════════════════════════════════════════════════
+   STATUS / AMOUNT-RELEASED endpoints
+   ══════════════════════════════════════════════════════════════════ */
+router.put('/payouts/:payoutId/status', async (req, res) => {
+  try {
+    const { payoutId } = req.params;
+    const { db, status, amountReleased } = req.body;
+    if (!payoutId) return res.status(400).json({ success: false, message: 'Payout ID is required' });
 
-// Add this endpoint for updating amount released specifically
+    const ownPool = getPool(db || 'VAN');
+    if (!ownPool) return res.status(500).json({ success: false, message: 'Database pool not available' });
+
+    const g = await ownPool.request().input('payoutId', sql.NVarChar(150), payoutId)
+      .query(`SELECT Id, PayoutId, CardCode, RebateCode, BaseAmount, TotalAmount, AmountReleased, Status, RebateBalance, ReleaseDate, DocumentType FROM PayoutHistory WHERE PayoutId = @payoutId`);
+    if (g.recordset.length === 0) return res.status(404).json({ success: false, message: `Payout ${payoutId} not found` });
+
+    const cur = g.recordset[0];
+    if (cur.DocumentType) return res.status(400).json({ success: false, message: 'Cannot update status of a redemption row' });
+
+    const totalAmount = parseFloat(cur.TotalAmount) || 0;
+    let newAmountReleased = parseFloat(amountReleased) || 0;
+    newAmountReleased = Math.min(Math.max(newAmountReleased, 0), totalAmount);
+    const newBalance = Math.max(0, totalAmount - newAmountReleased);
+
+    let newStatus = status || cur.Status;
+    if (newAmountReleased === 0 && totalAmount > 0) newStatus = 'Pending';
+    else if (newAmountReleased >= totalAmount) newStatus = 'Paid';
+    else if (newAmountReleased > 0) newStatus = 'Partially Paid';
+
+    let releaseDate = cur.ReleaseDate;
+    if (newAmountReleased > 0 && (!releaseDate || releaseDate === null)) releaseDate = new Date();
+
+    const result = await ownPool.request()
+      .input('status', sql.NVarChar(50), newStatus)
+      .input('amountReleased', sql.Decimal(18, 2), newAmountReleased)
+      .input('releaseDate', sql.DateTime, releaseDate)
+      .input('balance', sql.Decimal(18, 2), newBalance)
+      .input('payoutId', sql.NVarChar(150), payoutId)
+      .query(`
+        UPDATE PayoutHistory SET Status=@status, AmountReleased=@amountReleased,
+          ReleaseDate=@releaseDate, RebateBalance=@balance, UpdatedDate=GETDATE()
+        WHERE PayoutId=@payoutId
+      `);
+
+    res.json({ success: true, message: 'Payout updated successfully',
+      data: { payoutId, baseAmount: cur.BaseAmount, totalAmount, status: newStatus, amountReleased: newAmountReleased, balance: newBalance, releaseDate, rowsAffected: result.rowsAffected[0] } });
+  } catch (error) {
+    console.error('❌ [VAN] status:', error);
+    res.status(500).json({ success: false, message: 'Error updating payout', error: error.message });
+  }
+});
+
 router.put('/payouts/:payoutId/amount-released', async (req, res) => {
   try {
     const { payoutId } = req.params;
     const { db, amountReleased } = req.body;
-    
-    console.log('💰 Updating amount released:', { payoutId, amountReleased });
-    
-    if (!payoutId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Payout ID is required'
-      });
-    }
+    if (!payoutId) return res.status(400).json({ success: false, message: 'Payout ID is required' });
 
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
-      });
-    }
+    const ownPool = getPool(db || 'VAN');
+    if (!ownPool) return res.status(500).json({ success: false, message: 'Database pool not available' });
 
-    // Get current payout record
-    const getQuery = `
-      SELECT Id, TotalAmount, AmountReleased, Status
-      FROM PayoutHistory
-      WHERE PayoutId = @payoutId
-    `;
-    
-    const getResult = await ownPool.request()
-      .input('payoutId', sql.NVarChar(100), payoutId)
-      .query(getQuery);
+    const g = await ownPool.request().input('payoutId', sql.NVarChar(150), payoutId)
+      .query(`SELECT Id, TotalAmount, AmountReleased, Status, ReleaseDate, DocumentType FROM PayoutHistory WHERE PayoutId = @payoutId`);
+    if (g.recordset.length === 0) return res.status(404).json({ success: false, message: `Payout ${payoutId} not found` });
 
-    if (getResult.recordset.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: `Payout with ID ${payoutId} not found`
-      });
-    }
+    const cur = g.recordset[0];
+    if (cur.DocumentType) return res.status(400).json({ success: false, message: 'Cannot update amount of a redemption row' });
 
-    const currentPayout = getResult.recordset[0];
-    const totalAmount = parseFloat(currentPayout.TotalAmount) || 0;
-    
-    // Parse and validate amount released
+    const totalAmount = parseFloat(cur.TotalAmount) || 0;
     const newAmountReleased = parseFloat(amountReleased) || 0;
     const validatedAmountReleased = Math.min(Math.max(newAmountReleased, 0), totalAmount);
-    
-    // Calculate balance using the helper function
-    const newBalance = calculateBalance(totalAmount, validatedAmountReleased);
-    
-    // Determine status based on amounts
-    let newStatus = currentPayout.Status;
-    if (validatedAmountReleased === 0) {
-      newStatus = totalAmount > 0 ? 'Pending' : 'No Payout';
-    } else if (validatedAmountReleased >= totalAmount) {
-      newStatus = 'Paid';
-    } else if (validatedAmountReleased > 0) {
-      newStatus = 'Partially Paid';
-    }
-    
-    // Determine release date
-    let releaseDate = currentPayout.ReleaseDate;
-    if (validatedAmountReleased > 0 && (!releaseDate || releaseDate === null)) {
-      releaseDate = new Date();
-    }
+    const newBalance = Math.max(0, totalAmount - validatedAmountReleased);
 
-    // Update payout
-    const updateQuery = `
-      UPDATE PayoutHistory 
-      SET 
-        Status = @status,
-        AmountReleased = @amountReleased,
-        ReleaseDate = @releaseDate,
-        RebateBalance = @balance,
-        UpdatedDate = GETDATE()
-      WHERE PayoutId = @payoutId
-    `;
-    
+    let newStatus = cur.Status;
+    if (validatedAmountReleased === 0) newStatus = totalAmount > 0 ? 'Pending' : 'No Payout';
+    else if (validatedAmountReleased >= totalAmount) newStatus = 'Paid';
+    else if (validatedAmountReleased > 0) newStatus = 'Partially Paid';
+
+    let releaseDate = cur.ReleaseDate;
+    if (validatedAmountReleased > 0 && (!releaseDate || releaseDate === null)) releaseDate = new Date();
+
     const result = await ownPool.request()
       .input('status', sql.NVarChar(50), newStatus)
       .input('amountReleased', sql.Decimal(18, 2), validatedAmountReleased)
       .input('releaseDate', sql.DateTime, releaseDate)
       .input('balance', sql.Decimal(18, 2), newBalance)
-      .input('payoutId', sql.NVarChar(100), payoutId)
-      .query(updateQuery);
+      .input('payoutId', sql.NVarChar(150), payoutId)
+      .query(`
+        UPDATE PayoutHistory SET Status=@status, AmountReleased=@amountReleased,
+          ReleaseDate=@releaseDate, RebateBalance=@balance, UpdatedDate=GETDATE()
+        WHERE PayoutId=@payoutId
+      `);
 
-    console.log(`Updated amount released for ${payoutId}:`, {
-      amountReleased: validatedAmountReleased,
-      balance: newBalance,
-      status: newStatus
-    });
-
-    res.json({
-      success: true,
-      message: `Amount released updated successfully`,
-      data: {
-        payoutId: payoutId,
-        status: newStatus,
-        amountReleased: validatedAmountReleased,
-        balance: newBalance,
-        releaseDate: releaseDate,
-        rowsAffected: result.rowsAffected[0]
-      }
-    });
-
+    res.json({ success: true, message: 'Amount released updated successfully',
+      data: { payoutId, status: newStatus, amountReleased: validatedAmountReleased, balance: newBalance, releaseDate, rowsAffected: result.rowsAffected[0] } });
   } catch (error) {
-    console.error('❌ Error updating amount released:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error updating amount released',
-      error: error.message
-    });
+    console.error('❌ [VAN] amount:', error);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// Update the save endpoint (/api/payouts/save) 
 router.post('/payouts/save', async (req, res) => {
   try {
     const { db, payoutData } = req.body;
-    
-    console.log('💾 Saving payout data:', payoutData?.Id);
-    
-    if (!payoutData || !payoutData.Id) {
-      return res.status(400).json({
-        success: false,
-        message: 'Payout data is required'
-      });
-    }
+    if (!payoutData || !payoutData.Id) return res.status(400).json({ success: false, message: 'Payout data is required' });
 
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pool not available'
-      });
-    }
+    const ownPool = getPool(db || 'VAN');
+    if (!ownPool) return res.status(500).json({ success: false, message: 'Database pool not available' });
 
-    // Calculate values using helper functions
     const amount = parseFloat(payoutData.Amount) || 0;
     const amountReleased = parseFloat(payoutData.AmountReleased) || 0;
-    const balance = calculateBalance(amount, amountReleased);
-    
-    // Determine status based on amounts
+    const balance = Math.max(0, amount - amountReleased);
+
     let status = payoutData.Status || 'Pending';
-    if (amount === 0) {
-      status = 'No Payout';
-    } else if (amountReleased === 0) {
-      status = 'Pending';
-    } else if (amountReleased >= amount) {
-      status = 'Paid';
-    } else if (amountReleased > 0) {
-      status = 'Partially Paid';
-    }
+    if (amount === 0) status = 'No Payout';
+    else if (amountReleased === 0) status = 'Pending';
+    else if (amountReleased >= amount) status = 'Paid';
+    else if (amountReleased > 0) status = 'Partially Paid';
 
-    // Determine release date
-    let releaseDate = null;
-    if (amountReleased > 0) {
-      releaseDate = new Date();
-    }
+    let releaseDate = amountReleased > 0 ? new Date() : null;
 
-    // Check if record exists using PayoutId
-    const checkQuery = `
-      SELECT Id FROM PayoutHistory WHERE PayoutId = @PayoutId
-    `;
-    
-    const checkResult = await ownPool.request()
-      .input('PayoutId', sql.NVarChar(100), payoutData.Id)
-      .query(checkQuery);
+    const check = await ownPool.request().input('PayoutId', sql.NVarChar(150), payoutData.Id)
+      .query(`SELECT Id FROM PayoutHistory WHERE PayoutId = @PayoutId`);
 
-    let queryResult;
-    
-    if (checkResult.recordset.length > 0) {
-      // UPDATE existing record
-      const updateQuery = `
-        UPDATE PayoutHistory 
-        SET 
-          TotalAmount = @TotalAmount,
-          Status = @Status,
-          AmountReleased = @AmountReleased,
-          ReleaseDate = @ReleaseDate,
-          RebateBalance = @RebateBalance,
-          RebateType = @RebateType,
-          UpdatedDate = GETDATE()
-        WHERE PayoutId = @PayoutId
-      `;
-      
-      queryResult = await ownPool.request()
-        .input('PayoutId', sql.NVarChar(100), payoutData.Id)
+    let qr;
+    if (check.recordset.length > 0) {
+      qr = await ownPool.request()
+        .input('PayoutId', sql.NVarChar(150), payoutData.Id)
         .input('TotalAmount', sql.Decimal(18, 2), amount)
         .input('Status', sql.NVarChar(50), status)
         .input('AmountReleased', sql.Decimal(18, 2), amountReleased)
         .input('ReleaseDate', sql.DateTime, releaseDate)
         .input('RebateBalance', sql.Decimal(18, 2), balance)
         .input('RebateType', sql.NVarChar(50), payoutData.RebateType || 'Fixed')
-        .query(updateQuery);
-
-      console.log(`✅ Updated payout ${payoutData.Id}: Status=${status}, AmountReleased=${amountReleased}`);
+        .query(`UPDATE PayoutHistory SET TotalAmount=@TotalAmount, Status=@Status,
+          AmountReleased=@AmountReleased, ReleaseDate=@ReleaseDate,
+          RebateBalance=@RebateBalance, RebateType=@RebateType, UpdatedDate=GETDATE()
+          WHERE PayoutId=@PayoutId`);
     } else {
-      // INSERT new record
-      const insertQuery = `
-        INSERT INTO PayoutHistory (
-          PayoutId, CardCode, RebateCode, PayoutDate, Period, 
-          TotalAmount, Status, AmountReleased, ReleaseDate, RebateBalance, RebateType
-        )
-        VALUES (
-          @PayoutId, @CardCode, @RebateCode, @PayoutDate, @Period,
-          @TotalAmount, @Status, @AmountReleased, @ReleaseDate, @RebateBalance, @RebateType
-        )
-      `;
-      
-      queryResult = await ownPool.request()
-        .input('PayoutId', sql.NVarChar(100), payoutData.Id)
+      qr = await ownPool.request()
+        .input('PayoutId', sql.NVarChar(150), payoutData.Id)
         .input('CardCode', sql.NVarChar(50), payoutData.CardCode || '')
         .input('RebateCode', sql.NVarChar(50), payoutData.RebateCode || '')
         .input('PayoutDate', sql.NVarChar(20), payoutData.Date || '')
@@ -4072,1901 +1138,233 @@ router.post('/payouts/save', async (req, res) => {
         .input('ReleaseDate', sql.DateTime, releaseDate)
         .input('RebateBalance', sql.Decimal(18, 2), balance)
         .input('RebateType', sql.NVarChar(50), payoutData.RebateType || 'Fixed')
-        .query(insertQuery);
-
-      console.log(`✅ Inserted new payout ${payoutData.Id}: Status=${status}, AmountReleased=${amountReleased}`);
+        .query(`INSERT INTO PayoutHistory (PayoutId, CardCode, RebateCode, PayoutDate, Period,
+          TotalAmount, Status, AmountReleased, ReleaseDate, RebateBalance, RebateType)
+          VALUES (@PayoutId, @CardCode, @RebateCode, @PayoutDate, @Period,
+          @TotalAmount, @Status, @AmountReleased, @ReleaseDate, @RebateBalance, @RebateType)`);
     }
-
-    res.json({
-      success: true,
-      message: 'Payout data saved successfully',
-      data: {
-        payoutId: payoutData.Id,
-        status: status,
-        amountReleased: amountReleased,
-        balance: balance,
-        rowsAffected: queryResult.rowsAffected[0]
-      }
-    });
-
+    res.json({ success: true, message: 'Payout data saved successfully',
+      data: { payoutId: payoutData.Id, status, amountReleased, balance, rowsAffected: qr.rowsAffected[0] } });
   } catch (error) {
-    console.error('❌ Error saving payout data:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error saving payout data',
-      error: error.message
-    });
+    console.error('❌ [VAN] save:', error);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// Get detailed payout calculation for debugging
+/* ══════════════════════════════════════════════════════════════════
+   Single-month calc + debug endpoints (kept for compatibility)
+   ══════════════════════════════════════════════════════════════════ */
 router.get('/payouts/calculate/:customerCode/:rebateCode/:monthKey', async (req, res) => {
   try {
     const { customerCode, rebateCode, monthKey } = req.params;
     const { db } = req.query;
-    
-    console.log('🧮 Calculating payout details:', { customerCode, rebateCode, monthKey });
-    
-    const databaseToUse = db || 'VAN';
-    const ownPool = getPool(databaseToUse);
-    
-    if (!ownPool) {
-      return res.status(500).json({
-        success: false,
-        message: 'Database pools not available'
-      });
-    }
+    const ownPool = getPool(db || 'VAN');
+    if (!ownPool) return res.status(500).json({ success: false, message: 'Database pool not available' });
 
-    // Parse month key
     const [year, month] = monthKey.split('-');
     const startDate = `${year}-${month}-01`;
     const endDate = new Date(year, month, 0).toISOString().split('T')[0];
+    const rt = await ownPool.request().input('rebateCode', sql.NVarChar(50), rebateCode)
+      .query(`SELECT RebateType FROM RebateProgram WHERE RebateCode = @rebateCode`);
+    if (rt.recordset.length === 0) return res.status(404).json({ success: false, message: `Rebate ${rebateCode} not found` });
+    const rebateType = rt.recordset[0].RebateType;
 
-    // Get rebate type
-    const rebateTypeQuery = `
-      SELECT RebateType
-      FROM RebateProgram
-      WHERE RebateCode = @rebateCode
-    `;
-    
-    const rebateTypeResult = await ownPool.request()
-      .input('rebateCode', sql.NVarChar(50), rebateCode)
-      .query(rebateTypeQuery);
-
-    if (rebateTypeResult.recordset.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: `Rebate with code ${rebateCode} not found`
-      });
-    }
-
-    const rebateType = rebateTypeResult.recordset[0].RebateType;
-
-    // Get transactions for this month from the dashboard endpoint
     let transactions = [];
     try {
-      const transUrl = `http://localhost:3009/api/dashboard/customer/${customerCode}/transactions?` +
-        `db=${databaseToUse}&rebateCode=${rebateCode}&rebateType=${rebateType}&` +
-        `periodFrom=${startDate}&periodTo=${endDate}`;
-      
-      console.log('📊 Fetching transactions from:', transUrl);
-      
-      const transResponse = await fetch(transUrl);
-      if (transResponse.ok) {
-        const transData = await transResponse.json();
-        if (transData.success && transData.data.transactions) {
-          transactions = transData.data.transactions || [];
-          console.log(`📊 Found ${transactions.length} transactions for calculation`);
-        }
-      }
-    } catch (transError) {
-      console.error('❌ Error fetching transactions:', transError.message);
-    }
+      const u = `http://localhost:3009/api/van/dashboard/customer/${customerCode}/transactions?db=${db || 'VAN'}&rebateCode=${rebateCode}&rebateType=${rebateType}&periodFrom=${startDate}&periodTo=${endDate}`;
+      const tr = await fetch(u);
+      if (tr.ok) { const j = await tr.json(); if (j.success && j.data.transactions) transactions = j.data.transactions; }
+    } catch (e) { console.error('❌ tx:', e.message); }
 
-    // Calculate payout details
-    const calculation = await calculatePayoutDetails(
-      transactions,
-      rebateType,
-      customerCode,
-      rebateCode,
-      ownPool,
-      monthKey
-    );
-
-    res.json({
-      success: true,
-      data: {
-        customerCode,
-        rebateCode,
-        rebateType,
-        monthKey,
-        calculation,
-        transactionCount: transactions.length,
-        totalQtyForReb: transactions.reduce((sum, t) => sum + (parseFloat(t.QtyForReb) || 0), 0)
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Error calculating payout:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error calculating payout',
-      error: error.message
-    });
-  }
+    const calculation = await calculatePayoutDetails(transactions, rebateType, customerCode, rebateCode, ownPool, monthKey);
+    res.json({ success: true, data: { customerCode, rebateCode, rebateType, monthKey, calculation,
+      transactionCount: transactions.length, totalQtyForReb: transactions.reduce((s, t) => s + (parseFloat(t.QtyForReb) || 0), 0) } });
+  } catch (error) { res.status(500).json({ success: false, message: error.message }); }
 });
 
 const calculatePayoutDetails = async (transactions, rebateType, customerCode, rebateCode, pool, monthKey) => {
-  const result = {
-    totalQtyForReb: 0,
-    totalAdjustedQtyForReb: 0,
-    eligible: false,
-    rebatePerBag: 0,
-    qtrRebate: 0,
-    amount: 0,
-    calculationSteps: [],
-    itemBreakdown: []
-  };
-
-  // Process each transaction
-  transactions.forEach((transaction, index) => {
-    const itemName = transaction.Item || transaction.ItemName || `Item ${index + 1}`;
-    const is25kgItem = transaction.Is25kgItem || 
-      (itemName && itemName.toLowerCase().includes('25kg'));
-    
-    const originalQty = parseFloat(transaction.QtyForReb) || 0;
-    let adjustedQty = originalQty;
-    let adjustmentNote = '';
-    
-    if (is25kgItem) {
-      adjustedQty = originalQty / 2;
-      adjustmentNote = `${originalQty} ÷ 2 = ${adjustedQty.toFixed(2)}`;
-    }
-    
-    result.totalQtyForReb += originalQty;
-    result.totalAdjustedQtyForReb += adjustedQty;
-    
-    result.itemBreakdown.push({
-      itemName: itemName,
-      is25kg: is25kgItem,
-      originalQty: originalQty,
-      adjustedQty: adjustedQty,
-      adjustmentNote: adjustmentNote
-    });
+  // lightweight single-month breakdown (kept for debugging)
+  const result = { totalQtyForReb: 0, totalAdjustedQtyForReb: 0, eligible: false, amount: 0, calculationSteps: [], itemBreakdown: [] };
+  transactions.forEach(t => {
+    const qty = parseFloat(t.QtyForReb) || 0;
+    result.totalQtyForReb += qty;
+    result.totalAdjustedQtyForReb += qty;
   });
-
-  result.calculationSteps.push(`Total QtyForReb: ${result.totalQtyForReb.toFixed(2)}`);
-  result.calculationSteps.push(`Adjusted QtyForReb: ${result.totalAdjustedQtyForReb.toFixed(2)} (25kg items divided by 2)`);
-
-  // Get QTR rebate
-  try {
-    const qtrRebateQuery = rebateType === 'Fixed' ? `
-      SELECT QtrRebate 
-      FROM FixCustRebate 
-      WHERE CardCode = @customerCode AND RebateCode = @rebateCode
-    ` : rebateType === 'Percentage' ? `
-      SELECT QtrRebate 
-      FROM PerCustRebate 
-      WHERE CardCode = @customerCode AND RebateCode = @rebateCode
-    ` : `
-      SELECT QtrRebate 
-      FROM IncCustRebate 
-      WHERE CardCode = @customerCode AND RebateCode = @rebateCode
-    `;
-
-    const qtrRebateResult = await pool.request()
-      .input('customerCode', sql.NVarChar(50), customerCode)
-      .input('rebateCode', sql.NVarChar(50), rebateCode)
-      .query(qtrRebateQuery);
-
-    if (qtrRebateResult.recordset.length > 0) {
-      result.qtrRebate = parseFloat(qtrRebateResult.recordset[0].QtrRebate) || 0;
-      result.calculationSteps.push(`QTR Rebate: ${result.qtrRebate}`);
-    }
-  } catch (error) {
-    result.calculationSteps.push(`QTR Rebate: Not found (default 0)`);
-  }
-
-  if (rebateType === 'Fixed' || rebateType === 'Incremental') {
-    // Check if eligible
-    const eligibleTransactions = transactions.filter(t => t.EligibilityStatus === 'Eligible');
-    result.eligible = eligibleTransactions.length > 0;
-    result.calculationSteps.push(`Eligible for ${rebateType} rebate: ${result.eligible}`);
-    
-    if (result.eligible) {
-      // Get rebate per bag
-      try {
-        let rebateQuery;
-        if (rebateType === 'Fixed') {
-          rebateQuery = `
-            SELECT TOP 1 RebatePerBag
-            FROM FixProdRebate
-            WHERE RebateCode = @rebateCode
-          `;
-        } else {
-          rebateQuery = `
-            SELECT TOP 1 RebatePerBag
-            FROM IncCustRange
-            WHERE RebateCode = @rebateCode
-            ORDER BY RangeNo
-          `;
-        }
-        
-        const rebateResult = await pool.request()
-          .input('rebateCode', sql.NVarChar(50), rebateCode)
-          .query(rebateQuery);
-
-        if (rebateResult.recordset.length > 0) {
-          result.rebatePerBag = parseFloat(rebateResult.recordset[0].RebatePerBag) || 0;
-          result.calculationSteps.push(`Rebate per bag: ${result.rebatePerBag}`);
-        }
-      } catch (error) {
-        result.calculationSteps.push(`Rebate per bag: Not found (default 0)`);
-      }
-
-      // Calculate amount using ADJUSTED quantity
-      result.amount = result.totalAdjustedQtyForReb * result.rebatePerBag;
-      result.calculationSteps.push(`Base amount (using adjusted Qty): ${result.totalAdjustedQtyForReb.toFixed(2)} × ${result.rebatePerBag.toFixed(2)} = ${result.amount.toFixed(2)}`);
-      
-      if (result.qtrRebate > 0) {
-        const originalAmount = result.amount;
-        result.amount *= result.qtrRebate;
-        result.calculationSteps.push(`With QTR: ${originalAmount.toFixed(2)} × ${result.qtrRebate.toFixed(2)} = ${result.amount.toFixed(2)}`);
-      }
-    }
-  } else if (rebateType === 'Percentage') {
-    // Check if eligible (quota met)
-    result.eligible = true; // This will be determined by quota calculation
-    result.calculationSteps.push(`Percentage rebate - will check quota separately`);
-  }
-
-  result.calculationSteps.push(`Final amount: ${result.amount.toFixed(2)}`);
-  result.calculationSteps.push(`Status: ${result.eligible ? 'Pending' : 'No Payout'}`);
-
+  result.calculationSteps.push(`Total QtyForReb: ${result.totalQtyForReb}`);
+  result.calculationSteps.push(`Adjusted QtyForReb: ${result.totalAdjustedQtyForReb}`);
   return result;
 };
 
-
-
-/*===================================================================*/
-/*                      SAP JE + AR + AP  (fixed)                    */
-/*===================================================================*/
-
-const MONTH_NAMES = [
-  'January','February','March','April','May','June',
-  'July','August','September','October','November','December'
-];
-
-/*------------------------------------------------------------------
- * HELPERS
- *------------------------------------------------------------------*/
-
-/** Build a YYYY-MM period key and human-readable name from any Date */
-const toPeriodMeta = (date) => {
-  const d     = new Date(date);
-  const year  = d.getFullYear();
-  const month = d.getMonth() + 1;          // 1-based
-  return {
-    year,
-    month,
-    periodKey  : `${year}-${String(month).padStart(2, '0')}`,
-    periodName : `${MONTH_NAMES[month - 1]} ${year}`,
-  };
-};
-
-/** Return an empty period bucket */
-const makeBucket = ({ periodKey, periodName, year, month }) => ({
-  periodKey,
-  periodName,
-  year,
-  month,
-  totalAmount     : 0,
-  arcmDeduction   : 0,          // ← track ARCM separately for logging
-  entries         : [],
-  transactionIds  : new Set(),
-  sourceBreakdown : { JE: 0, AR: 0, AP: 0, ARCM: 0, APCM: 0 },
+router.get('/debug/payout-table-structure', async (req, res) => {
+  try {
+    const ownPool = getPool(req.query.db || 'VAN');
+    if (!ownPool) return res.status(500).json({ success: false, message: 'Database pool not available' });
+    const r = await ownPool.request().query(`SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='PayoutHistory' ORDER BY ORDINAL_POSITION`);
+    res.json({ success: true, data: { columns: r.recordset, tableExists: r.recordset.length > 0 } });
+  } catch (error) { res.status(500).json({ success: false, message: error.message }); }
 });
 
-
-
-/*===================================================================*/
-/*                            SAP JE                                 */
-/*===================================================================*/
-const fetchSAPJournalEntries = async (customerCode, periodFrom, periodTo, pool) => {
+/* ══════════════════════════════════════════════════════════════════
+   Resolver helpers (kept for other modules)
+   ══════════════════════════════════════════════════════════════════ */
+export const getAllRebateProgramsForCustomer = async (customerCode, currentRebateCode, pool) => {
   try {
-    console.log(
-      `📊 [SAP] Fetching JE / AR / AP for customer: ${customerCode}  ` +
-      `period: ${periodFrom} → ${periodTo}`
-    );
-
-    const sapPool = getPool('VAN');
-    if (!sapPool) {
-      console.log('⚠️ [SAP] SAP database pool not available');
-      return { success: false, entries: [] };
-    }
-
-    const startDate      = new Date(periodFrom);
-    const programEndDate = new Date(periodTo);
-
-    /*
-     * FIX: don't cap the fetch window by "today". Redemptions can be
-     * (and are, per your AP data) dated well past both the program's
-     * own end date AND today's real wall-clock date — e.g. a Q4 2026
-     * program (ends 12/31/26) redeemed with an AP invoice dated
-     * 1/1/2027. That row already exists in SAP the moment it's posted,
-     * so we search open-ended into the future from the program start
-     * instead of waiting for real calendar time to catch up to it.
-     * syncSAPDataToPayouts still classifies anything past programEndDate
-     * as out-of-period (OOP) and folds it into the latest existing
-     * payout row for this rebate code.
-     */
-    const endDate = new Date('2099-12-31');
-
-    console.log(
-      `📅 [SAP] Effective fetch window: ${startDate.toISOString().slice(0,10)} → ` +
-      `${endDate.toISOString().slice(0,10)}` +
-      (endDate > programEndDate ? '  ⚡ open-ended past program end to capture post-dated entries' : '')
-    );
-
-    /* ----------------------------------------------------------------
-     * PART 1 — Journal Entries
-     * ----------------------------------------------------------------*/
-    const jeQuery = `
-      SELECT
-        'JE'               AS SourceType,
-        T0.ShortName       AS CardCode,
-        T0.CardName,
-        T0.RefDate         AS DocDate,
-        T0.TransId         AS DocNum,
-        NULL               AS BaseRef,
-        T0.Account,
-        T0.AcctName,
-        T0.Debit,
-        T0.Credit,
-        T0.Memo,
-        T0.LineMemo,
-        T0.RefDate
-      FROM OJDT T0
-      WHERE
-        T0.ShortName   = @customerCode
-        AND T0.AcctName LIKE '%Rebate%'
-        AND T0.RefDate >= @periodFrom
-        AND T0.RefDate <= @endDate
-    `;
-
-    /* ----------------------------------------------------------------
-     * PART 2 — AR Invoices
-     * Uses @endDate (today or later) so April entries are fetched even
-     * when the rebate program closed in February.
-     * ----------------------------------------------------------------*/
-    const arQuery = `
-      SELECT
-        'AR' AS SourceType,
-        T0.CardCode,
-        T0.CardName,
-        T0.DocDate,
-        T0.DocNum,
-        T1.BaseRef,
-        T1.Account,
-        T2.AcctName,
-        T1.Debit,
-        T1.Credit,
-        T0.DocDate AS RefDate
-      FROM	
-        OINV T0
-        LEFT JOIN OJDT T1 ON T1.BaseRef = CAST(T0.DocNum AS NVARCHAR)
-        LEFT JOIN OACT T2 ON T2.AcctCode = T1.Account AND T2.AcctName LIKE '%Rebate%'
-      WHERE
-        T0.CardCode   = @customerCode
-        AND T2.AcctName IS NOT NULL
-        AND T0.DocDate >= @periodFrom
-        AND T0.DocDate <= @endDate
-    `;
-
-    /* ----------------------------------------------------------------
-     * PART 3 — AP Invoices
-     * ----------------------------------------------------------------*/
-    const apQuery = `
-      SELECT
-        'AP'            AS SourceType,
-        T0.U_BP_Code    AS CardCode,
-        T0.AcctCode,
-        T0.DocDate,
-        T0.LineTotal
-      FROM OPCH T0
-      WHERE
-        T0.AcctCode    = '611902'
-        AND T0.U_BP_Code = @customerCode
-        AND T0.DocDate  >= @periodFrom
-        AND T0.DocDate  <= @endDate
-    `;
-
-    /* ----------------------------------------------------------------
-     * PART 3b — AR Credit Memos
-     * ----------------------------------------------------------------*/
-    const arcmQuery = `
-      SELECT
-        'ARCM'        AS SourceType,
-        T0.CardCode,
-        T0.CardName,
-        T0.DocDate,
-        T0.DocNum,
-        --T0.DocEntry,
-        T0.ItemCode,
-        T0.GTotal
-      FROM ORIN T0
-      WHERE
-        T0.CardCode  = @customerCode
-        AND T0.ItemCode = 'NT-1914'
-        AND T0.DocDate >= @periodFrom
-        AND T0.DocDate <= @endDate
-    `;
-
-    /* ----------------------------------------------------------------
-     * PART 3c — AP Credit Memos
-     * ----------------------------------------------------------------*/
-    const apcmQuery = `
-      SELECT
-        'APCM'          AS SourceType,
-        T0.U_BP_Code    AS CardCode,
-        T0.DocDate,
-        T0.DocNum,
-        --T0.DocEntry,
-        T0.GTotal
-      FROM ORPC T0
-      WHERE
-        T0.U_BP_Code  = @customerCode
-        AND T0.DocDate >= @periodFrom
-        AND T0.DocDate <= @endDate
-    `;
-
-    /* ----------------------------------------------------------------
-     * PART 4 — Execute all five in parallel
-     * All queries now use @endDate instead of @periodTo so post-period
-     * entries (e.g. April AR for a Jan-Feb rebate) are included.
-     * ----------------------------------------------------------------*/
-    const [jeResult, arResult, apResult, arcmResult, apcmResult] = await Promise.all([
-      sapPool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('periodFrom',   sql.Date,         startDate)
-        .input('endDate',      sql.Date,         endDate)
-        .query(jeQuery),
-      sapPool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('periodFrom',   sql.Date,         startDate)
-        .input('endDate',      sql.Date,         endDate)
-        .query(arQuery),
-      sapPool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('periodFrom',   sql.Date,         startDate)
-        .input('endDate',      sql.Date,         endDate)
-        .query(apQuery),
-      sapPool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('periodFrom',   sql.Date,         startDate)
-        .input('endDate',      sql.Date,         endDate)
-        .query(arcmQuery),
-      sapPool.request()
-        .input('customerCode', sql.NVarChar(50), customerCode)
-        .input('periodFrom',   sql.Date,         startDate)
-        .input('endDate',      sql.Date,         endDate)
-        .query(apcmQuery),
-    ]);
-
-    console.log(
-      `📊 [SAP] Raw rows — JE: ${jeResult.recordset.length} | ` +
-      `AR: ${arResult.recordset.length} | AP: ${apResult.recordset.length} | ` +
-      `ARCM: ${arcmResult.recordset.length} | APCM: ${apcmResult.recordset.length}`
-    );
-
-    /* ----------------------------------------------------------------
-     * PART 5 — Deduplicate and accumulate JE + AR rows
-     * ----------------------------------------------------------------*/
-    const MONTH_NAMES = [
-      'January','February','March','April','May','June',
-      'July','August','September','October','November','December'
-    ];
-
-    const toPeriodMeta = (date) => {
-      const d     = new Date(date);
-      const year  = d.getFullYear();
-      const month = d.getMonth() + 1;
-      return {
-        year,
-        month,
-        periodKey  : `${year}-${String(month).padStart(2, '0')}`,
-        periodName : `${MONTH_NAMES[month - 1]} ${year}`,
-      };
-    };
-
-    const makeBucket = ({ periodKey, periodName, year, month }) => ({
-      periodKey,
-      periodName,
-      year,
-      month,
-      totalAmount     : 0,
-      arcmDeduction   : 0,
-      entries         : [],
-      transactionIds  : new Set(),
-      sourceBreakdown : { JE: 0, AR: 0, AP: 0, ARCM: 0, APCM: 0 },
-    });
-
-    const entriesByPeriod = {};
-    const getOrCreateBucket = (key, meta) => {
-      if (!entriesByPeriod[key]) entriesByPeriod[key] = makeBucket(meta);
-      return entriesByPeriod[key];
-    };
-
-    const jeArRows    = [...jeResult.recordset, ...arResult.recordset];
-    const lineDedupeMap = new Map();
-
-    jeArRows.forEach(row => {
-      const lineKey = row.SourceType === 'JE'
-        ? `JE-${row.DocNum}-${row.Account}`
-        : `AR-${row.DocNum}-${row.BaseRef ?? '0'}-${row.Account}`;
-
-      if (lineDedupeMap.has(lineKey)) {
-        console.log(`  🔄 Duplicate line skipped: ${lineKey}`);
-        return;
-      }
-      lineDedupeMap.set(lineKey, true);
-
-      const meta    = toPeriodMeta(row.DocDate);
-      const bucket  = getOrCreateBucket(meta.periodKey, meta);
-      const debit     = parseFloat(row.Debit)  || 0;
-      const credit    = parseFloat(row.Credit) || 0;
-      const netAmount = debit - credit;
-
-      const txId = row.SourceType === 'JE'
-        ? `JE-${row.DocNum}`
-        : `AR-${row.DocNum}-${row.BaseRef ?? '0'}`;
-
-      if (!bucket.transactionIds.has(txId)) {
-        bucket.transactionIds.add(txId);
-        bucket.totalAmount                    += netAmount;
-        bucket.sourceBreakdown[row.SourceType] += netAmount;
-      }
-
-      bucket.entries.push({
-        sourceType : row.SourceType,
-        docNum     : row.DocNum,
-        baseRef    : row.BaseRef    ?? null,
-        docDate    : row.DocDate,
-        account    : row.Account,
-        acctName   : row.AcctName,
-        debit,
-        credit,
-        netAmount,
-        memo       : row.Memo || row.LineMemo || '',
-        cardCode   : row.CardCode,
-        cardName   : row.CardName,
-      });
-    });
-
-    console.log(
-      `📊 [SAP] After JE/AR dedup: ${Object.keys(entriesByPeriod).length} period(s), ` +
-      `${lineDedupeMap.size} unique lines`
-    );
-
-    /* ----------------------------------------------------------------
-     * PART 6 — AP
-     * ----------------------------------------------------------------*/
-    apResult.recordset.forEach(row => {
-      const meta      = toPeriodMeta(row.DocDate);
-      const bucket    = getOrCreateBucket(meta.periodKey, meta);
-      const lineTotal = parseFloat(row.LineTotal) || 0;
-
-      bucket.u_bp_code          = row.CardCode;
-      bucket.totalAmount        += lineTotal;
-      bucket.sourceBreakdown.AP += lineTotal;
-
-      bucket.entries.push({
-        sourceType : 'AP',
-        docDate    : row.DocDate,
-        acctCode   : row.AcctCode,
-        lineTotal,
-        netAmount  : lineTotal,
-        cardCode   : row.CardCode,
-        matchedBy  : 'U_BP_Code',
-      });
-
-      console.log(
-        `  📄 [AP] ${meta.periodKey}: ₱${lineTotal.toFixed(2)} U_BP_Code=${row.CardCode}`
-      );
-    });
-
-    /* ----------------------------------------------------------------
-     * PART 6b — ARCM
-     * ----------------------------------------------------------------*/
-    arcmResult.recordset.forEach(row => {
-      const meta         = toPeriodMeta(row.DocDate);
-      const bucket       = getOrCreateBucket(meta.periodKey, meta);
-      const deductAmount = Math.abs(parseFloat(row.GTotal) || 0);
-
-      bucket.totalAmount          -= deductAmount;
-      bucket.arcmDeduction        += deductAmount;
-      bucket.sourceBreakdown.ARCM -= deductAmount;
-
-      bucket.entries.push({
-        sourceType  : 'ARCM',
-        docNum      : row.DocNum,
-        docEntry    : row.DocEntry,
-        docDate     : row.DocDate,
-        itemCode    : row.ItemCode,
-        gTotal      : parseFloat(row.GTotal) || 0,
-        netAmount   : -deductAmount,
-        cardCode    : row.CardCode,
-        cardName    : row.CardName,
-        isDeduction : true,
-      });
-
-      console.log(
-        `  📄 [ARCM] ${meta.periodKey}: −₱${deductAmount.toFixed(2)} ` +
-        `(DocNum: ${row.DocNum}, Item: ${row.ItemCode})`
-      );
-    });
-
-    /* ----------------------------------------------------------------
-     * PART 6c — APCM
-     * ----------------------------------------------------------------*/
-    apcmResult.recordset.forEach(row => {
-      const meta         = toPeriodMeta(row.DocDate);
-      const bucket       = getOrCreateBucket(meta.periodKey, meta);
-      const deductAmount = Math.abs(parseFloat(row.GTotal) || 0);
-
-      bucket.u_bp_code            = row.CardCode;
-      bucket.totalAmount          -= deductAmount;
-      bucket.arcmDeduction        += deductAmount;
-      bucket.sourceBreakdown.APCM -= deductAmount;
-
-      bucket.entries.push({
-        sourceType  : 'APCM',
-        docNum      : row.DocNum,
-        docEntry    : row.DocEntry,
-        docDate     : row.DocDate,
-        gTotal      : parseFloat(row.GTotal) || 0,
-        netAmount   : -deductAmount,
-        cardCode    : row.CardCode,
-        matchedBy   : 'U_BP_Code',
-        isDeduction : true,
-      });
-
-      console.log(
-        `  📄 [APCM] ${meta.periodKey}: −₱${deductAmount.toFixed(2)} ` +
-        `(DocNum: ${row.DocNum}, U_BP_Code: ${row.CardCode})`
-      );
-    });
-
-    /* ----------------------------------------------------------------
-     * PART 7 — Cross-customer JE lookup (triggered by AR results)
-     * ----------------------------------------------------------------*/
-    const relatedCustomerEntries = [];
-    if (arResult.recordset.length > 0) {
-      const arDocNums = [...new Set(arResult.recordset.map(r => r.DocNum))];
-      if (arDocNums.length > 0) {
-        const relatedJEQuery = `
-          SELECT
-            'JE'                AS SourceType,
-            T0.ShortName     AS CardCode,
-            T0.CardName,
-            T0.RefDate      AS DocDate,
-            T0.TransId      AS DocNum,
-            T0.BaseRef,
-            T0.Account,
-            T0.AcctName,
-            T0.Debit,
-            T0.Credit,
-            T0.Memo,
-            T0.LineMemo,
-            T0.RefDate
-          FROM OJDT T0
-          WHERE
-            T0.BaseRef   IN (${arDocNums.map((_, i) => `@docNum${i}`).join(',')})
-            AND T0.AcctName IS NOT NULL
-            AND T0.ShortName  != @customerCode
-            AND T0.RefDate   >= @periodFrom
-            AND T0.RefDate   <= @endDate
-        `;
-
-        const relatedRequest = sapPool.request()
-          .input('customerCode', sql.NVarChar(50), customerCode)
-          .input('periodFrom',   sql.Date,         startDate)
-          .input('endDate',      sql.Date,         endDate);
-
-        arDocNums.forEach((docNum, i) =>
-          relatedRequest.input(`docNum${i}`, sql.NVarChar(50), String(docNum))
-        );
-
-        const relatedResult = await relatedRequest.query(relatedJEQuery);
-        console.log(`📊 [SAP] Related-customer JE rows: ${relatedResult.recordset.length}`);
-
-        relatedResult.recordset.forEach(row => {
-          relatedCustomerEntries.push(row);
-          const meta      = toPeriodMeta(row.DocDate);
-          const bucketKey = `${meta.periodKey}-${row.CardCode}`;
-
-          if (!entriesByPeriod[bucketKey]) {
-            entriesByPeriod[bucketKey] = {
-              ...makeBucket(meta),
-              periodName          : `${meta.periodName} (${row.CardCode})`,
-              cardCode            : row.CardCode,
-              cardName            : row.CardName,
-              isRelatedCustomer   : true,
-              originalCustomerCode: customerCode,
-              originalPeriodKey   : meta.periodKey,
-            };
-          }
-
-          const bucket    = entriesByPeriod[bucketKey];
-          const debit     = parseFloat(row.Debit)  || 0;
-          const credit    = parseFloat(row.Credit) || 0;
-          const netAmount = debit - credit;
-          const txId      = `JE-${row.DocNum}`;
-
-          if (!bucket.transactionIds.has(txId)) {
-            bucket.transactionIds.add(txId);
-            bucket.totalAmount        += netAmount;
-            bucket.sourceBreakdown.JE += netAmount;
-          }
-
-          bucket.entries.push({
-            sourceType    : 'JE',
-            docNum        : row.DocNum,
-            docDate       : row.DocDate,
-            account       : row.Account,
-            acctName      : row.AcctName,
-            debit,
-            credit,
-            netAmount,
-            memo          : row.Memo || row.LineMemo || '',
-            cardCode      : row.CardCode,
-            cardName      : row.CardName,
-            isRelatedToAR : true,
-            arDocNum      : row.BaseRef,
-          });
-        });
-      }
-    }
-
-    /* ----------------------------------------------------------------
-     * PART 8 — Serialise, sort, log summary
-     * ----------------------------------------------------------------*/
-    const resultArray = Object.values(entriesByPeriod)
-      .map(({ transactionIds, ...rest }) => rest)
-      .sort((a, b) =>
-        a.year !== b.year ? a.year - b.year : a.month - b.month
-      );
-
-    console.log(`📊 [SAP] Final: ${resultArray.length} period bucket(s):`);
-    resultArray.forEach(p => {
-      const sb          = p.sourceBreakdown;
-      const totalDeduct = Math.abs(sb.ARCM) + Math.abs(sb.APCM);
-      // Flag periods that are outside the original program range
-      const isPostPeriod = (p.year > programEndDate.getFullYear()) ||
-        (p.year === programEndDate.getFullYear() && p.month > programEndDate.getMonth() + 1);
-
-      console.log(
-        `  ${p.periodKey}${p.cardCode ? ` (${p.cardCode})` : ''}` +
-        `${isPostPeriod ? ' ⚡ POST-PERIOD' : ''}: ` +
-        `Net ₱${p.totalAmount.toFixed(2)}  ` +
-        `JE ₱${sb.JE.toFixed(2)}  AR ₱${sb.AR.toFixed(2)}  ` +
-        `AP ₱${sb.AP.toFixed(2)}  ` +
-        `ARCM −₱${Math.abs(sb.ARCM).toFixed(2)}  ` +
-        `APCM −₱${Math.abs(sb.APCM).toFixed(2)}` +
-        (totalDeduct > 0 ? `  ← ₱${totalDeduct.toFixed(2)} total reversed` : '')
-      );
-    });
-
-    return {
-      success   : true,
-      entries   : resultArray,
-      rawEntries: {
-        je      : jeResult.recordset,
-        ar      : arResult.recordset,
-        ap      : apResult.recordset,
-        arcm    : arcmResult.recordset,
-        apcm    : apcmResult.recordset,
-        related : relatedCustomerEntries,
-      },
-      summary: {
-        totalJE      : jeResult.recordset.length,
-        totalAR      : arResult.recordset.length,
-        totalAP      : apResult.recordset.length,
-        totalARCM    : arcmResult.recordset.length,
-        totalAPCM    : apcmResult.recordset.length,
-        totalRelated : relatedCustomerEntries.length,
-        uniquePeriods: resultArray.length,
-        fetchWindow  : {
-          from          : startDate.toISOString().slice(0, 10),
-          to            : endDate.toISOString().slice(0, 10),
-          programEndDate: programEndDate.toISOString().slice(0, 10),
-          extended      : endDate > programEndDate,
-        },
-      },
-    };
-
-  } catch (error) {
-    console.error('❌ [SAP] Error fetching JE / AR / AP:', error);
-    return { success: false, entries: [], error: error.message };
-  }
-};
-
-
-
-/*===================================================================*/
-/*  SYNC — write SAP totals back to PayoutHistory                    */
-/*===================================================================*/
-const syncSAPDataToPayouts = async (customerCode, rebateCode, sapEntries, pool) => {
-  try {
-    console.log(`🔄 [SYNC] Syncing SAP data for ${customerCode} — ${rebateCode}`);
-
-    // ── 1. Rebate program dates ──────────────────────────────────────────────
-    const programResult = await pool.request()
-      .input('rebateCode', sql.NVarChar(50), rebateCode)
-      .query(`SELECT DateFrom, DateTo FROM RebateProgram WHERE RebateCode = @rebateCode`);
-
-    let programFrom = null, programTo = null;
-    if (programResult.recordset.length > 0) {
-      const rec = programResult.recordset[0];
-      if (rec.DateFrom) programFrom = new Date(rec.DateFrom);
-      if (rec.DateTo)   programTo   = new Date(rec.DateTo);
-    }
-    console.log(
-      `📅 [SYNC] Period: ${programFrom?.toISOString().split('T')[0] ?? 'n/a'} → ` +
-      `${programTo?.toISOString().split('T')[0] ?? 'n/a'}`
-    );
-
-    const isInPeriod = (year, month) => {
-      if (!programFrom || !programTo) return true;
-      const first = new Date(year, month - 1, 1);
-      const last  = new Date(year, month, 0);
-      return last >= programFrom && first <= programTo;
-    };
-
-    // ── 2. Is this the LATEST rebate code for this customer? ────────────────
-    //       "Latest" = no other rebate code with a NEWER DateFrom has
-    //       PayoutHistory rows for this same customer.
-    //       Only the latest rebate should absorb out-of-period SAP entries.
-    const latestCheckResult = await pool.request()
-      .input('cc', sql.NVarChar(50), customerCode)
-      .input('rc', sql.NVarChar(50), rebateCode)
-      .query(`
-        SELECT COUNT(*) AS NewerCount
-        FROM RebateProgram rp
-        INNER JOIN PayoutHistory ph
-          ON ph.RebateCode = rp.RebateCode
-         AND ph.CardCode   = @cc
-        WHERE rp.DateFrom > ISNULL(
-          (SELECT DateFrom FROM RebateProgram WHERE RebateCode = @rc),
-          '1900-01-01'
-        )
-      `);
-    const isLatestRebate =
-      (parseInt(latestCheckResult.recordset[0]?.NewerCount) || 0) === 0;
-    console.log(`📋 [SYNC] Is latest rebate for ${customerCode}: ${isLatestRebate}`);
-
-    // ── 3. Clean up stale SAP-OOP rows (from the old behaviour) ─────────────
-    await pool.request()
-      .input('cc', sql.NVarChar(50), customerCode)
-      .input('rc', sql.NVarChar(50), rebateCode)
-      .query(`
-        DELETE FROM PayoutHistory
-        WHERE CardCode   = @cc
-          AND RebateCode = @rc
-          AND PayoutId   LIKE 'SAP-%'
-      `);
-
-    // ── 4. Reset SapReleasedAmount + AmountReleased to 0 BEFORE syncing ─────
-    //       This is the key fix for the accumulation bug:
-    //       without resetting, every page load adds the OOP amount again.
-    await pool.request()
-      .input('cc', sql.NVarChar(50), customerCode)
-      .input('rc', sql.NVarChar(50), rebateCode)
-      .query(`
-        UPDATE PayoutHistory
-        SET SapReleasedAmount = 0,
-            AmountReleased    = 0,
-            SapLastSync       = NULL,
-            UpdatedDate       = GETDATE()
-        WHERE CardCode   = @cc
-          AND RebateCode = @rc
-          AND PayoutId   NOT LIKE 'SAP-%'
-      `);
-    console.log(`🔄 [SYNC] Reset SapReleasedAmount to 0 for a clean sync`);
-
-    // ── 5. Separate in-period vs out-of-period entries ───────────────────────
-    const inPeriodMap = {}; // periodKey → accumulated SAP amount
-    let totalOOP = 0;       // sum of all post-period (after programTo) entries
-
-    for (const sapEntry of sapEntries) {
-      if (sapEntry.isRelatedCustomer) continue;
-      const { year, month, totalAmount, periodKey, periodName } = sapEntry;
-
-      if (isInPeriod(year, month)) {
-        // PATH A candidate — falls within the rebate date range
-        if (!inPeriodMap[periodKey]) inPeriodMap[periodKey] = 0;
-        inPeriodMap[periodKey] += totalAmount;
-        console.log(`  📅 In-period  ${periodName}: ₱${totalAmount.toFixed(2)}`);
-
-      } else if (isLatestRebate) {
-        // Only the LATEST rebate absorbs out-of-period entries.
-        // Entries dated BEFORE this rebate's start belong to an older
-        // rebate code — skip them to prevent double-counting.
-        const entryStart     = new Date(year, month - 1, 1);
-        const isBeforePeriod = programFrom && entryStart < programFrom;
-
-        if (!isBeforePeriod) {
-          totalOOP += totalAmount;
-          console.log(
-            `  ⚡ OOP (after period)  ${periodName}: ₱${totalAmount.toFixed(2)} → will fold into latest row`
-          );
-        } else {
-          console.log(
-            `  ⏭️  Pre-period ${periodName}: ₱${totalAmount.toFixed(2)} → skip (belongs to older rebate)`
-          );
-        }
-
-      } else {
-        // Not the latest rebate AND entry is out-of-period — ignore.
-        // The newer rebate's sync will handle it.
-        console.log(
-          `  ⏭️  OOP ${periodName}: ₱${totalAmount.toFixed(2)} → skip (not latest rebate, newer rebate exists)`
-        );
-      }
-    }
-
-    // ── 6. PATH A — update each in-period payout row ────────────────────────
-    const MN = [
-      'January','February','March','April','May','June',
-      'July','August','September','October','November','December'
-    ];
-    let updatedCount = 0;
-
-    for (const [periodKey, amount] of Object.entries(inPeriodMap)) {
-      const [yearStr, monthStr] = periodKey.split('-');
-      const year      = parseInt(yearStr);
-      const month     = parseInt(monthStr);
-      const monthName = MN[month - 1];
-      const twoDigit  = String(year).slice(-2);
-
-      // NEW: if another (later) rebate code already owns this period,
-      // let that rebate code's own sync call reflect the amount instead.
-      const winningRebateCode = await getWinningRebateCodeForPeriod(
-        customerCode, monthName, year, month, twoDigit, pool
-      );
-
-      if (winningRebateCode && winningRebateCode !== rebateCode) {
-        console.log(
-          `  ⏭️  PATH A: ${monthName} ${year} belongs to ${rebateCode}, but ` +
-          `${winningRebateCode} is the later rebate for this period — skipping ` +
-          `(₱${amount.toFixed(2)} will be reflected under ${winningRebateCode})`
-        );
-        continue;
-      }
-
-      const rows = await pool.request()
-        .input('cc',    sql.NVarChar(50),  customerCode)
-        .input('rc',    sql.NVarChar(50),  rebateCode)
-        .input('exact', sql.NVarChar(100), `${monthName} ${year}`)
-        .input('short', sql.NVarChar(100), `%${monthName.substring(0,3)} ${year}%`)
-        .input('mpat',  sql.NVarChar(20),  `${month}.%.${twoDigit}`)
-        .query(`
-          SELECT Id, Period
-          FROM PayoutHistory
-          WHERE CardCode   = @cc
-            AND RebateCode = @rc
-            AND PayoutId   NOT LIKE 'SAP-%'
-            AND (
-              Period      = @exact
-              OR Period   LIKE @short
-              OR PayoutDate LIKE @mpat
-            )
-        `);
-
-      for (const row of rows.recordset) {
-        await pool.request()
-          .input('sapAmount', sql.Decimal(18, 2), amount)
-          .input('id',        sql.Int,            row.Id)
-          .query(`
-            UPDATE PayoutHistory SET
-              AmountReleased    = @sapAmount,
-              SapReleasedAmount = @sapAmount,
-              SapLastSync       = GETDATE(),
-              UpdatedDate       = GETDATE()
-            WHERE Id = @id
-          `);
-        updatedCount++;
-        console.log(`    ✅ PATH A: ${row.Period} → ₱${amount.toFixed(2)}`);
-      }
-    }
-
-    // ── 7. PATH B — fold OOP into the latest existing payout row ────────────
-    //       Only runs when:
-    //         (a) there IS an out-of-period total, AND
-    //         (b) this IS the latest rebate code for the customer.
-    //       The latest row's SapReleasedAmount was already set by PATH A
-    //       (or is 0 if that row had no in-period SAP entries).
-    //       We add totalOOP on top — this is safe because we reset to 0
-    //       at step 4, so there is no stale value to accumulate on.
-    if (Math.abs(totalOOP) > 0.01 && isLatestRebate) {
-      const latestResult = await pool.request()
-        .input('cc', sql.NVarChar(50), customerCode)
-        .input('rc', sql.NVarChar(50), rebateCode)
-        .query(`
-          SELECT TOP 1 Id, Period, SapReleasedAmount
-          FROM PayoutHistory
-          WHERE CardCode   = @cc
-            AND RebateCode = @rc
-            AND PayoutId   NOT LIKE 'SAP-%'
-            AND Period     NOT LIKE 'Balance of %'
-            AND Period     IS NOT NULL
-            AND Period     != ''
-          ORDER BY Id DESC
-        `);
-
-      if (latestResult.recordset.length > 0) {
-        const latestRow   = latestResult.recordset[0];
-        // SapReleasedAmount here is the in-period SAP set by PATH A (or 0).
-        // Adding totalOOP gives the correct combined total.
-        const inPeriodSap = parseFloat(latestRow.SapReleasedAmount) || 0;
-        const combined    = inPeriodSap + totalOOP;
-
-        await pool.request()
-          .input('sapAmount', sql.Decimal(18, 2), combined)
-          .input('id',        sql.Int,            latestRow.Id)
-          .query(`
-            UPDATE PayoutHistory SET
-              AmountReleased    = @sapAmount,
-              SapReleasedAmount = @sapAmount,
-              SapLastSync       = GETDATE(),
-              UpdatedDate       = GETDATE()
-            WHERE Id = @id
-          `);
-        updatedCount++;
-        console.log(
-          `  ✅ PATH B: "${latestRow.Period}"` +
-          `  in-period ₱${inPeriodSap.toFixed(2)}` +
-          ` + OOP ₱${totalOOP.toFixed(2)}` +
-          ` = ₱${combined.toFixed(2)}`
-        );
-      } else {
-        console.log(`  ⚠️  PATH B: no existing payout row found — cannot anchor OOP amount`);
-      }
-    }
-
-    console.log(`\n✅ [SYNC] Done — ${updatedCount} record(s) updated`);
-
-  } catch (error) {
-    console.error('❌ [SYNC] Error syncing SAP data:', error);
-  }
-};
-
-/* ──────────────────────────────────────────────────────────────────
-
- *  1.  getAllRebateProgramsForCustomer
- *      Returns all rebate programs that have PayoutHistory rows
- *      for this customer AND belong to the same rebate type and
- *      frequency as the currently-viewed program.
- * ────────────────────────────────────────────────────────────────*/
-export const getAllRebateProgramsForCustomer = async (
-  customerCode,
-  currentRebateCode,
-  pool
-) => {
-  try {
-    // Get the frequency / type of the current rebate so we only
-    // look at sibling programs (same frequency = same "family").
-    const metaResult = await pool.request()
-      .input('rc', sql.NVarChar(50), currentRebateCode)
-      .query(`
-        SELECT RebateCode, RebateType, Frequency,
-               DateFrom, DateTo, IsActive
-        FROM RebateProgram
-        WHERE RebateCode = @rc
-      `);
- 
-    if (metaResult.recordset.length === 0) return [];
- 
-    const { RebateType, Frequency } = metaResult.recordset[0];
- 
-    // Find all rebate codes for this customer that share
-    // the same type and frequency.
-    const siblingsResult = await pool.request()
+    const meta = await pool.request().input('rc', sql.NVarChar(50), currentRebateCode)
+      .query(`SELECT RebateCode, RebateType, Frequency, DateFrom, DateTo, IsActive FROM RebateProgram WHERE RebateCode = @rc`);
+    if (meta.recordset.length === 0) return [];
+    const sib = await pool.request()
       .input('customerCode', sql.NVarChar(50), customerCode)
       .query(`
-        SELECT DISTINCT rp.RebateCode, rp.DateFrom, rp.DateTo,
-                        rp.IsActive,   rp.RebateType, rp.Frequency
+        SELECT DISTINCT rp.RebateCode, rp.DateFrom, rp.DateTo, rp.IsActive, rp.RebateType, rp.Frequency
         FROM RebateProgram rp
-        WHERE EXISTS (
-          SELECT 1 FROM PayoutHistory ph
-          WHERE ph.CardCode   = @customerCode
-            AND ph.RebateCode = rp.RebateCode
-        )
+        WHERE EXISTS (SELECT 1 FROM PayoutHistory ph WHERE ph.CardCode=@customerCode AND ph.RebateCode=rp.RebateCode)
         ORDER BY rp.DateFrom ASC
       `);
- 
-    return siblingsResult.recordset;
-  } catch (err) {
-    console.error('❌ [RESOLVER] getAllRebateProgramsForCustomer:', err.message);
-    return [];
-  }
+    return sib.recordset;
+  } catch (err) { console.error('❌ getAllRebatePrograms:', err.message); return []; }
 };
 
-// AFTER — add these three missing helpers (resolveCarryOverSource depends on them)
-const getRebateProgramQuarter = (dateFrom) => {
-  const d = new Date(dateFrom);
-  return { quarter: Math.ceil((d.getMonth() + 1) / 3), year: d.getFullYear() };
-};
-
-const rebateCodeSortValue = (code) => {
-  const m = String(code).match(/(\d+)\s*$/);
-  return m ? parseInt(m[1], 10) : 0;
-};
-
-// NEW
-const getWinningRebateCodeForPeriod = async (customerCode, monthName, year, month, twoDigit, pool) => {
-  const result = await pool.request()
-    .input('cc',    sql.NVarChar(50),  customerCode)
-    .input('exact', sql.NVarChar(100), `${monthName} ${year}`)
-    .input('short', sql.NVarChar(100), `%${monthName.substring(0,3)} ${year}%`)
-    .input('mpat',  sql.NVarChar(20),  `${month}.%.${twoDigit}`)
-    .query(`
-      SELECT DISTINCT ph.RebateCode, rp.DateFrom
-      FROM PayoutHistory ph
-      LEFT JOIN RebateProgram rp ON rp.RebateCode = ph.RebateCode
-      WHERE ph.CardCode   = @cc
-        AND ph.PayoutId   NOT LIKE 'SAP-%'
-        AND ph.Period     NOT LIKE 'Balance of %'
-        AND (
-          ph.Period      = @exact
-          OR ph.Period   LIKE @short
-          OR ph.PayoutDate LIKE @mpat
-        )
-    `);
-
-  if (result.recordset.length === 0) return null;
-  if (result.recordset.length === 1) return result.recordset[0].RebateCode;
-
-  // Multiple rebate codes (possibly different RebateType) share this period.
-  // The one with the most recent program start date wins; fall back to the
-  // numeric suffix of the rebate code if DateFrom is missing/tied.
-  const sorted = [...result.recordset].sort((a, b) => {
-    const dateA = a.DateFrom ? new Date(a.DateFrom).getTime() : 0;
-    const dateB = b.DateFrom ? new Date(b.DateFrom).getTime() : 0;
-    if (dateA !== dateB) return dateB - dateA;
-    return rebateCodeSortValue(b.RebateCode) - rebateCodeSortValue(a.RebateCode);
-  });
-
-  return sorted[0].RebateCode;
-};
-
-const getEndingBalanceForProgram = async (customerCode, rebateCode, pool) => {
-  const result = await pool.request()
-    .input('customerCode', sql.NVarChar(50), customerCode)
-    .input('rebateCode', sql.NVarChar(50), rebateCode)
-    .query(`
-      SELECT TOP 1 Period, PayoutQuarter, TotalAmount, AmountReleased
-      FROM PayoutHistory
-      WHERE CardCode = @customerCode
-        AND RebateCode = @rebateCode
-        AND Period NOT LIKE 'Balance of Q%'
-      ORDER BY Id DESC
-    `);
-  if (result.recordset.length === 0) return null;
-  const row = result.recordset[0];
-  const amount = Math.max(0, (parseFloat(row.TotalAmount) || 0) - (parseFloat(row.AmountReleased) || 0));
-  return { amount, period: row.Period, payoutQuarter: row.PayoutQuarter };
-};
-
-/**
- * Find the ending balance of the customer's most recently active rebate
- * program that started BEFORE currentRebateCode's own start date —
- * regardless of RebateType. That balance is what should seed
- * currentRebateCode's opening "Balance of Q…" row when currentRebateCode
- * has no carry-over data of its own yet.
- */
-const resolveCarryOverSource = async (customerCode, currentRebateCode, pool) => {
-  try {
-    const family = await getAllRebateProgramsForCustomer(customerCode, currentRebateCode, pool);
-
-    let currentProgram = family.find(p => p.RebateCode === currentRebateCode);
-    if (!currentProgram) {
-      const curResult = await pool.request()
-        .input('rc', sql.NVarChar(50), currentRebateCode)
-        .query(`SELECT RebateCode, RebateType, DateFrom, DateTo, IsActive FROM RebateProgram WHERE RebateCode = @rc`);
-      if (curResult.recordset.length === 0) return null;
-      currentProgram = curResult.recordset[0];
-      family.push(currentProgram);
-    }
-
-    const { quarter: curQuarter, year: curYear } = getRebateProgramQuarter(currentProgram.DateFrom);
-    const myOrder = rebateCodeSortValue(currentRebateCode);
-
-    // ── Step A: same-quarter siblings, ordered lowest → highest ──
-    const sameQuarterSiblings = family
-      .filter(p => p.RebateCode !== currentRebateCode)
-      .filter(p => {
-        const { quarter, year } = getRebateProgramQuarter(p.DateFrom);
-        return quarter === curQuarter && year === curYear;
-      })
-      .sort((a, b) => rebateCodeSortValue(a.RebateCode) - rebateCodeSortValue(b.RebateCode));
-
-    const predecessorsInQuarter = sameQuarterSiblings.filter(
-      p => rebateCodeSortValue(p.RebateCode) < myOrder
-    );
-
-    if (predecessorsInQuarter.length > 0) {
-      // Immediate predecessor = the closest lower rebate code in this same quarter
-      const predecessor = predecessorsInQuarter[predecessorsInQuarter.length - 1];
-      const balance = await getEndingBalanceForProgram(customerCode, predecessor.RebateCode, pool);
-      if (balance && balance.amount > 0) {
-        return {
-          amount: balance.amount,
-          sourceRebateCode: predecessor.RebateCode,
-          sourceRebateType: predecessor.RebateType,
-          sourcePeriod: balance.period,
-          sourcePayoutQuarter: balance.payoutQuarter,
-        };
-      }
-      return null; // predecessor exists but already fully released — nothing to carry
-    }
-
-    // ── Step B: I'm the first/lowest code in my quarter — pull from the ──
-    // ── LAST (highest-ordered) rebate code active in the most recent prior quarter ──
-    const priorCandidates = family
-      .filter(p => p.RebateCode !== currentRebateCode)
-      .map(p => ({ ...p, ...getRebateProgramQuarter(p.DateFrom) }))
-      .filter(p => p.year < curYear || (p.year === curYear && p.quarter < curQuarter));
-
-    if (priorCandidates.length === 0) return null;
-
-    priorCandidates.sort((a, b) => {
-      if (a.year !== b.year) return b.year - a.year;
-      if (a.quarter !== b.quarter) return b.quarter - a.quarter;
-      return rebateCodeSortValue(b.RebateCode) - rebateCodeSortValue(a.RebateCode);
-    });
-
-    const mostRecent = priorCandidates[0];
-    const lastInThatQuarter = priorCandidates
-      .filter(p => p.quarter === mostRecent.quarter && p.year === mostRecent.year)
-      .sort((a, b) => rebateCodeSortValue(b.RebateCode) - rebateCodeSortValue(a.RebateCode))[0];
-
-    const balance = await getEndingBalanceForProgram(customerCode, lastInThatQuarter.RebateCode, pool);
-    if (!balance || balance.amount <= 0) return null;
-
-    return {
-      amount: balance.amount,
-      sourceRebateCode: lastInThatQuarter.RebateCode,
-      sourceRebateType: lastInThatQuarter.RebateType,
-      sourcePeriod: balance.period,
-      sourcePayoutQuarter: balance.payoutQuarter,
-    };
-  } catch (error) {
-    console.error('❌ Error in resolveCarryOverSource:', error.message);
-    return null;
-  }
-};
- 
-/* ──────────────────────────────────────────────────────────────────
- *  2.  resolveDocDateToRebateProgram
- *      Pure function — no DB calls.
- *      Maps any DocDate to the best-fit rebate program from the
- *      provided sorted list.
- *
- *      Priority rules
- *      ──────────────
- *      1. Exact match  : DocDate ∈ [DateFrom, DateTo]
- *      2. Gap (between): assign to the program whose DateTo is
- *                        immediately before the DocDate (the most
- *                        recently-closed program).
- *      3. Before first : assign to the earliest program.
- *      4. After last   : assign to the latest program.
- * ────────────────────────────────────────────────────────────────*/
 export const resolveDocDateToRebateProgram = (docDate, programs) => {
   if (!programs || programs.length === 0) return null;
- 
-  const date   = new Date(docDate);
-  date.setHours(12, 0, 0, 0); // normalise to noon to avoid TZ edge cases
- 
-  // Sort ascending by DateFrom
-  const sorted = [...programs].sort(
-    (a, b) => new Date(a.DateFrom) - new Date(b.DateFrom)
-  );
- 
-  // ── 1. Exact match ───────────────────────────────────────────
-  for (const prog of sorted) {
-    const from = new Date(prog.DateFrom);
-    const to   = new Date(prog.DateTo);
-    from.setHours(0,  0,  0,   0);
-    to.setHours(23, 59, 59, 999);
-    if (date >= from && date <= to) {
-      return { ...prog, matchType: 'exact' };
-    }
+  const date = new Date(docDate); date.setHours(12, 0, 0, 0);
+  const sorted = [...programs].sort((a, b) => new Date(a.DateFrom) - new Date(b.DateFrom));
+  for (const p of sorted) {
+    const from = new Date(p.DateFrom); from.setHours(0, 0, 0, 0);
+    const to = new Date(p.DateTo); to.setHours(23, 59, 59, 999);
+    if (date >= from && date <= to) return { ...p, matchType: 'exact' };
   }
- 
-  // ── 2. Before the first program ──────────────────────────────
-  const firstFrom = new Date(sorted[0].DateFrom);
-  firstFrom.setHours(0, 0, 0, 0);
-  if (date < firstFrom) {
-    return { ...sorted[0], matchType: 'before_first' };
-  }
- 
-  // ── 3. After the last program ────────────────────────────────
-  const lastTo = new Date(sorted[sorted.length - 1].DateTo);
-  lastTo.setHours(23, 59, 59, 999);
-  if (date > lastTo) {
-    return { ...sorted[sorted.length - 1], matchType: 'after_last' };
-  }
- 
-  // ── 4. Falls in a gap between two programs ───────────────────
-  //       Assign to the program that ended most recently.
-  for (let i = 0; i < sorted.length - 1; i++) {
-    const curEnd   = new Date(sorted[i].DateTo);
-    const nextStart = new Date(sorted[i + 1].DateFrom);
-    curEnd.setHours(23, 59, 59, 999);
-    nextStart.setHours(0, 0, 0, 0);
- 
-    if (date > curEnd && date < nextStart) {
-      // Prefer the previous program (just ended) unless the next
-      // program starts within 15 days — in that case prefer the
-      // upcoming one (the employee likely meant it for the new cycle).
-      const daysToNext = (nextStart - date) / (1000 * 60 * 60 * 24);
-      const resolved   = daysToNext <= 15 ? sorted[i + 1] : sorted[i];
-      return {
-        ...resolved,
-        matchType: daysToNext <= 15 ? 'gap_next' : 'gap_previous',
-      };
-    }
-  }
- 
-  // Fallback
+  const ff = new Date(sorted[0].DateFrom); ff.setHours(0, 0, 0, 0);
+  if (date < ff) return { ...sorted[0], matchType: 'before_first' };
+  const lt = new Date(sorted[sorted.length - 1].DateTo); lt.setHours(23, 59, 59, 999);
+  if (date > lt) return { ...sorted[sorted.length - 1], matchType: 'after_last' };
   return { ...sorted[sorted.length - 1], matchType: 'fallback' };
 };
- 
-/* ──────────────────────────────────────────────────────────────────
- *  3.  fetchAllSAPTransactionsForCustomer
- *      Like fetchSAPJournalEntries but with NO date restriction.
- *      Returns raw rows grouped by source (je, ar, ap, arcm, apcm).
- *      The caller is responsible for deciding which rebate program
- *      each transaction belongs to.
- * ────────────────────────────────────────────────────────────────*/
-export const fetchAllSAPTransactionsForCustomer = async (customerCode) => {
-  try {
-    const sapPool = getPool('VAN');
-    if (!sapPool) {
-      console.log('⚠️ [SAP-UNIVERSAL] SAP pool not available');
-      return { success: false, rows: [] };
-    }
- 
-    // ── JE ────────────────────────────────────────────────────
-    const jeQuery = `
-      SELECT 'JE' AS SourceType,
-             T0.ShortName  AS CardCode, 
-             T0.CardName,
-             T0.RefDate    AS DocDate,
-             T0.TransId    AS DocNum,  
-             NULL AS BaseRef,
-             T0.Account,  
-             T0.AcctName,
-             T0.Debit,    
-             T0.Credit,
-             T0.Memo,     
-             T0.LineMemo,
-             T0.RefDate
-      FROM OJDT T0
-      WHERE T0.ShortName   = @customerCode
-        AND T0.AcctName LIKE '%Rebate%'
-    `;
- 
-    // ── AR ────────────────────────────────────────────────────
-    const arQuery = `
-      SELECT 'AR' AS SourceType,
-             AR_INV.CardCode, AR_INV.CardName,
-             AR_INV.DocDate,  AR_INV.DocNum,
-             AR_JDT.BaseRef,  AR_LN.Account,
-             AR_ACCT.AcctName,
-             AR_LN.Debit,     AR_LN.Credit,
-             AR_INV.Comments AS Memo, NULL AS LineMemo,
-             AR_INV.DocDate  AS RefDate
-      FROM OINV AR_INV
-      LEFT JOIN OJDT AR_JDT ON AR_JDT.BaseRef = CAST(AR_INV.DocNum AS NVARCHAR)
-      LEFT JOIN JDT1 AR_LN  ON AR_LN.TransId  = AR_JDT.TransId
-      LEFT JOIN OACT AR_ACCT ON AR_ACCT.AcctCode = AR_LN.Account
-                             AND AR_ACCT.AcctName LIKE '%Rebate%'
-      WHERE AR_INV.CardCode = @customerCode
-        AND AR_ACCT.AcctName IS NOT NULL
-    `;
- 
-    // ── AP ────────────────────────────────────────────────────
-    const apQuery = `
-      SELECT 'AP' AS SourceType,
-             T0.U_BP_Code AS CardCode,
-             T0.AcctCode,
-             T0.DocDate,  
-             T0.LineTotal
-      FROM OPCH T0
-      WHERE T0.AcctCode    = '611902'
-        AND T0.U_BP_Code   = @customerCode
-    `;
- 
-    // ── ARCM ──────────────────────────────────────────────────
-    const arcmQuery = `
-      SELECT 'ARCM' AS SourceType,
-             T0.CardCode, 
-             T0.CardName,
-             T0.DocDate,  
-             T0.DocNum, 
-             --T0.DocEntry,
-             T0.ItemCode, 
-             T0.GTotal
-      FROM ORIN T0
-      WHERE T0.CardCode = @customerCode
-        AND T0.ItemCode = 'NT-0018'
-    `;
- 
-    // ── APCM ──────────────────────────────────────────────────
-    const apcmQuery = `
-      SELECT 'APCM' AS SourceType,
-             T0.U_BP_Code AS CardCode,
-             T0.DocDate,  
-             T0.DocNum, 
-             --T0.DocEntry,
-             T0.GTotal
-      FROM ORPC T0
-      WHERE T0.U_BP_Code = @customerCode
-    `;
- 
-    const [jeR, arR, apR, arcmR, apcmR] = await Promise.all([
-      sapPool.request().input('customerCode', sql.NVarChar(50), customerCode).query(jeQuery),
-      sapPool.request().input('customerCode', sql.NVarChar(50), customerCode).query(arQuery),
-      sapPool.request().input('customerCode', sql.NVarChar(50), customerCode).query(apQuery),
-      sapPool.request().input('customerCode', sql.NVarChar(50), customerCode).query(arcmQuery),
-      sapPool.request().input('customerCode', sql.NVarChar(50), customerCode).query(apcmQuery),
-    ]);
- 
-    console.log(
-      `📊 [SAP-UNIVERSAL] Raw rows — JE: ${jeR.recordset.length} | ` +
-      `AR: ${arR.recordset.length} | AP: ${apR.recordset.length} | ` +
-      `ARCM: ${arcmR.recordset.length} | APCM: ${apcmR.recordset.length}`
-    );
- 
-    return {
-      success : true,
-      je      : jeR.recordset,
-      ar      : arR.recordset,
-      ap      : apR.recordset,
-      arcm    : arcmR.recordset,
-      apcm    : apcmR.recordset,
-    };
-  } catch (err) {
-    console.error('❌ [SAP-UNIVERSAL] fetchAllSAPTransactionsForCustomer:', err.message);
-    return { success: false, je: [], ar: [], ap: [], arcm: [], apcm: [] };
-  }
-};
- 
-/* ──────────────────────────────────────────────────────────────────
- *  4.  universalSyncSAPToAllRebates
- *      The main orchestrator.
- *
- *      Steps
- *      ─────
- *      a) Fetch ALL SAP rows for customer (no date filter).
- *      b) Get ALL rebate programs for customer (same type/freq).
- *      c) For each SAP transaction, resolve → best rebate program.
- *      d) Accumulate per-period totals for that rebate program.
- *      e) For each resolved (rebateCode, periodKey) pair:
- *         • If that rebateCode has a PayoutHistory row for the
- *           period → UPDATE AmountReleased / SapReleasedAmount.
- *         • If no row exists yet → create OOP row anchored to
- *           the last known period of that rebate code.
- *         • If an old OOP row (SAP-…) existed for a DIFFERENT
- *           rebateCode but now the resolver says this transaction
- *           belongs to currentRebateCode → delete the stale row.
- *
- *      Call this function INSTEAD OF (or just after) the regular
- *      syncSAPDataToPayouts when you want fully automatic
- *      cross-period / cross-rebate resolution.
- * ────────────────────────────────────────────────────────────────*/
-export const universalSyncSAPToAllRebates = async (
-  customerCode,
-  currentRebateCode,
-  pool
-) => {
-  try {
-    console.log(
-      `\n🌐 [UNIVERSAL-SYNC] Starting for ${customerCode} / ${currentRebateCode}`
-    );
- 
-    // ── a) Fetch ALL SAP transactions ────────────────────────
-    const allSAP = await fetchAllSAPTransactionsForCustomer(customerCode);
-    if (!allSAP.success) {
-      console.log('⚠️ [UNIVERSAL-SYNC] Could not fetch SAP transactions — aborting');
-      return;
-    }
- 
-    // ── b) Get ALL rebate programs for this customer ─────────
-    const programs = await getAllRebateProgramsForCustomer(
-      customerCode,
-      currentRebateCode,
-      pool
-    );
- 
-    if (programs.length === 0) {
-      console.log('⚠️ [UNIVERSAL-SYNC] No rebate programs found — aborting');
-      return;
-    }
- 
-    console.log(
-      `📋 [UNIVERSAL-SYNC] ${programs.length} rebate program(s) in family:`,
-      programs.map(p => `${p.RebateCode} (${p.DateFrom?.toISOString?.()?.slice(0,10)} → ${p.DateTo?.toISOString?.()?.slice(0,10)})`).join(' | ')
-    );
- 
-    // ── c) Accumulate per-(rebateCode, periodKey) ─────────────
-    // Structure: acc[rebateCode][periodKey] = { year, month, amount, deductions }
-    const acc = {};
- 
-    const addToAcc = (rebateCode, docDate, netAmount) => {
-      if (!rebateCode) return;
-      const d     = new Date(docDate);
-      const year  = d.getFullYear();
-      const month = d.getMonth() + 1;
-      const key   = `${year}-${String(month).padStart(2, '0')}`;
- 
-      if (!acc[rebateCode])       acc[rebateCode] = {};
-      if (!acc[rebateCode][key])  acc[rebateCode][key] = { year, month, amount: 0, rowCount: 0 };
- 
-      acc[rebateCode][key].amount   += netAmount;
-      acc[rebateCode][key].rowCount += 1;
-    };
- 
-    // Helper: resolve + accumulate
-    const resolveAndAdd = (docDate, netAmount) => {
-      if (!docDate) return;
-      const resolved = resolveDocDateToRebateProgram(docDate, programs);
-      if (!resolved) return;
-      console.log(
-        `  → DocDate ${new Date(docDate).toISOString().slice(0,10)} ` +
-        `(net ₱${netAmount.toFixed(2)}) → ${resolved.RebateCode} [${resolved.matchType}]`
-      );
-      addToAcc(resolved.RebateCode, docDate, netAmount);
-    };
- 
-    // Line-level dedup (same logic as original)
-    const lineDedup = new Set();
- 
-    // JE + AR
-    [...allSAP.je, ...allSAP.ar].forEach(row => {
-      const lineKey = row.SourceType === 'JE'
-        ? `JE-${row.DocNum}-${row.Account}`
-        : `AR-${row.DocNum}-${row.BaseRef ?? '0'}-${row.Account}`;
-      if (lineDedup.has(lineKey)) return;
-      lineDedup.add(lineKey);
-      const net = (parseFloat(row.Debit) || 0) - (parseFloat(row.Credit) || 0);
-      resolveAndAdd(row.DocDate, net);
-    });
- 
-    // AP
-    allSAP.ap.forEach(row => {
-      resolveAndAdd(row.DocDate, parseFloat(row.LineTotal) || 0);
-    });
- 
-    // ARCM — deductions (negative)
-    allSAP.arcm.forEach(row => {
-      resolveAndAdd(row.DocDate, -Math.abs(parseFloat(row.GTotal) || 0));
-    });
- 
-    // APCM — deductions (negative)
-    allSAP.apcm.forEach(row => {
-      resolveAndAdd(row.DocDate, -Math.abs(parseFloat(row.GTotal) || 0));
-    });
- 
-    console.log('\n📊 [UNIVERSAL-SYNC] Accumulated totals:');
-    Object.entries(acc).forEach(([rc, periods]) => {
-      Object.entries(periods).forEach(([pk, data]) => {
-        console.log(`  ${rc} / ${pk}: ₱${data.amount.toFixed(2)} (${data.rowCount} rows)`);
-      });
-    });
- 
-    // ── d) Sync each (rebateCode, periodKey) into PayoutHistory ─
-    const MONTH_NAMES_U = [
-      'January','February','March','April','May','June',
-      'July','August','September','October','November','December'
-    ];
- 
-    let updatedCount = 0;
- 
-    for (const [rebateCode, periods] of Object.entries(acc)) {
-      for (const [periodKey, data] of Object.entries(periods)) {
-        const { year, month, amount } = data;
-        const monthName  = MONTH_NAMES_U[month - 1];
-        const twoDigit   = String(year).slice(-2);
-        const periodName = `${monthName} ${year}`;
- 
-        // Look for an existing PayoutHistory row for this period
-        const findResult = await pool.request()
-          .input('cc',      sql.NVarChar(50),  customerCode)
-          .input('rc',      sql.NVarChar(50),  rebateCode)
-          .input('exact',   sql.NVarChar(100), periodName)
-          .input('short',   sql.NVarChar(100), `%${monthName.substring(0,3)} ${year}%`)
-          .input('mpat',    sql.NVarChar(20),  `${month}.%.${twoDigit}`)
-          .query(`
-            SELECT Id, PayoutId, Period, PayoutDate,
-                   AmountReleased, SapReleasedAmount, TotalAmount, Status
-            FROM PayoutHistory
-            WHERE CardCode   = @cc
-              AND RebateCode = @rc
-              AND PayoutId   NOT LIKE 'SAP-%'
-              AND Period     NOT LIKE 'Balance of %'
-              AND (
-                Period    = @exact
-                OR Period LIKE @short
-                OR PayoutDate LIKE @mpat
-              )
-          `);
- 
-        if (findResult.recordset.length > 0) {
-          // ── Update existing row ────────────────────────────
-          for (const row of findResult.recordset) {
-            const prev = parseFloat(row.SapReleasedAmount) || 0;
-            if (Math.abs(prev - amount) <= 0.01) {
-              console.log(
-                `  ℹ️  [UNIVERSAL-SYNC] No change: ${rebateCode}/${periodKey} ₱${prev.toFixed(2)}`
-              );
-              continue;
-            }
-            await pool.request()
-              .input('sapAmt', sql.Decimal(18, 2), amount)
-              .input('id',     sql.Int,            row.Id)
-              .query(`
-                UPDATE PayoutHistory SET
-                  AmountReleased    = @sapAmt,
-                  SapReleasedAmount = @sapAmt,
-                  SapLastSync       = GETDATE(),
-                  UpdatedDate       = GETDATE()
-                WHERE Id = @id
-              `);
-            updatedCount++;
-            console.log(
-              `  ✅ [UNIVERSAL-SYNC] Updated ${rebateCode}/${row.Period}: ₱${amount.toFixed(2)}`
-            );
-          }
- 
-          // ── Remove stale OOP rows for the same period that
-          //    belonged to a different rebate code ───────────
-          await cleanupStaleOOPRows(
-            customerCode, rebateCode, periodKey, year, month, pool
-          );
- 
-        } else {
-          // ── No in-period row found — create / update OOP ──
-          await upsertOOPRow(
-            customerCode, rebateCode, periodKey,
-            year, month, monthName, twoDigit,
-            amount, pool
-          );
-          updatedCount++;
-        }
-      }
-    }
- 
-    console.log(`\n✅ [UNIVERSAL-SYNC] Done — ${updatedCount} record(s) updated\n`);
-  } catch (err) {
-    console.error('❌ [UNIVERSAL-SYNC] universalSyncSAPToAllRebates:', err);
-  }
-};
- 
-/* ──────────────────────────────────────────────────────────────────
- *  5.  cleanupStaleOOPRows
- *      When a transaction is now properly covered by a "real"
- *      PayoutHistory row (because a new rebate program was created),
- *      delete any SAP-… OOP rows for that same period in OTHER
- *      rebate codes — they are now redundant and misleading.
- * ────────────────────────────────────────────────────────────────*/
-const cleanupStaleOOPRows = async (
-  customerCode, resolvedRebateCode, periodKey, year, month, pool
-) => {
-  try {
-    // Find OOP rows (PayoutId LIKE 'SAP-%') for this customer + period
-    // that belong to a DIFFERENT rebate code than the resolved one.
-    const oopPattern = `SAP-${customerCode}-%-%${periodKey}%`;
- 
-    const staleResult = await pool.request()
-      .input('cc',   sql.NVarChar(50),  customerCode)
-      .input('rc',   sql.NVarChar(50),  resolvedRebateCode)
-      .input('pat',  sql.NVarChar(200), oopPattern)
-      .query(`
-        SELECT Id, PayoutId, RebateCode, Period
-        FROM PayoutHistory
-        WHERE CardCode   = @cc
-          AND PayoutId   LIKE @pat
-          AND RebateCode != @rc
-      `);
- 
-    if (staleResult.recordset.length === 0) return;
- 
-    for (const row of staleResult.recordset) {
-      await pool.request()
-        .input('id', sql.Int, row.Id)
-        .query(`DELETE FROM PayoutHistory WHERE Id = @id`);
-      console.log(
-        `  🗑️  [CLEANUP] Removed stale OOP row ${row.PayoutId} ` +
-        `(rebate ${row.RebateCode} — now covered by ${resolvedRebateCode})`
-      );
-    }
-  } catch (err) {
-    console.error('❌ [CLEANUP] cleanupStaleOOPRows:', err.message);
-  }
-};
- 
-/* ──────────────────────────────────────────────────────────────────
- *  6.  upsertOOPRow
- *      Insert or update a SAP-… OOP row when no proper
- *      PayoutHistory period row exists yet for the resolved program.
- *      The OOP row is anchored to the LAST known period of the
- *      resolved rebate code (so it always shows up somewhere
- *      visible in the UI).
- * ────────────────────────────────────────────────────────────────*/
-const upsertOOPRow = async (
-  customerCode, rebateCode, periodKey,
-  year, month, monthName, twoDigit,
-  amount, pool
-) => {
-  try {
-    // Find the last known period of the resolved rebate code
-    const anchorResult = await pool.request()
-      .input('cc', sql.NVarChar(50), customerCode)
-      .input('rc', sql.NVarChar(50), rebateCode)
-      .query(`
-        SELECT TOP 1 Period, PayoutDate
-        FROM PayoutHistory
-        WHERE CardCode   = @cc
-          AND RebateCode = @rc
-          AND PayoutId   NOT LIKE 'SAP-%'
-          AND Period     NOT LIKE 'Balance of %'
-          AND Period     IS NOT NULL AND Period != ''
-        ORDER BY Id DESC
-      `);
- 
-    const anchorPeriod  = anchorResult.recordset[0]?.Period    || `${monthName} ${year}`;
-    const anchorPayDate = anchorResult.recordset[0]?.PayoutDate || null;
- 
-    const lastDay     = new Date(year, month, 0);
-    const fallbackDate = `${lastDay.getMonth()+1}.${lastDay.getDate()}.${twoDigit}`;
-    const displayDate  = anchorPayDate || fallbackDate;
- 
-    const isDeduct = amount < 0;
-    const absAmt   = Math.abs(amount);
-    const suffix   = isDeduct ? 'NEG' : 'POS';
-    const oopId    = `SAP-${customerCode}-${rebateCode}-${periodKey}-${suffix}`;
- 
-    const existCheck = await pool.request()
-      .input('PayoutId', sql.NVarChar(100), oopId)
-      .query(`SELECT Id, SapReleasedAmount FROM PayoutHistory WHERE PayoutId = @PayoutId`);
- 
-    if (existCheck.recordset.length > 0) {
-      const prev = parseFloat(existCheck.recordset[0].SapReleasedAmount) || 0;
-      if (Math.abs(prev - amount) > 0.01) {
-        await pool.request()
-          .input('id',       sql.Int,            existCheck.recordset[0].Id)
-          .input('sapAmt',   sql.Decimal(18, 2), amount)
-          .input('released', sql.Decimal(18, 2), isDeduct ? 0 : absAmt)
-          .input('total',    sql.Decimal(18, 2), isDeduct ? 0 : absAmt)
-          .input('status',   sql.NVarChar(50),   isDeduct ? 'Deducted' : 'Paid')
-          .query(`
-            UPDATE PayoutHistory SET
-              TotalAmount       = @total,
-              AmountReleased    = @released,
-              SapReleasedAmount = @sapAmt,
-              Status            = @status,
-              SapLastSync       = GETDATE(),
-              UpdatedDate       = GETDATE()
-            WHERE Id = @id
-          `);
-        console.log(
-          `  ✅ [OOP-UPDATE] ${oopId}: ` +
-          `${isDeduct ? '−' : '+'}₱${absAmt.toFixed(2)} ← anchored to "${anchorPeriod}"`
-        );
-      }
-    } else {
-      await pool.request()
-        .input('PayoutId',   sql.NVarChar(100), oopId)
-        .input('CardCode',   sql.NVarChar(50),  customerCode)
-        .input('RebateCode', sql.NVarChar(50),  rebateCode)
-        .input('RebateType', sql.NVarChar(50),  'SAP-OOP')
-        .input('PayoutDate', sql.NVarChar(20),  displayDate)
-        .input('Period',     sql.NVarChar(100), anchorPeriod)
-        .input('BaseAmount', sql.Decimal(18, 2), 0)
-        .input('Total',      sql.Decimal(18, 2), isDeduct ? 0 : absAmt)
-        .input('Status',     sql.NVarChar(50),  isDeduct ? 'Deducted' : 'Paid')
-        .input('Released',   sql.Decimal(18, 2), isDeduct ? 0 : absAmt)
-        .input('SapAmt',     sql.Decimal(18, 2), amount)
-        .input('Balance',    sql.Decimal(18, 2), 0)
-        .query(`
-          INSERT INTO PayoutHistory (
-            PayoutId, CardCode, RebateCode, RebateType,
-            PayoutDate, Period,
-            BaseAmount, TotalAmount, Status,
-            AmountReleased, SapReleasedAmount, SapLastSync, RebateBalance
-          ) VALUES (
-            @PayoutId, @CardCode, @RebateCode, @RebateType,
-            @PayoutDate, @Period,
-            @BaseAmount, @Total, @Status,
-            @Released, @SapAmt, GETDATE(), @Balance
-          )
-        `);
-      console.log(
-        `  ✅ [OOP-INSERT] ${oopId}: ` +
-        `${isDeduct ? '−' : '+'}₱${absAmt.toFixed(2)} ← anchored to "${anchorPeriod}"`
-      );
-    }
-  } catch (err) {
-    console.error('❌ [OOP-UPSERT] upsertOOPRow:', err.message);
-  }
-};
- 
-/* ──────────────────────────────────────────────────────────────────
- *  7.  HOW TO WIRE THIS INTO YOUR EXISTING ROUTE
- *
- *  In your GET /customer/:customerCode/payouts route handler,
- *  replace the existing syncSAPDataToPayouts call block with:
- *
- *    // SYNC: Resolve ALL SAP transactions across all rebate programs
- *    await universalSyncSAPToAllRebates(
- *      customerCode,
- *      rebateCode,
- *      ownPool
- *    );
- *
- *  You can keep the existing syncSAPDataToPayouts call as a
- *  supplementary fine-grained sync for the CURRENT period, but
- *  universalSyncSAPToAllRebates handles the cross-period cases.
- *
- *  ── OPTIONAL: Add a dedicated sync endpoint ─────────────────────
- *
- *  router.post('/customer/:customerCode/sync-sap-universal', async (req, res) => {
- *    const { customerCode } = req.params;
- *    const { db, rebateCode } = req.body;
- *    const pool = getPool(db || 'VCP');
- *    await universalSyncSAPToAllRebates(customerCode, rebateCode, pool);
- *    res.json({ success: true, message: 'Universal SAP sync complete' });
- *  });
- *
- *  ── What happens when a new rebate program is created in April ──
- *
- *  1.  Employee runs a sync (or it auto-runs on page load) for
- *      any rebate code in the family.
- *  2.  getAllRebateProgramsForCustomer() now returns April program.
- *  3.  resolveDocDateToRebateProgram() maps April DocDates to the
- *      April program (exact match).
- *  4.  cleanupStaleOOPRows() deletes the old OOP row that was
- *      sitting inside January's PayoutHistory.
- *  5.  upsertOOPRow() or a direct UPDATE places the amount inside
- *      the April program's correct period row.
- *  6.  January no longer shows any April transactions. ✅
- * ────────────────────────────────────────────────────────────────*/
 
-// Function to ensure SAP columns exist in the payout table
-const ensureSAPColumnsExist = async (pool) => {
+/* ══════════════════════════════════════════════════════════════════
+   PAYOUT SUMMARY
+   ══════════════════════════════════════════════════════════════════ */
+const getCustomerRebatePrograms = async (customerCode, pool) => {
+  const r = await pool.request().input('cc', sql.NVarChar(50), customerCode)
+    .query(`
+      SELECT DISTINCT rp.RebateCode, rp.RebateType, rp.DateFrom, rp.DateTo, rp.IsActive
+      FROM RebateProgram rp
+      WHERE EXISTS (SELECT 1 FROM FixCustRebate x WHERE x.CardCode=@cc AND x.RebateCode=rp.RebateCode)
+         OR EXISTS (SELECT 1 FROM IncCustRebate x WHERE x.CardCode=@cc AND x.RebateCode=rp.RebateCode)
+         OR EXISTS (SELECT 1 FROM PerCustRebate x WHERE x.CardCode=@cc AND x.RebateCode=rp.RebateCode)
+      ORDER BY rp.DateFrom ASC
+    `);
+  return r.recordset;
+};
+
+router.get('/customer/:customerCode/payout-summary', async (req, res) => {
   try {
-    const checkColumnsQuery = `
-      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'PayoutHistory' AND COLUMN_NAME = 'SapReleasedAmount')
-      BEGIN
-        ALTER TABLE PayoutHistory ADD SapReleasedAmount DECIMAL(18, 2) DEFAULT 0;
-      END
-      
-      IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'PayoutHistory' AND COLUMN_NAME = 'SapLastSync')
-      BEGIN
-        ALTER TABLE PayoutHistory ADD SapLastSync DATETIME;
-      END
-    `;
-    
-    await pool.request().query(checkColumnsQuery);
-    console.log('✅VAN] SAP columns verified/added to PayoutHistory table');
-    
+    const { customerCode } = req.params;
+    const ownPool = getPool(req.query.db || 'VAN');
+    if (!ownPool) return res.status(500).json({ success: false, message: 'Database pool not available' });
+
+    await createPayoutHistoryTable(ownPool);
+    const programs = await getCustomerRebatePrograms(customerCode, ownPool);
+
+    for (const program of programs) {
+      try {
+        await fetch(`http://localhost:3009/api/van/payouts/customer/${customerCode}/payouts?db=${req.query.db || 'VAN'}&rebateCode=${program.RebateCode}&rebateType=${program.RebateType}&useRebatePeriod=true`);
+      } catch (e) { console.log('⚠️ calc:', e.message); }
+    }
+
+    const rows = await ownPool.request().input('cc', sql.NVarChar(50), customerCode)
+      .query(`
+        SELECT RebateCode, RebateType, BaseAmount, AmountReleased, DocumentType
+        FROM PayoutHistory
+        WHERE CardCode = @cc
+          AND PayoutId NOT LIKE 'SAP-%'
+          AND PayoutId NOT LIKE 'SAPDOC-%'
+          AND PayoutId NOT LIKE 'BAL-%'
+          AND PayoutId NOT LIKE 'BEGBAL-%'
+          AND PayoutId NOT LIKE 'CF-%'
+          AND PayoutId NOT LIKE 'BeginningBalance-%'
+          AND Period NOT LIKE 'Balance of %'
+          AND Period NOT LIKE 'Beginning Balance%'
+      `);
+
+    const programByCode = {}; programs.forEach(p => { programByCode[p.RebateCode] = p; });
+    const codeNum = c => { const m = String(c).match(/(\d+)$/); return m ? parseInt(m[1], 10) : 0; };
+    const getQ = df => { if (!df) return { quarter: 0, year: 0 }; const d = new Date(df); return { quarter: Math.ceil((d.getMonth()+1)/3), year: d.getFullYear() }; };
+
+    const byCode = {};
+    rows.recordset.forEach(r => {
+      const code = r.RebateCode;
+      if (!byCode[code]) byCode[code] = { rebateCode: code, rebateTypes: new Set(), baseAmount: 0, amountReleased: 0 };
+      byCode[code].rebateTypes.add(r.RebateType);
+      if (r.DocumentType) byCode[code].amountReleased += parseFloat(r.AmountReleased) || 0;
+      else byCode[code].baseAmount += parseFloat(r.BaseAmount) || 0;
+    });
+
+    const sorted = Object.values(byCode).sort((a, b) => codeNum(a.rebateCode) - codeNum(b.rebateCode));
+
+    let runBal = 0;
+    const summary = sorted.map(g => {
+      const p = programByCode[g.rebateCode] || {};
+      const { quarter, year } = getQ(p.DateFrom);
+      const earned = g.baseAmount;
+      const totalAmount = runBal + earned;
+      const raw = totalAmount - g.amountReleased;
+      const isOver = raw < -0.01;
+      const balance = isOver ? 0 : Math.max(0, raw);
+      const overBy = isOver ? Math.abs(raw) : 0;
+      let status = 'No Payout';
+      if (isOver) status = 'Over-Released';
+      else if (totalAmount > 0) {
+        if (balance <= 0.01) status = 'Paid';
+        else if (g.amountReleased > 0) status = 'Partially Paid';
+        else status = 'Pending';
+      }
+      runBal = balance;
+      return { rebateCode: g.rebateCode, rebateTypes: Array.from(g.rebateTypes), quarter, year,
+        quarterLabel: quarter ? `Q${quarter} ${year}` : 'Unknown',
+        dateFrom: p.DateFrom || null, dateTo: p.DateTo || null, isActive: p.IsActive === 1,
+        baseAmount: earned, totalAmount, amountReleased: g.amountReleased, balance,
+        isOverReleased: isOver, overReleasedBy: overBy, status };
+    });
+
+    const byQ = {};
+    summary.forEach(item => {
+      const k = `${item.year}-Q${item.quarter}`;
+      if (!byQ[k]) byQ[k] = { quarterLabel: item.quarterLabel, quarter: item.quarter, year: item.year, rebateCodes: [], rebateTypes: new Set(), baseAmount: 0, totalAmount: 0, amountReleased: 0 };
+      const q = byQ[k];
+      q.rebateCodes.push(item.rebateCode);
+      item.rebateTypes.forEach(t => q.rebateTypes.add(t));
+      q.baseAmount += item.baseAmount;
+      q.totalAmount += item.totalAmount;
+      q.amountReleased += item.amountReleased;
+    });
+
+    const qKeys = Object.keys(byQ).sort((a, b) => {
+      const [yA, qA] = a.split('-Q'); const [yB, qB] = b.split('-Q');
+      return (parseInt(yA) - parseInt(yB)) || (parseInt(qA) - parseInt(qB));
+    });
+
+    let prev = 0;
+    const quarterSummary = qKeys.map(k => {
+      const q = byQ[k];
+      const cum = prev + q.baseAmount;
+      const bal = cum - q.amountReleased;
+      const isOver = bal < -0.01;
+      const overBy = isOver ? Math.abs(bal) : 0;
+      let status;
+      if (isOver) status = 'Over-Released';
+      else if (cum === 0) status = 'No Payout';
+      else if (bal <= 0.01) status = 'Paid';
+      else if (q.amountReleased > 0) status = 'Partially Paid';
+      else status = 'Pending';
+      prev = bal;
+      return { ...q, baseAmount: q.baseAmount, totalAmount: cum, amountReleased: q.amountReleased, balance: bal, isOverReleased: isOver, overReleasedBy: overBy, status, rebateTypes: Array.from(q.rebateTypes) };
+    });
+
+    res.json({ success: true, data: { byRebateCode: summary, byQuarter: quarterSummary, customerCode } });
   } catch (error) {
-    console.error('❌ [VAN] Error adding SAP columns:', error);
+    console.error('❌ [VAN] payout-summary:', error);
+    res.status(500).json({ success: false, message: error.message });
   }
-};
-
+});
 
 export default router;

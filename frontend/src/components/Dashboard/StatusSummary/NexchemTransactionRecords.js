@@ -1,6 +1,6 @@
 // NexchemTransactionRecords.jsx
 import React, { useEffect } from 'react';
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ClipboardList } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ClipboardList, Lock } from 'lucide-react';
 
 const NexchemTransactionRecords = ({
   theme = 'light',
@@ -18,10 +18,23 @@ const NexchemTransactionRecords = ({
   setPeriodTo,
   loadDetailedTransactionsData,
   isAutoLoading = false,
+  access,
 }) => {
-  const isDark = theme === 'dark';
+  const isDark  = theme === 'dark';
+  const canView = !!access?.canView;
+  const isPercentage = modalCustomer?.rebateType === 'Percentage';
+  const rebateType   = modalCustomer?.rebateType;
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // ── Has quota? Drives Status + Qty Reb / Qty Bal columns ─────────────────
+  const hasQuota =
+    modalCustomer?.quotaType === 'With Quota' ||
+    modalCustomer?.rebateQuotaType === 'With Quota' ||
+    modalCustomer?.withQuota === true ||
+    modalCustomer?.hasQuota === true ||
+    modalCustomer?.details?.quotaType === 'With Quota' ||
+    modalCustomer?.details?.rebateDetails?.quotaType === 'With Quota';
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
   const sortByDate = (arr) => {
     if (!Array.isArray(arr)) return [];
     return [...arr].sort((a, b) => {
@@ -33,8 +46,19 @@ const NexchemTransactionRecords = ({
     });
   };
 
-  const fmtNum = (n) =>
-    (parseFloat(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const fmtNum = (n) => Math.round(parseFloat(n) || 0).toLocaleString('en-US');
+
+  const fmtDecimal = (n) =>
+    (parseFloat(n) || 0).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
+  const fmtQty = (n) => {
+    const num = Math.round((parseFloat(n) || 0) * 100) / 100;
+    if (Number.isInteger(num)) return num.toLocaleString('en-US');
+    return num.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  };
 
   const fmtDate = (s) => {
     if (!s) return '—';
@@ -46,63 +70,221 @@ const NexchemTransactionRecords = ({
   const is25kg = (t) =>
     t.Is25kgItem || (t.Item && t.Item.toLowerCase().includes('25kg'));
 
-  // ── Calculation helpers (unchanged logic) ────────────────────────────────
-  const calculateQtyBal = (transaction, allTransactions, currentIndex) => {
-    const actualSales = parseFloat(transaction.ActualSales) || 0;
-    const transactionDate = new Date(transaction.Date);
-    const monthKey = `${transactionDate.getFullYear()}-${String(transactionDate.getMonth() + 1).padStart(2, '0')}`;
-    let monthlyCumulative = 0;
-    for (let i = 0; i <= currentIndex; i++) {
-      const trans = allTransactions[i];
-      const transDate = new Date(trans.Date);
-      const transMonthKey = `${transDate.getFullYear()}-${String(transDate.getMonth() + 1).padStart(2, '0')}`;
-      if (transMonthKey === monthKey) {
-        const transActual = parseFloat(trans.ActualSales) || 0;
-        monthlyCumulative += is25kg(trans) ? transActual / 2 : transActual;
+  // ── Rebate / Percentage value ────────────────────────────────────────────
+  const getRebatePerUnit = (t) => {
+    const direct = parseFloat(t.RebatePerBag ?? t.RebatePerUnit);
+    if (!isNaN(direct) && direct > 0) return direct;
+
+    const items = modalCustomer?.items || modalCustomer?.rebateItems || [];
+    if (Array.isArray(items) && items.length > 0) {
+      const byCode = items.find((i) => i.code === t.ItemCode || i.itemCode === t.ItemCode);
+      if (byCode) {
+        const v = parseFloat(byCode.rebate ?? byCode.rebatePerBag ?? byCode.rebatePerUnit);
+        if (!isNaN(v)) return v;
+      }
+      const byName = items.find((i) => (i.description || i.itemName || i.name) === t.Item);
+      if (byName) {
+        const v = parseFloat(byName.rebate ?? byName.rebatePerBag ?? byName.rebatePerUnit);
+        if (!isNaN(v)) return v;
       }
     }
-    return monthlyCumulative;
+    return 0;
+  };
+
+  // For Percentage programs, prefer the row's Percentage field
+  const getRateValue = (t) => {
+    if (isPercentage) {
+      return parseFloat(t.Percentage ?? t.percentagePerBag ?? t.RebatePerBag ?? 0) || 0;
+    }
+    return getRebatePerUnit(t);
+  };
+
+  const getRateLabel = (t) =>
+    isPercentage ? `${getRateValue(t)}%` : `₱${fmtDecimal(getRateValue(t))}`;
+
+  // ── Qty for rebate (ActualSales / UnitPerQty for 25kg items) ─────────────
+  const getQtyForReb = (t) => {
+    const actual = parseFloat(t.ActualSales) || 0;
+    const unitPerQty = parseFloat(t.UnitPerQty) || 1;
+
+    if (isPercentage) {
+      return unitPerQty > 1 ? actual / unitPerQty : actual;
+    }
+    if (is25kg(t)) {
+      const upq = unitPerQty || 2;
+      return actual / upq;
+    }
+    return actual;
+  };
+
+  // Simple VAN-style Qty Reb (used for the Qty Reb column when hasQuota)
+  const calculateQtyReb = (t) => {
+    const actual     = parseFloat(t.ActualSales) || 0;
+    const unitPerQty = parseFloat(t.UnitPerQty)  || 1;
+    return unitPerQty > 1 ? actual / unitPerQty : actual;
+  };
+
+  // ── Row Amount ───────────────────────────────────────────────────────────
+  const getAmount = (t) => {
+    const rate        = getRateValue(t);
+    const actualSales = parseFloat(t.ActualSales) || 0;
+    const qtyForReb   = getQtyForReb(t);
+
+    if (isPercentage) {
+      const priceAfVAT =
+        parseFloat(t.PriceAfVAT) ||
+        (actualSales > 0 ? (parseFloat(t.Gtotal) || 0) / actualSales : 0);
+      return qtyForReb * priceAfVAT * (rate / 100);
+    }
+
+    return qtyForReb * rate;
+  };
+
+  const getCalcNote = (t) => {
+    const qty   = getQtyForReb(t);
+    const rate  = getRateValue(t);
+    const actual = parseFloat(t.ActualSales) || 0;
+
+    if (isPercentage) {
+      const priceAfVAT =
+        parseFloat(t.PriceAfVAT) ||
+        (actual > 0 ? (parseFloat(t.Gtotal) || 0) / actual : 0);
+      const amount = qty * priceAfVAT * (rate / 100);
+      return `${qty.toFixed(2)} qty × ₱${priceAfVAT.toFixed(2)} × ${rate}% = ₱${amount.toFixed(2)}`;
+    }
+
+    const amount = qty * rate;
+    if (is25kg(t)) {
+      const upq = parseFloat(t.UnitPerQty) || 2;
+      return `${actual} ÷ ${upq} = ${qty.toFixed(2)} qty × ₱${rate.toFixed(2)} = ₱${amount.toFixed(2)}`;
+    }
+    return `${actual} qty × ₱${rate.toFixed(2)} = ₱${amount.toFixed(2)}`;
+  };
+
+  // ── Period-aware cycle helpers (ported from VAN) ─────────────────────────
+  const getPeriodAnchorDay = (mc) => {
+    const periodStart = mc?.details?.rebateDetails?.dateFrom;
+    if (!periodStart) return 1;
+    const d = new Date(periodStart);
+    return isNaN(d.getTime()) ? 1 : d.getDate();
+  };
+
+  const getPeriodCycleKey = (dateStr, anchorDay) => {
+    const d = new Date(dateStr);
+    let year  = d.getFullYear();
+    let month = d.getMonth();
+    if (d.getDate() < anchorDay) {
+      month -= 1;
+      if (month < 0) { month = 11; year -= 1; }
+    }
+    return `${year}-${String(month + 1).padStart(2, '0')}`;
+  };
+
+  const getPeriodCycleMonthName = (dateStr, anchorDay) => {
+    const [year, month] = getPeriodCycleKey(dateStr, anchorDay).split('-').map(Number);
+    return new Date(year, month - 1, anchorDay).toLocaleDateString('en-US', { month: 'long' });
+  };
+
+  const getPeriodCycleIndex = (dateStr, anchorDay, mc) => {
+    const periodStart = mc?.details?.rebateDetails?.dateFrom;
+    if (!periodStart) return new Date(dateStr).getMonth();
+    const start = new Date(periodStart);
+    const [y, m] = getPeriodCycleKey(dateStr, anchorDay).split('-').map(Number);
+    return (y - start.getFullYear()) * 12 + (m - 1 - start.getMonth());
+  };
+
+  const calculateQtyBal = (transaction, allTransactions, currentIndex, mc) => {
+    const anchorDay = getPeriodAnchorDay(mc);
+    const cycleKey  = getPeriodCycleKey(transaction.Date, anchorDay);
+    let cum = 0;
+    for (let i = 0; i <= currentIndex; i++) {
+      const t = allTransactions[i];
+      if (getPeriodCycleKey(t.Date, anchorDay) === cycleKey) {
+        const actual     = parseFloat(t.ActualSales) || 0;
+        const unitPerQty = parseFloat(t.UnitPerQty)  || 1;
+        cum += unitPerQty > 1 ? actual / unitPerQty : actual;
+      }
+    }
+    return cum;
   };
 
   const getTargetQty = (transaction, mc) => {
     if (mc?.rebateType === 'Incremental') return null;
     if (mc?.details?.rebateDetails?.quotas) {
       try {
-        const date = new Date(transaction.Date);
-        const monthName = date.toLocaleDateString('en-US', { month: 'long' });
+        const anchorDay = getPeriodAnchorDay(mc);
         const quotas = mc.details.rebateDetails.quotas;
         if (typeof quotas === 'object') {
-          if (quotas[monthName] !== undefined) return quotas[monthName];
-          if (Array.isArray(quotas) && date.getMonth() < quotas.length) return quotas[date.getMonth()];
+          const cycleMonthName = getPeriodCycleMonthName(transaction.Date, anchorDay);
+          if (quotas[cycleMonthName] !== undefined) return quotas[cycleMonthName];
+          if (Array.isArray(quotas)) {
+            const idx = getPeriodCycleIndex(transaction.Date, anchorDay, mc);
+            if (idx >= 0 && idx < quotas.length) return quotas[idx];
+          }
         }
       } catch {}
     }
     return transaction.TargetQty || transaction.MonthQuota || transaction.quota || 0;
   };
 
-  const calculateQtyReb = (transaction) => {
-    const actual = parseFloat(transaction.ActualSales) || 0;
-    return is25kg(transaction) ? actual / 2 : actual;
+  const calculateProgress = (transaction, allTransactions, currentIndex, mc) => {
+    const qtyBal = calculateQtyBal(transaction, allTransactions, currentIndex, mc);
+    if (mc?.rebateType === 'Incremental') {
+      const currentRange = transaction.CurrentRange;
+      const ranges = mc?.details?.rebateDetails?.ranges || [];
+      if (currentRange && ranges.length > 0) {
+        const range = ranges.find(r => r.rangeNo === currentRange);
+        if (range) {
+          const mn = parseFloat(range.minQty) || 0;
+          const mx = parseFloat(range.maxQty) || 0;
+          if (mx > mn) return Math.min(((qtyBal - mn) / (mx - mn)) * 100, 100);
+          if (!mx)     return qtyBal >= mn ? 100 : Math.min((qtyBal / mn) * 100, 100);
+        }
+      }
+      if (ranges.length > 0) {
+        const firstMin = parseFloat(ranges[0].minQty) || 0;
+        return Math.min((qtyBal / firstMin) * 100, 100);
+      }
+      return 0;
+    }
+    const target = getTargetQty(transaction, mc) || 0;
+    return target <= 0 ? 0 : Math.min(100, (qtyBal / target) * 100);
   };
 
-  // ── Auto-load dates ──────────────────────────────────────────────────────
+  // ── Auto-load dates (re-syncs whenever the customer changes) ─────────
   useEffect(() => {
-    if (customerModalTab === 'transaction' && modalCustomer && !periodFrom) {
-      loadDetailedTransactionsData(true);
-      const from = modalCustomer.details?.rebateDetails?.dateFrom || modalCustomer.dateFrom || modalCustomer.details?.dateRange?.periodFrom;
-      const to   = modalCustomer.details?.rebateDetails?.dateTo   || modalCustomer.dateTo   || modalCustomer.details?.dateRange?.periodTo;
-      if (from && to) {
-        setPeriodFrom(from);
-        setPeriodTo(to);
-      } else {
-        const today  = new Date();
-        const qStart = Math.floor(today.getMonth() / 3) * 3;
-        const qEnd   = qStart + 2;
-        setPeriodFrom(new Date(today.getFullYear(), qStart, 1).toISOString().split('T')[0]);
-        setPeriodTo(new Date(today.getFullYear(), qEnd + 1, 0).toISOString().split('T')[0]);
-      }
+    if (!canView) return;
+    if (customerModalTab !== 'transaction' || !modalCustomer) return;
+
+    const from =
+      modalCustomer.details?.rebateDetails?.dateFrom ||
+      modalCustomer.dateFrom ||
+      modalCustomer.details?.dateRange?.periodFrom;
+
+    const to =
+      modalCustomer.details?.rebateDetails?.dateTo ||
+      modalCustomer.dateTo ||
+      modalCustomer.details?.dateRange?.periodTo;
+
+    if (from && to) {
+      setPeriodFrom(from);
+      setPeriodTo(to);
+    } else {
+      const today  = new Date();
+      const qStart = Math.floor(today.getMonth() / 3) * 3;
+      const qEnd   = qStart + 2;
+      setPeriodFrom(new Date(today.getFullYear(), qStart, 1).toISOString().split('T')[0]);
+      setPeriodTo(new Date(today.getFullYear(), qEnd + 1, 0).toISOString().split('T')[0]);
     }
-  }, [customerModalTab, modalCustomer]);
+
+    loadDetailedTransactionsData(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    customerModalTab,
+    modalCustomer?.code,
+    modalCustomer?.rebateCode,
+    canView,
+  ]);
 
   if (customerModalTab !== 'transaction') return null;
 
@@ -111,6 +293,8 @@ const NexchemTransactionRecords = ({
   const totalPages = Math.max(1, Math.ceil(sorted.length / transactionRowsPerPage));
   const safePage   = Math.min(transactionCurrentPage, totalPages);
   const paginated  = sorted.slice((safePage - 1) * transactionRowsPerPage, safePage * transactionRowsPerPage);
+
+  const pageTotalAmount = paginated.reduce((sum, t) => sum + getAmount(t), 0);
 
   const getPageNums = () => {
     const total = totalPages, cur = safePage;
@@ -148,6 +332,31 @@ const NexchemTransactionRecords = ({
     </button>
   );
 
+  // ── Access denied ──────────────────────────────────────────────────────────
+  if (!canView) {
+    return (
+      <div className={`h-full flex flex-col ${T.bg}`}>
+        <div className={`flex-shrink-0 px-5 py-3 border-b ${T.header}`}>
+          <h4 className={`text-xs font-bold uppercase tracking-widest ${T.tp}`}>Transaction Records</h4>
+          <p className={`text-[11px] mt-0.5 ${T.ts}`}>Restricted</p>
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center max-w-xs px-6">
+            <div className={`w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-4 ${
+              isDark ? 'bg-red-900/20 border border-red-700/30' : 'bg-red-50 border border-red-200'
+            }`}>
+              <Lock size={22} className={isDark ? 'text-red-400' : 'text-red-600'} />
+            </div>
+            <h3 className={`text-sm font-bold mb-1 ${T.tp}`}>Access Restricted</h3>
+            <p className={`text-xs leading-relaxed ${T.ts}`}>
+              You don't have permission to view transaction records.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── Loading ────────────────────────────────────────────────────────────────
   if (isLoading) {
     return (
@@ -166,18 +375,27 @@ const NexchemTransactionRecords = ({
     );
   }
 
+  // ── Status color map ──────────────────────────────────────────────────────
+  const statusMap = {
+    emerald: isDark ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700/40' : 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    amber:   isDark ? 'bg-amber-900/30 text-amber-300 border-amber-700/40'       : 'bg-amber-50 text-amber-700 border-amber-200',
+    rose:    isDark ? 'bg-rose-900/30 text-rose-300 border-rose-700/40'          : 'bg-rose-50 text-rose-700 border-rose-200',
+  };
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className={`h-full flex flex-col ${T.bg}`}>
+    <div className={`h-full flex flex-col min-h-0 ${T.bg}`}>
 
-      {/* ── Section header ──────────────────────────────────────────────── */}
+      {/* ── Section header (fixed) ──────────────────────────────────────── */}
       <div className={`flex-shrink-0 px-5 py-3 border-b flex items-center justify-between ${T.header}`}>
         <div>
           <h4 className={`text-xs font-bold uppercase tracking-widest ${T.tp}`}>Transaction Records</h4>
           <p className={`text-[11px] mt-0.5 ${T.ts}`}>
-            {modalCustomer?.rebateType === 'Fixed'
+            {hasQuota
+              ? `Quota-based transactions · ${modalCustomer?.customer || 'customer'}`
+              : rebateType === 'Fixed'
               ? 'SAP transactions — fixed rebate program'
-              : modalCustomer?.rebateType === 'Percentage'
+              : rebateType === 'Percentage'
               ? 'SAP transactions — percentage rebate program'
               : 'SAP transactions — incremental rebate program'}
           </p>
@@ -189,21 +407,48 @@ const NexchemTransactionRecords = ({
         </span>
       </div>
 
-      {/* ── Table ───────────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-auto">
+      {/* ── Scrollable table area (flex-1, only this scrolls) ───────────── */}
+      <div className="flex-1 min-h-0 overflow-auto">
         {paginated.length > 0 ? (
           <table className="w-full text-xs">
-            <thead className={`sticky top-0 border-b ${T.thead}`}>
+            <thead className={`sticky top-0 z-10 border-b ${T.thead}`}>
               <tr>
-                <th className={`px-5 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest ${T.ts}`}>
-                  Date
-                </th>
-                <th className={`px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest ${T.ts}`}>
-                  Item
-                </th>
+                <th className={`px-5 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest ${T.ts}`}>Date</th>
+                <th className={`px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest ${T.ts}`}>Item</th>
                 <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${T.ts}`}>
-                  Act. Sales
+                  {hasQuota ? 'Act. Sales (Qty)' : (isPercentage ? 'Qty' : 'Act. Sales (Qty)')}
                 </th>
+
+                {/* Qty Reb / Qty Bal — only when hasQuota (mirrors VAN) */}
+                {hasQuota && (
+                  <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${T.ts}`}>
+                    Qty Reb
+                  </th>
+                )}
+                {hasQuota && (
+                  <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${T.ts}`}>
+                    Qty Bal
+                  </th>
+                )}
+
+                {/* P. Value — only for Percentage programs (mirrors VCP) */}
+                {isPercentage && (
+                  <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${T.ts}`}>
+                    Peso Value
+                  </th>
+                )}
+
+                <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${T.ts}`}>
+                  {isPercentage ? 'Percentage' : 'Rebate Per Unit'}
+                </th>
+                <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${T.ts}`}>Amount</th>
+
+                {/* Status — only when hasQuota (mirrors VAN) */}
+                {hasQuota && (
+                  <th className={`px-4 py-2.5 text-center text-[10px] font-bold uppercase tracking-widest ${T.ts}`}>
+                    Status
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className={`divide-y ${T.divider}`}>
@@ -212,37 +457,119 @@ const NexchemTransactionRecords = ({
                 const itemCode    = t.ItemCode || t.ItemCodeSAP || '—';
                 const item25kg    = is25kg(t);
                 const displayName = item25kg ? `${itemName} (25kg)` : itemName;
+                const rateLabel   = getRateLabel(t);
+                const amount      = getAmount(t);
+                const calcNote    = getCalcNote(t);
+                const priceAfVAT  = parseFloat(t.PriceAfVAT) ||
+                  (parseFloat(t.ActualSales) > 0 ? (parseFloat(t.Gtotal) || 0) / parseFloat(t.ActualSales) : 0);
+
+                // Quota-derived values (only meaningful when hasQuota)
+                let qtyReb = 0, qtyBal = 0, targetQty = 0;
+                let progress = 0;
+                let qtyBalColor = 'amber';
+                let statusLabel = '', statusColor = 'amber';
+
+                if (hasQuota) {
+                  const globalIdx = (safePage - 1) * transactionRowsPerPage + i;
+                  qtyReb    = calculateQtyReb(t);
+                  qtyBal    = calculateQtyBal(t, sorted, globalIdx, modalCustomer);
+                  progress  = calculateProgress(t, sorted, globalIdx, modalCustomer);
+                  targetQty = getTargetQty(t, modalCustomer);
+
+                  qtyBalColor = (targetQty && qtyBal >= targetQty) ? 'emerald' : 'amber';
+
+                  const isIncr = rebateType === 'Incremental';
+                  if (isIncr) {
+                    statusLabel = t.CurrentRange
+                      ? `Range ${t.CurrentRange}`
+                      : qtyBal > 0 ? 'Progressing' : 'Not in Range';
+                    statusColor = t.CurrentRange ? 'emerald' : qtyBal > 0 ? 'amber' : 'rose';
+                  } else {
+                    statusLabel = progress >= 100 ? 'Eligible'
+                                : progress >= 70  ? 'Progressing'
+                                : 'Not Eligible';
+                    statusColor = progress >= 100 ? 'emerald'
+                                : progress >= 70  ? 'amber'
+                                : 'rose';
+                  }
+                }
 
                 return (
                   <tr key={i} className={`transition-colors duration-100 border-b ${T.row}`}>
-
-                    {/* Date */}
                     <td className="px-5 py-2.5">
-                      <span className={`font-medium tabular-nums ${T.tp}`}>
-                        {fmtDate(t.Date)}
-                      </span>
+                      <span className={`font-medium tabular-nums ${T.tp}`}>{fmtDate(t.Date)}</span>
                     </td>
-
-                    {/* Item */}
                     <td className="px-4 py-2.5">
-                      <div className={`font-medium truncate max-w-[220px] ${T.tp}`} title={displayName}>
-                        {displayName}
-                      </div>
-                      <div className={`text-[10px] font-mono mt-0.5 ${T.tm}`}>
-                        {itemCode}
-                      </div>
+                      <div className={`font-medium truncate max-w-[220px] ${T.tp}`} title={displayName}>{displayName}</div>
+                      <div className={`text-[10px] font-mono mt-0.5 ${T.tm}`}>{itemCode}</div>
                     </td>
-
-                    {/* Actual Sales */}
                     <td className="px-4 py-2.5 text-center">
                       <span className={`inline-block px-2 py-0.5 rounded border font-semibold tabular-nums ${
-                        isDark
-                          ? 'bg-blue-900/30 text-blue-300 border-blue-700/40'
-                          : 'bg-blue-50 text-blue-700 border-blue-200'
+                        isDark ? 'bg-blue-900/30 text-blue-300 border-blue-700/40' : 'bg-blue-50 text-blue-700 border-blue-200'
                       }`}>
                         {fmtNum(t.ActualSales)}
                       </span>
                     </td>
+
+                    {/* Qty Reb / Qty Bal — quota only */}
+                    {hasQuota && (
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={`inline-block px-2 py-0.5 rounded border font-semibold tabular-nums ${
+                          isDark ? 'bg-violet-900/30 text-violet-300 border-violet-700/40' : 'bg-violet-50 text-violet-700 border-violet-200'
+                        }`}>
+                          {fmtQty(qtyReb)}
+                        </span>
+                      </td>
+                    )}
+                    {hasQuota && (
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={`inline-block px-2 py-0.5 rounded border font-semibold tabular-nums ${
+                          qtyBalColor === 'emerald'
+                            ? (isDark ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700/40' : 'bg-emerald-50 text-emerald-700 border-emerald-200')
+                            : (isDark ? 'bg-amber-900/30 text-amber-300 border-amber-700/40'       : 'bg-amber-50 text-amber-700 border-amber-200')
+                        }`}>
+                          {fmtQty(qtyBal)}
+                        </span>
+                      </td>
+                    )}
+
+                    {/* P. Value — only for Percentage (mirrors VCP) */}
+                    {isPercentage && (
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={`inline-block px-2 py-0.5 rounded border font-semibold tabular-nums ${
+                          isDark ? 'bg-slate-800 text-slate-300 border-slate-700' : 'bg-slate-50 text-slate-700 border-slate-200'
+                        }`}>
+                          {fmtDecimal(priceAfVAT)}
+                        </span>
+                      </td>
+                    )}
+
+                    <td className="px-4 py-2.5 text-center">
+                      <span className={`inline-block px-2 py-0.5 rounded border font-semibold tabular-nums ${
+                        isDark ? 'bg-purple-900/30 text-purple-300 border-purple-700/40' : 'bg-purple-50 text-purple-700 border-purple-200'
+                      }`}>
+                        {rateLabel}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <span
+                        className={`inline-block px-2 py-0.5 rounded border font-semibold tabular-nums cursor-help ${
+                          isDark ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700/40' : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        }`}
+                        title={calcNote}
+                      >
+                        ₱{fmtDecimal(amount)}
+                      </span>
+                    </td>
+
+                    {/* Status — quota only */}
+                    {hasQuota && (
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-semibold ${statusMap[statusColor]}`}>
+                          {statusLabel}
+                        </span>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -251,9 +578,7 @@ const NexchemTransactionRecords = ({
         ) : (
           <div className="h-full flex items-center justify-center py-16">
             <div className="text-center">
-              <div className={`w-14 h-14 mx-auto rounded-xl flex items-center justify-center mb-4 ${
-                isDark ? 'bg-slate-800' : 'bg-slate-100'
-              }`}>
+              <div className={`w-14 h-14 mx-auto rounded-xl flex items-center justify-center mb-4 ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}>
                 <ClipboardList size={22} className={T.tm} />
               </div>
               <h3 className={`text-sm font-bold mb-1 ${T.tp}`}>No Transactions Found</h3>
@@ -263,7 +588,21 @@ const NexchemTransactionRecords = ({
         )}
       </div>
 
-      {/* ── Pagination footer ────────────────────────────────────────────── */}
+      {/* ── Page Total — FIXED footer, always above pagination ──────────── */}
+      {paginated.length > 0 && (
+        <div className={`flex-shrink-0 flex items-center justify-end gap-2 px-5 py-2 border-t ${
+          isDark ? 'border-slate-700/60 bg-slate-700/50' : 'border-slate-200 bg-slate-200'
+        }`}>
+          <span className={`text-[11px] font-semibold uppercase tracking-wider ${T.ts}`}>
+            Total Amount :
+          </span>
+          <span className={`text-sm font-bold tabular-nums ${T.tp}`}>
+            ₱{fmtDecimal(pageTotalAmount)}
+          </span>
+        </div>
+      )}
+
+      {/* ── Pagination — FIXED footer ───────────────────────────────────── */}
       {sorted.length > 0 && (
         <div className={`flex-shrink-0 flex flex-wrap gap-2 items-center justify-between px-5 py-2.5 border-t ${T.footer}`}>
           <div className="flex items-center gap-3">
@@ -272,8 +611,7 @@ const NexchemTransactionRecords = ({
               <span className={`font-semibold ${T.tp}`}>
                 {(safePage - 1) * transactionRowsPerPage + 1}–{Math.min(safePage * transactionRowsPerPage, sorted.length)}
               </span>{' '}
-              of{' '}
-              <span className={`font-semibold ${T.tp}`}>{sorted.length}</span>
+              of <span className={`font-semibold ${T.tp}`}>{sorted.length}</span>
             </p>
             <div className="flex items-center gap-1.5">
               <span className={`text-[11px] ${T.ts}`}>Per page</span>

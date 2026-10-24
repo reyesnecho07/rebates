@@ -1,6 +1,6 @@
 // src/components/Dashboard/PayoutHistory.js
-import React, { useState } from 'react';
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, RefreshCw, Wallet } from 'lucide-react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, RefreshCw, Wallet, Calendar, Layers, Lock } from 'lucide-react';
 
 const NexchemPayoutHistory = ({
   theme = 'light',
@@ -26,11 +26,61 @@ const NexchemPayoutHistory = ({
   beginningBalances = [],
   previousBalance = 0,
   beginningBalanceRecord = null,
+  access,
 }) => {
-  const isDark = theme === 'dark';
+  const isDark  = theme === 'dark';
+  const canView = !!access?.canView;
+
   const [syncingSap, setSyncingSap]       = useState(false);
   const [sapSyncMessage, setSapSyncMessage] = useState(null);
   const [showSapDetails, setShowSapDetails] = useState({});
+
+  // ── Summary view (By Quarter / By Rebate Code) ─────────────────────────────
+  const [summaryViewMode, setSummaryViewMode] = useState('detail'); // 'detail' | 'quarter' | 'rebateCode'
+  const [summaryRows, setSummaryRows] = useState([]);
+  const [isSummaryLoading, setIsSummaryLoading] = useState(false);
+  const [summaryLoadError, setSummaryLoadError] = useState(null);
+
+  const customerCardCode =
+    modalCustomer?.code ||
+    modalCustomer?.CardCode ||
+    modalCustomer?.cardCode ||
+    modalCustomer?.CustomerCode;
+
+  const loadPayoutSummary = useCallback(async () => {
+    if (!canView) return;
+    if (!customerCardCode) return;
+    setIsSummaryLoading(true);
+    setSummaryLoadError(null);
+    try {
+      const url = `http://192.168.100.193:3009/api/nexchem/payouts/customer/${customerCardCode}/payout-summary?db=NEXCHEM`;
+      const response = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      const result = await response.json();
+      if (result.success) {
+        const rows = summaryViewMode === 'quarter'
+          ? (result.data?.byQuarter || [])
+          : (result.data?.byRebateCode || []);
+        setSummaryRows(rows);
+      } else {
+        setSummaryRows([]);
+        setSummaryLoadError(result.message || 'Failed to load payout summary');
+      }
+    } catch (err) {
+      console.error('Error loading payout summary:', err);
+      setSummaryRows([]);
+      setSummaryLoadError(err.message || 'Failed to load payout summary');
+    } finally {
+      setIsSummaryLoading(false);
+    }
+  }, [customerCardCode, summaryViewMode, canView]);
+
+  useEffect(() => {
+    if (!canView) return;
+    if (customerModalTab === 'payout' && customerCardCode && summaryViewMode !== 'detail') {
+      loadPayoutSummary();
+    }
+  }, [customerModalTab, customerCardCode, summaryViewMode, loadPayoutSummary, canView]);
 
   if (customerModalTab !== 'payout') return null;
 
@@ -57,6 +107,7 @@ const NexchemPayoutHistory = ({
 
   // ── SAP Sync ──────────────────────────────────────────────────────────────
   const handleSapSync = async () => {
+    if (!canView) return;
     if (!modalCustomer?.CardCode) {
       setSapSyncMessage('❌ No customer selected');
       setTimeout(() => setSapSyncMessage(null), 3000);
@@ -145,6 +196,41 @@ const NexchemPayoutHistory = ({
       green:   isDark ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700/40': 'bg-emerald-50 text-emerald-700 border-emerald-200',
     };
     return `inline-block px-2 py-0.5 rounded border font-semibold tabular-nums text-xs whitespace-nowrap ${map[color] || map.slate}`;
+  };
+
+  // ── Summary-view helpers ────────────────────────────────────────────────
+  const getSummaryStatusColor = (status) => {
+    switch (status) {
+      case 'Paid': return 'green';
+      case 'Partially Paid': return 'amber';
+      case 'Pending': return 'blue';
+      case 'Over-Released': return 'overreleased';
+      case 'No Payout': return 'slate';
+      default: return 'slate';
+    }
+  };
+
+  const SummaryRebateTypeBadge = ({ type }) => {
+    const map = {
+      Fixed:       isDark ? 'bg-blue-900/30 text-blue-300 border-blue-700/40'       : 'bg-blue-50 text-blue-700 border-blue-200',
+      Incremental: isDark ? 'bg-violet-900/30 text-violet-300 border-violet-700/40' : 'bg-violet-50 text-violet-700 border-violet-200',
+      Percentage:  isDark ? 'bg-amber-900/30 text-amber-300 border-amber-700/40'    : 'bg-amber-50 text-amber-700 border-amber-200',
+    };
+    return (
+      <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold whitespace-nowrap border ${
+        map[type] || (isDark ? 'bg-slate-700 text-slate-400 border-slate-600' : 'bg-slate-100 text-slate-600 border-slate-200')
+      }`}>{type || '?'}</span>
+    );
+  };
+
+  const formatSummaryBalance = (value) => {
+    const isNegative = value < 0;
+    const absValue = Math.abs(value);
+    const formattedNumber = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(absValue);
+    return isNegative ? `-₱${formattedNumber}` : `₱${formattedNumber}`;
   };
 
   // Map status to color for badge
@@ -272,6 +358,31 @@ const NexchemPayoutHistory = ({
     );
   };
 
+  // ── Access denied state ────────────────────────────────────────────────────
+  if (!canView) {
+    return (
+      <div className={`h-full flex flex-col ${T.bg}`}>
+        <div className={`flex-shrink-0 px-5 py-3 border-b ${T.header}`}>
+          <h4 className={`text-xs font-bold uppercase tracking-widest ${T.tp}`}>Payout History</h4>
+          <p className={`text-[11px] mt-0.5 ${T.ts}`}>Restricted</p>
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center max-w-xs px-6">
+            <div className={`w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-4 ${
+              isDark ? 'bg-red-900/20 border border-red-700/30' : 'bg-red-50 border border-red-200'
+            }`}>
+              <Lock size={22} className={isDark ? 'text-red-400' : 'text-red-600'} />
+            </div>
+            <h3 className={`text-sm font-bold mb-1 ${T.tp}`}>Access Restricted</h3>
+            <p className={`text-xs leading-relaxed ${T.ts}`}>
+              You don't have permission to view payout history.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className={`h-full flex flex-col ${T.bg}`}>
@@ -281,6 +392,27 @@ const NexchemPayoutHistory = ({
         <div>
           <h4 className={`text-xs font-bold uppercase tracking-widest ${T.tp}`}>Payout History</h4>
           <p className={`text-[11px] mt-0.5 ${T.ts}`}>Rebate payment records — balances carry over month to month</p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className={`text-[11px] font-medium ${T.ts}`}>View by</span>
+          <div className="relative">
+            {summaryViewMode === 'quarter'
+              ? <Calendar size={12} className={`absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none ${T.tm}`} />
+              : summaryViewMode === 'rebateCode'
+                ? <Layers size={12} className={`absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none ${T.tm}`} />
+                : null
+            }
+            <select
+              value={summaryViewMode}
+              onChange={(e) => setSummaryViewMode(e.target.value)}
+              className={`${summaryViewMode !== 'detail' ? 'pl-7' : 'pl-3'} pr-6 py-1.5 rounded-lg text-[11px] font-semibold border outline-none transition-all appearance-none cursor-pointer ${T.select}`}
+            >
+              <option value="detail">Detail</option>
+              <option value="quarter">Quarter</option>
+              <option value="rebateCode">Rebate Code</option>
+            </select>
+          </div>
         </div>
         {/* SAP Sync button and record count commented out as in original */}
       </div>
@@ -302,7 +434,119 @@ const NexchemPayoutHistory = ({
       )}
 
       {/* ── Table ───────────────────────────────────────────────────────── */}
-      {(() => {
+      {summaryViewMode !== 'detail' ? (
+        <div className="flex-1 overflow-auto">
+          {isSummaryLoading ? (
+            <div className="animate-pulse">
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className={`px-5 py-3 border-b flex items-center gap-3 ${isDark ? 'border-slate-700' : 'border-slate-100'}`}>
+                  <div className={`h-3 w-24 rounded ${isDark ? 'bg-slate-700' : 'bg-slate-200'}`} />
+                  <div className={`h-3 w-16 rounded ml-auto ${isDark ? 'bg-slate-700' : 'bg-slate-200'}`} />
+                  <div className={`h-3 w-16 rounded ${isDark ? 'bg-slate-700' : 'bg-slate-200'}`} />
+                </div>
+              ))}
+            </div>
+          ) : summaryLoadError ? (
+            <div className="h-full flex items-center justify-center py-16">
+              <div className="text-center">
+                <p className={`text-sm font-semibold mb-1 ${isDark ? 'text-red-400' : 'text-red-600'}`}>Failed to load payout summary</p>
+                <p className={`text-xs ${T.ts}`}>{summaryLoadError}</p>
+                <button
+                  onClick={loadPayoutSummary}
+                  className="mt-3 px-4 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Retry
+                </button>
+              </div>
+            </div>
+          ) : summaryRows.length === 0 ? (
+            <div className="h-full flex items-center justify-center py-16">
+              <div className="text-center">
+                <div className={`w-14 h-14 mx-auto rounded-xl flex items-center justify-center mb-4 ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}>
+                  <Wallet size={22} className={T.tm} />
+                </div>
+                <h3 className={`text-sm font-bold mb-1 ${T.tp}`}>No Payout Records</h3>
+                <p className={`text-xs ${T.ts}`}>No payout history found for this customer.</p>
+              </div>
+            </div>
+          ) : (
+            <table className="w-full text-xs">
+              <thead className={`sticky top-0 border-b ${T.thead}`}>
+                <tr>
+                  <th className={`${thCls} text-left w-[22%]`}>
+                    {summaryViewMode === 'quarter' ? 'Quarter' : 'Rebate Code'}
+                  </th>
+                  <th className={`${thCls} text-left w-[18%]`}>Type(s)</th>
+                  <th className={`${thCls} text-center w-[15%]`}>Rebate Earned</th>
+                  <th className={`${thCls} text-center w-[15%]`}>Total Amount</th>
+                  <th className={`${thCls} text-center w-[10%]`}>Status</th>
+                  <th className={`${thCls} text-center w-[10%]`}>Released</th>
+                  <th className={`${thCls} text-center w-[10%]`}>Balance</th>
+                </tr>
+              </thead>
+              <tbody className={`divide-y ${T.divider}`}>
+                {summaryRows.map((row, i) => {
+                  const dedupeKey = summaryViewMode === 'quarter' ? row.quarterLabel : row.rebateCode;
+                  const key = `${dedupeKey || 'row'}-${i}`;
+                  return (
+                    <tr key={key} className={`transition-colors duration-100 border-b ${T.row} ${isDark ? 'border-slate-700/50' : 'border-slate-100'}`}>
+                      <td className="px-5 py-2.5">
+                        {summaryViewMode === 'rebateCode' ? (
+                          <>
+                            <span className={`font-semibold ${T.tp}`}>{row.rebateCode}</span>
+                            {row.quarterLabel && row.dateFrom && row.dateTo && (
+                              <div className={`text-[10px] mt-0.5 ${T.tm}`}>{row.quarterLabel}</div>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <span className={`font-semibold ${T.tp}`}>{row.quarterLabel}</span>
+                            {row.rebateCodes?.length > 0 && (
+                              <div className={`text-[10px] mt-0.5 ${T.tm}`}>{row.rebateCodes.join(', ')}</div>
+                            )}
+                          </>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex flex-wrap gap-1">
+                          {(row.rebateTypes || []).map(t => <SummaryRebateTypeBadge key={t} type={t} />)}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={badge(formatCurrency(row.baseAmount), 'blue')}>{formatCurrency(row.baseAmount)}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={badge(formatCurrency(row.totalAmount), row.totalAmount > 0 ? 'amber' : 'slate')}>{formatCurrency(row.totalAmount)}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={badge(row.status, getSummaryStatusColor(row.status))}>{row.status}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={badge(formatCurrency(row.amountReleased), 'blue')}>{formatCurrency(row.amountReleased)}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        {row.isOverReleased ? (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className={badge(formatSummaryBalance(row.balance), 'overreleased')}>
+                              {formatSummaryBalance(row.balance)}
+                            </span>
+                            <span className={`text-[9px] ${isDark ? 'text-red-400' : 'text-red-600'}`}>Over-released</span>
+                          </div>
+                        ) : (
+                          <span className={badge(formatCurrency(row.balance), row.balance > 0 ? 'red' : row.balance === 0 ? 'green' : 'slate')}>
+                            {formatCurrency(row.balance)}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ) : (
+      (() => {
         const allPayouts = [...(paginatedPayouts || [])];
         const begBalRows = allPayouts.filter(p =>
           p.IsBeginningBalance === 1 ||
@@ -420,16 +664,17 @@ const NexchemPayoutHistory = ({
                 </tr>
               </thead>
               <tbody className={`divide-y ${T.divider}`}>
-                {renderBegBalRow()}
-                {regularRows.map((payout, i) => renderPayoutRow(payout, i))}
-              </tbody>
-            </table>
-          </div>
-        );
-      })()}
+                  {renderBegBalRow()}
+                  {regularRows.map((payout, i) => renderPayoutRow(payout, i))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()
+        )}
 
       {/* ── Pagination footer ────────────────────────────────────────────── */}
-      {filteredPayouts.length > 0 && (
+      {summaryViewMode === 'detail' && filteredPayouts.length > 0 && (
         <div className={`flex-shrink-0 flex flex-wrap gap-2 items-center justify-between px-5 py-2.5 border-t ${T.footer}`}>
           <div className="flex items-center gap-3">
             <p className={`text-[11px] ${T.ts}`}>

@@ -1,3 +1,4 @@
+// src/components/RebateProgramList.jsx
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import ReactDOM from "react-dom";
 import {
@@ -19,9 +20,78 @@ import {
   ChevronsRight,
   ChevronLeft,
   ChevronRight,
-  Lock,          // ← NEW
+  Lock,
 } from "lucide-react";
 import ConfirmationModal from "../../common/ConfirmationModal";
+
+/* ─── Apple system colour language ───────────────────────────────────────── */
+const APPLE = {
+  blue:   "#0A84FF",
+  purple: "#BF5AF2",
+  red:    "#FF453A",
+  orange: "#FF9F0A",
+  green:  "#32D74B",
+  gray:   "#8E8E93",
+};
+
+const tokens = (isDark) => ({
+  ink:       isDark ? "#F2F2F7" : "#1C1C1E",
+  muted:     isDark ? "#98989F" : "#6E6E73",
+  faint:     isDark ? "#68686D" : "#AEAEB2",
+  glass:     isDark ? "rgba(30,30,36,0.6)"   : "rgba(255,255,255,0.65)",
+  glassDeep: isDark ? "rgba(24,24,28,0.95)"  : "rgba(255,255,255,0.98)",
+  hairline:  isDark ? "rgba(255,255,255,0.08)" : "rgba(60,60,67,0.12)",
+  rim:       isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.8)",
+  chipBg:    isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
+  hover:     isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
+  shadow:    isDark ? "0 20px 50px -14px rgba(0,0,0,0.65)" : "0 20px 50px -18px rgba(30,41,79,0.18)",
+  bg:        isDark ? "#000000" : "#EEF1F7",
+});
+
+const FONT = `
+  .rb-page, .rb-page * { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif; }
+  .rb-glass { -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%); }
+  .rb-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
+  .rb-scroll::-webkit-scrollbar-thumb { background: rgba(142,142,147,0.4); border-radius: 999px; }
+  .rb-scroll::-webkit-scrollbar-track { background: transparent; }
+  @keyframes rb-pop { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+  .rb-pop { animation: rb-pop 0.2s cubic-bezier(0.16,1,0.3,1); }
+  .rb-num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1, "lnum" 1; }
+`;
+
+// ─── Date range overlap helpers ───────────────────────────────────────────
+const toStartOfDay = (v) => {
+  if (!v) return null;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+
+const toEndOfDay = (v) => {
+  if (!v) return null;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
+};
+
+const overlapsDateRange = (rebateFrom, rebateTo, filterFrom, filterTo) => {
+  const fStart = toStartOfDay(filterFrom);
+  const fEnd   = toEndOfDay(filterTo);
+
+  if (fStart === null && fEnd === null) return true;
+
+  const rStart = toStartOfDay(rebateFrom);
+  const rEnd   = toEndOfDay(rebateTo);
+
+  const rs = rStart === null ? -Infinity : rStart;
+  const re = rEnd   === null ?  Infinity : rEnd;
+  const fs = fStart === null ? -Infinity : fStart;
+  const fe = fEnd   === null ?  Infinity : fEnd;
+
+  return rs <= fe && re >= fs;
+};
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 const fmtDate = (d) =>
@@ -50,31 +120,21 @@ const getPageNums = (current, total) => {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 const TypeBadge = ({ type, isDark = false }) => {
-  const map = {
-    Fixed: {
-      light: "bg-blue-50 text-blue-700 border-blue-200",
-      dark: "bg-blue-900/40 text-blue-300 border-blue-700/50"
-    },
-    Incremental: {
-      light: "bg-violet-50 text-violet-700 border-violet-200",
-      dark: "bg-violet-900/40 text-violet-300 border-violet-700/50"
-    },
-    Percentage: {
-      light: "bg-amber-50 text-amber-700 border-amber-200",
-      dark: "bg-amber-900/40 text-amber-300 border-amber-700/50"
-    }
+  const colors = {
+    Fixed:       APPLE.blue,
+    Incremental: APPLE.purple,
+    Percentage:  APPLE.orange,
   };
-  
-  const styles = map[type] || {
-    light: "bg-slate-50 text-slate-600 border-slate-200",
-    dark: "bg-slate-800/60 text-slate-400 border-slate-700/50"
-  };
-  
+  const accent = colors[type] || APPLE.gray;
+
   return (
     <span
-      className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide border ${
-        isDark ? styles.dark : styles.light
-      }`}
+      className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold tracking-wide border"
+      style={{
+        background: `${accent}1c`,
+        color: accent,
+        borderColor: `${accent}33`,
+      }}
     >
       {type}
     </span>
@@ -83,13 +143,19 @@ const TypeBadge = ({ type, isDark = false }) => {
 
 const Chip = ({ label, color, isDark, onRemove }) => {
   const colors = {
-    blue:    isDark ? "bg-blue-900/40 text-blue-300 border-blue-700/50"          : "bg-blue-50 text-blue-700 border-blue-200",
-    emerald: isDark ? "bg-emerald-900/40 text-emerald-300 border-emerald-700/50" : "bg-emerald-50 text-emerald-700 border-emerald-200",
-    violet:  isDark ? "bg-violet-900/40 text-violet-300 border-violet-700/50"    : "bg-violet-50 text-violet-700 border-violet-200",
+    blue:    APPLE.blue,
+    emerald: APPLE.green,
+    violet:  APPLE.purple,
   };
+  const accent = colors[color] || APPLE.gray;
   return (
     <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${colors[color]}`}
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border"
+      style={{
+        background: `${accent}1c`,
+        color: accent,
+        borderColor: `${accent}33`,
+      }}
     >
       {label}
       <button onClick={onRemove} className="hover:opacity-70 transition-opacity">
@@ -99,23 +165,29 @@ const Chip = ({ label, color, isDark, onRemove }) => {
   );
 };
 
-const PaginationButton = ({ icon: Icon, onClick, disabled, isDark }) => (
-  <button
-    onClick={onClick}
-    disabled={disabled}
-    className={`w-7 h-7 rounded flex items-center justify-center transition-all ${
-      disabled
-        ? isDark ? "text-slate-600 cursor-not-allowed" : "text-slate-300 cursor-not-allowed"
-        : isDark ? "text-slate-300 hover:bg-slate-700"  : "text-slate-600 hover:bg-slate-100"
-    }`}
-  >
-    <Icon size={14} />
-  </button>
-);
+const PaginationButton = ({ icon: Icon, onClick, disabled, isDark }) => {
+  const K = tokens(isDark);
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="w-7 h-7 rounded-md flex items-center justify-center transition-all"
+      style={{
+        color: disabled ? K.faint : K.muted,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+      }}
+      onMouseEnter={(e) => { if (!disabled) { e.currentTarget.style.background = K.chipBg; e.currentTarget.style.color = K.ink; } }}
+      onMouseLeave={(e) => { if (!disabled) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = K.muted; } }}
+    >
+      <Icon size={14} />
+    </button>
+  );
+};
 
 // ─── Filter Panel ─────────────────────────────────────────────────────────────
 const FilterPanel = ({
-  isDark, T,
+  isDark, T, K,
   selectedRebateTypeFilter, setSelectedRebateTypeFilter,
   selectedRebateStatusFilter, setSelectedRebateStatusFilter,
   rebateDateFrom, setRebateDateFrom,
@@ -146,22 +218,45 @@ const FilterPanel = ({
     return () => document.removeEventListener("mousedown", handler);
   }, [onClose, anchorRef]);
 
+  const pillStyle = (active, accent) => ({
+    background: active ? accent : K.chipBg,
+    color: active ? "#FFFFFF" : K.muted,
+    borderColor: active ? accent : K.hairline,
+    fontWeight: active ? 600 : 500,
+  });
+
   return ReactDOM.createPortal(
     <div
       ref={panelRef}
-      style={{ position: "absolute", top: pos.top, right: pos.right, zIndex: 99999 }}
-      className={`w-80 rounded-xl border p-4 shadow-2xl ${T.popup}`}
+      style={{
+        position: "absolute",
+        top: pos.top,
+        right: pos.right,
+        zIndex: 99999,
+        background: K.glassDeep,
+        border: `1px solid ${K.rim}`,
+        boxShadow: K.shadow,
+        backdropFilter: "blur(28px) saturate(180%)",
+        WebkitBackdropFilter: "blur(28px) saturate(180%)",
+      }}
+      className="rb-page rb-glass w-80 rounded-xl p-4 rb-pop"
     >
       <div className="flex items-center justify-between mb-4">
-        <h3 className={`text-xs font-bold ${T.textPrimary}`}>Filter &amp; Columns</h3>
-        <button onClick={onClose} className={`p-1 rounded hover:bg-slate-100 transition-colors ${T.textSecondary}`}>
+        <h3 className="text-xs font-bold" style={{ color: K.ink }}>Filter &amp; Columns</h3>
+        <button
+          onClick={onClose}
+          className="w-7 h-7 rounded-md flex items-center justify-center transition-colors"
+          style={{ background: K.chipBg, color: K.muted }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hairline; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = K.chipBg; }}
+        >
           <X size={13} />
         </button>
       </div>
       <div className="space-y-4">
         {/* Rebate Type */}
         <div>
-          <label className={`text-[10px] font-bold uppercase tracking-widest mb-1.5 block ${T.textSecondary}`}>
+          <label className="text-[10px] font-bold uppercase tracking-widest mb-1.5 block" style={{ color: K.muted }}>
             Rebate Type
           </label>
           <div className="flex flex-wrap gap-1">
@@ -169,13 +264,8 @@ const FilterPanel = ({
               <button
                 key={t}
                 onClick={() => setSelectedRebateTypeFilter(t)}
-                className={`px-2.5 py-0.5 rounded text-[11px] font-medium border transition-all ${
-                  selectedRebateTypeFilter === t
-                    ? "bg-blue-600 text-white border-blue-600"
-                    : isDark
-                      ? "bg-slate-700 text-slate-300 border-slate-600 hover:bg-slate-600"
-                      : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
-                }`}
+                className="px-2.5 py-0.5 rounded-md text-[11px] border transition-all"
+                style={pillStyle(selectedRebateTypeFilter === t, APPLE.blue)}
               >
                 {t}
               </button>
@@ -184,7 +274,7 @@ const FilterPanel = ({
         </div>
         {/* Status */}
         <div>
-          <label className={`text-[10px] font-bold uppercase tracking-widest mb-1.5 block ${T.textSecondary}`}>
+          <label className="text-[10px] font-bold uppercase tracking-widest mb-1.5 block" style={{ color: K.muted }}>
             Status
           </label>
           <div className="flex gap-1">
@@ -192,17 +282,11 @@ const FilterPanel = ({
               <button
                 key={s}
                 onClick={() => setSelectedRebateStatusFilter(s)}
-                className={`flex-1 py-1 rounded text-[11px] font-medium border transition-all ${
-                  selectedRebateStatusFilter === s
-                    ? s === "Active"
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : s === "Inactive"
-                        ? "bg-slate-500 text-white border-slate-500"
-                        : "bg-blue-600 text-white border-blue-600"
-                    : isDark
-                      ? "bg-slate-700 text-slate-300 border-slate-600 hover:bg-slate-600"
-                      : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
-                }`}
+                className="flex-1 py-1 rounded-md text-[11px] border transition-all"
+                style={pillStyle(
+                  selectedRebateStatusFilter === s,
+                  s === "Active" ? APPLE.green : s === "Inactive" ? APPLE.gray : APPLE.blue
+                )}
               >
                 {s}
               </button>
@@ -211,43 +295,45 @@ const FilterPanel = ({
         </div>
         {/* Date Range */}
         <div>
-          <label className={`text-[10px] font-bold uppercase tracking-widest mb-1.5 block ${T.textSecondary}`}>
+          <label className="text-[10px] font-bold uppercase tracking-widest mb-1.5 block" style={{ color: K.muted }}>
             Date Range
           </label>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <p className={`text-[10px] mb-0.5 ${T.textMuted}`}>From</p>
+              <p className="text-[10px] mb-0.5" style={{ color: K.faint }}>From</p>
               <input
                 type="date"
                 value={rebateDateFrom}
                 onChange={(e) => setRebateDateFrom(e.target.value)}
-                className={`w-full px-2 py-1 text-xs border rounded-lg outline-none transition-all ${T.input}`}
+                className="w-full px-2 py-1 text-xs rounded-md outline-none transition-all rb-glass"
+                style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}
               />
             </div>
             <div>
-              <p className={`text-[10px] mb-0.5 ${T.textMuted}`}>To</p>
+              <p className="text-[10px] mb-0.5" style={{ color: K.faint }}>To</p>
               <input
                 type="date"
                 value={rebateDateTo}
                 onChange={(e) => setRebateDateTo(e.target.value)}
-                className={`w-full px-2 py-1 text-xs border rounded-lg outline-none transition-all ${T.input}`}
+                className="w-full px-2 py-1 text-xs rounded-md outline-none transition-all rb-glass"
+                style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}
               />
             </div>
           </div>
         </div>
         {/* Column Visibility */}
-        <div className={`pt-3 border-t ${isDark ? "border-slate-700" : "border-slate-100"}`}>
-          <label className={`text-[10px] font-bold uppercase tracking-widest mb-2 block ${T.textSecondary}`}>
+        <div className="pt-3 border-t" style={{ borderColor: K.hairline }}>
+          <label className="text-[10px] font-bold uppercase tracking-widest mb-2 block" style={{ color: K.muted }}>
             Visible Columns
           </label>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
             {allColumns.filter((c) => !c.always).map((c) => (
-              <label key={c.key} className={`flex items-center gap-2 py-0.5 cursor-pointer text-xs ${T.textPrimary}`}>
+              <label key={c.key} className="flex items-center gap-2 py-0.5 cursor-pointer text-xs" style={{ color: K.ink }}>
                 <input
                   type="checkbox"
                   checked={!!columnVisibility[c.key]}
                   onChange={() => setColumnVisibility((prev) => ({ ...prev, [c.key]: !prev[c.key] }))}
-                  className="accent-blue-600"
+                  style={{ accentColor: APPLE.blue }}
                 />
                 {c.label}
               </label>
@@ -255,16 +341,23 @@ const FilterPanel = ({
           </div>
         </div>
         {/* Actions */}
-        <div className={`pt-3 border-t flex gap-2 ${isDark ? "border-slate-700" : "border-slate-100"}`}>
+        <div className="pt-3 border-t flex gap-2" style={{ borderColor: K.hairline }}>
           <button
             onClick={() => { onClearFilters(); setCurrentPage(1); }}
-            className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${T.btn}`}
+            className="flex-1 py-1.5 rounded-md text-xs font-medium border transition-all"
+            style={{ background: K.chipBg, color: K.muted, borderColor: K.hairline }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hover; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = K.chipBg; }}
           >
             Clear All
           </button>
           <button
             onClick={() => { onApplyFilters(); setCurrentPage(1); onClose(); }}
-            className="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-all"
+            className="flex-1 py-1.5 rounded-md text-xs font-semibold text-white transition-all"
+            style={{
+              background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
+              boxShadow: `0 4px 16px -6px ${APPLE.blue}66`,
+            }}
           >
             Apply
           </button>
@@ -276,8 +369,8 @@ const FilterPanel = ({
 };
 
 // ─── Status Dropdown ──────────────────────────────────────────────────────────
-// NEW: accepts `canUpdate` — when false, renders a read-only locked badge.
 const StatusDropdown = ({ active, isDark, canUpdate, onRequestChange }) => {
+  const K = tokens(isDark);
   const [open, setOpen] = useState(false);
   const [pos, setPos]   = useState({ top: 0, left: 0 });
   const btnRef  = useRef(null);
@@ -295,7 +388,7 @@ const StatusDropdown = ({ active, isDark, canUpdate, onRequestChange }) => {
   }, []);
 
   const handleOpen = () => {
-    if (!canUpdate) return;          // ← guard: do nothing if unauthorized
+    if (!canUpdate) return;
     if (btnRef.current) {
       const rect = btnRef.current.getBoundingClientRect();
       setPos({ top: rect.bottom + window.scrollY + 4, left: rect.left + window.scrollX });
@@ -303,62 +396,47 @@ const StatusDropdown = ({ active, isDark, canUpdate, onRequestChange }) => {
     setOpen((v) => !v);
   };
 
-  // ── Read-only badge (no permission) ───────────────────────────────────────
+  // ── Read-only badge ───────────────────────────────────────────────────────
   if (!canUpdate) {
+    const accent = active ? APPLE.green : APPLE.gray;
     return (
       <div className="inline-flex items-center gap-1.5">
         <span
-          className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide border cursor-not-allowed ${
-            active
-              ? isDark
-                ? "bg-emerald-900/30 text-emerald-300 border-emerald-700/50"
-                : "bg-emerald-50 text-emerald-600 border-emerald-200"
-              : isDark
-                ? "bg-slate-800/50 text-slate-400 border-slate-700/50"
-                : "bg-slate-100 text-slate-400 border-slate-200"
-          }`}
+          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold tracking-wide border cursor-not-allowed"
+          style={{
+            background: `${accent}1c`,
+            color: accent,
+            borderColor: `${accent}33`,
+          }}
           title="You don't have permission to change the status"
         >
-          <span
-            className={`w-1.5 h-1.5 rounded-full inline-block ${
-              active ? "bg-emerald-500" : "bg-slate-500"
-            }`}
-          />
+          <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: accent }} />
           {active ? "Active" : "Inactive"}
-          {/* Lock icon: visually indicates the field is restricted */}
-          <Lock
-            size={9}
-            className={`ml-0.5 ${
-              active
-                ? isDark ? "text-emerald-600/70" : "text-emerald-400"
-                : isDark ? "text-slate-500"   : "text-slate-300"
-            }`}
-          />
+          <Lock size={9} className="ml-0.5 opacity-70" />
         </span>
       </div>
     );
   }
 
-  // ── Interactive dropdown (has permission) ─────────────────────────────────
+  // ── Interactive dropdown ──────────────────────────────────────────────────
+  const accent = active ? APPLE.green : APPLE.gray;
   return (
     <div className="relative inline-block">
       <button
         ref={btnRef}
         onClick={handleOpen}
-        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide border transition-colors ${
-          active
-            ? isDark
-              ? "bg-emerald-900/30 text-emerald-300 border-emerald-700/50 hover:bg-emerald-800/40"
-              : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-            : isDark
-              ? "bg-slate-800/50 text-slate-400 border-slate-700/50 hover:bg-slate-700/50"
-              : "bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200"
-        }`}
+        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold tracking-wide border transition-colors"
+        style={{
+          background: `${accent}1c`,
+          color: accent,
+          borderColor: `${accent}33`,
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = `${accent}2c`)}
+        onMouseLeave={(e) => (e.currentTarget.style.background = `${accent}1c`)}
       >
         <span
-          className={`w-1.5 h-1.5 rounded-full inline-block ${
-            active ? "bg-emerald-500 animate-pulse" : "bg-slate-500"
-          }`}
+          className={`w-1.5 h-1.5 rounded-full inline-block ${active ? "animate-pulse" : ""}`}
+          style={{ background: accent }}
         />
         {active ? "Active" : "Inactive"}
         <ChevronDown size={10} className="ml-0.5 opacity-60" />
@@ -368,36 +446,45 @@ const StatusDropdown = ({ active, isDark, canUpdate, onRequestChange }) => {
         ReactDOM.createPortal(
           <div
             ref={menuRef}
-            style={{ position: "absolute", top: pos.top, left: pos.left, zIndex: 99999 }}
-            className={`w-28 rounded-lg border py-1 shadow-lg ${
-              isDark ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200"
-            }`}
+            style={{
+              position: "absolute",
+              top: pos.top,
+              left: pos.left,
+              zIndex: 99999,
+              background: K.glassDeep,
+              border: `1px solid ${K.rim}`,
+              boxShadow: K.shadow,
+              backdropFilter: "blur(28px) saturate(180%)",
+              WebkitBackdropFilter: "blur(28px) saturate(180%)",
+            }}
+            className="rb-page rb-glass w-32 rounded-lg py-1 rb-pop"
           >
             {[
               { label: "Active",   value: true  },
               { label: "Inactive", value: false },
-            ].map((opt) => (
-              <button
-                key={opt.label}
-                onClick={() => {
-                  setOpen(false);
-                  if (opt.value !== active) onRequestChange(opt.value);
-                }}
-                className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors ${
-                  opt.value === active
-                    ? isDark 
-                      ? "text-emerald-300 bg-emerald-900/20" 
-                      : "text-blue-600 bg-blue-50"
-                    : isDark 
-                      ? "text-slate-300 hover:bg-slate-700/70" 
-                      : "text-slate-700 hover:bg-slate-50"
-                }`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${opt.value ? "bg-emerald-500" : "bg-slate-500"}`} />
-                {opt.label}
-                {opt.value === active && <CheckCircle2 size={10} className="ml-auto" />}
-              </button>
-            ))}
+            ].map((opt) => {
+              const optAccent = opt.value ? APPLE.green : APPLE.gray;
+              return (
+                <button
+                  key={opt.label}
+                  onClick={() => {
+                    setOpen(false);
+                    if (opt.value !== active) onRequestChange(opt.value);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+                  style={{
+                    color: opt.value === active ? optAccent : K.muted,
+                    background: opt.value === active ? `${optAccent}14` : "transparent",
+                  }}
+                  onMouseEnter={(e) => { if (opt.value !== active) { e.currentTarget.style.background = K.chipBg; e.currentTarget.style.color = K.ink; } }}
+                  onMouseLeave={(e) => { if (opt.value !== active) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = K.muted; } }}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: optAccent }} />
+                  {opt.label}
+                  {opt.value === active && <CheckCircle2 size={10} className="ml-auto" />}
+                </button>
+              );
+            })}
           </div>,
           document.body
         )}
@@ -428,9 +515,6 @@ const RebateProgramList = ({
   onClearFilters = () => {},
   onApplyFilters = () => {},
   onLoadRebates = () => {},
-  // ── Authorization ──────────────────────────────────────────────────────────
-  // Pass `false` to make the status column read-only for this user/role.
-  // Defaults to `true` so existing usages are unaffected.
   canUpdateStatus = true,
 }) => {
   const [showFilters, setShowFilters] = useState(false);
@@ -453,6 +537,7 @@ const RebateProgramList = ({
 
   const filterBtnRef = useRef(null);
   const isDark       = theme === "dark";
+  const K            = tokens(isDark);
   const pageSize     = 10;
 
   // ── Sorting ────────────────────────────────────────────────────────────────
@@ -461,7 +546,16 @@ const RebateProgramList = ({
     else { setSortKey(key); setSortDir("asc"); }
     setCurrentPage(1);
   };
-  const sorted = [...filteredRebates].sort((a, b) => {
+
+  // ── Local date‑range filter (overlap‑aware) ──────────────────────────────
+  const dateFiltered =
+    !rebateDateFrom && !rebateDateTo
+      ? filteredRebates
+      : filteredRebates.filter((r) =>
+          overlapsDateRange(r.from, r.to, rebateDateFrom, rebateDateTo)
+        );
+
+  const sorted = [...dateFiltered].sort((a, b) => {
     let av = a[sortKey], bv = b[sortKey];
     if (["from", "to", "createdDate"].includes(sortKey)) { av = new Date(av); bv = new Date(bv); }
     if (av < bv) return sortDir === "asc" ? -1 : 1;
@@ -482,11 +576,9 @@ const RebateProgramList = ({
     rebateDateTo;
 
   // ── Status toggle with confirmation ───────────────────────────────────────
-  // Guard: only fires when canUpdateStatus is true — StatusDropdown also
-  // prevents the click, but this is a second layer of protection.
   const requestStatusChange = useCallback(
     (code, currentActive, newActive) => {
-      if (!canUpdateStatus) return;             // ← authorization guard
+      if (!canUpdateStatus) return;
 
       const toActive = newActive === true || newActive === 1;
       setConfirmModal({
@@ -510,24 +602,9 @@ const RebateProgramList = ({
     setConfirmModal((prev) => ({ ...prev, isOpen: false }));
   }, []);
 
-  // ── Theme tokens ───────────────────────────────────────────────────────────
+  // ── Theme tokens ──────────────────────────────────────────────────────────
   const T = {
-    root:          isDark ? "bg-slate-900 border-slate-700"               : "bg-slate-50 border-slate-200",
-    headerBg:      isDark ? "bg-slate-800 border-slate-700"               : "bg-white border-slate-200",
-    tableBg:       isDark ? "bg-slate-900"                                : "bg-white",
-    thead:         isDark ? "bg-slate-800/80 border-slate-700"            : "bg-slate-50 border-slate-200",
-    row:           isDark ? "hover:bg-slate-800/70 border-slate-700/60"   : "hover:bg-slate-50 border-slate-100",
-    input:         isDark
-      ? "bg-slate-700 border-slate-600 text-slate-100 placeholder-slate-400 focus:ring-blue-500/30 focus:border-blue-500"
-      : "bg-white border-slate-300 text-slate-800 placeholder-slate-400 focus:ring-blue-500/20 focus:border-blue-500",
-    textPrimary:   isDark ? "text-slate-100" : "text-slate-800",
-    textSecondary: isDark ? "text-slate-400" : "text-slate-500",
-    textMuted:     isDark ? "text-slate-500" : "text-slate-400",
-    divider:       isDark ? "divide-slate-700" : "divide-slate-100",
-    btn:           isDark
-      ? "bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600 hover:border-slate-500"
-      : "bg-white border-slate-300 text-slate-600 hover:bg-slate-50 hover:border-slate-400",
-    popup:         isDark ? "bg-slate-800 border-slate-700 shadow-2xl" : "bg-white border-slate-200 shadow-xl",
+    popup: isDark ? "bg-slate-800 border-slate-700 shadow-2xl" : "bg-white border-slate-200 shadow-xl",
   };
 
   // ── Column definitions ─────────────────────────────────────────────────────
@@ -543,33 +620,69 @@ const RebateProgramList = ({
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <>
-      <div className={`rounded-xl border shadow-sm overflow-visible font-sans mb-6 ${T.root}`}>
+      <style>{FONT}</style>
+      <div
+        className="rb-page rb-glass rounded-xl overflow-visible mb-6"
+        style={{
+          background: K.glass,
+          border: `1px solid ${K.hairline}`,
+          boxShadow: K.shadow,
+        }}
+      >
         {/* ── Toolbar ──────────────────────────────────────────────────────── */}
-        <div className={`flex flex-wrap gap-2 items-center justify-between px-4 py-3 border-b rounded-t-xl ${T.headerBg}`}>
+        <div
+          className="flex flex-wrap gap-2 items-center justify-between px-4 py-3 border-b rounded-t-xl"
+          style={{ borderColor: K.hairline }}
+        >
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center shadow">
+            <div
+              className="w-8 h-8 rounded-lg flex items-center justify-center"
+              style={{
+                background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
+                boxShadow: `0 4px 12px -4px ${APPLE.blue}88`,
+              }}
+            >
               <BarChart3 size={15} className="text-white" />
             </div>
             <div>
-              <h1 className={`text-sm font-bold leading-none ${T.textPrimary}`}>Rebate Programs</h1>
-              <p className={`text-[10px] mt-0.5 ${T.textSecondary}`}>Manage all rebate programs</p>
+              <h1 className="text-sm font-bold leading-none" style={{ color: K.ink }}>
+                Rebate Programs
+              </h1>
+              <p className="text-[10px] mt-0.5" style={{ color: K.muted }}>
+                Manage all rebate programs
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             {/* Search */}
             <div className="relative">
-              <Search size={13} className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${T.textMuted}`} />
+              <Search
+                size={13}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                style={{ color: isDark ? "#98989F" : "#48484A", zIndex: 2 }}
+              />
               <input
                 type="text"
                 placeholder="Search rebates…"
                 value={rebateSearchTerm}
                 onChange={(e) => { setRebateSearchTerm(e.target.value); setCurrentPage(1); }}
-                className={`pl-8 pr-7 py-1.5 text-xs border rounded-lg outline-none transition-all focus:ring-2 w-52 ${T.input}`}
+                className="pl-8 pr-7 py-1.5 text-xs rounded-md outline-none transition-all"
+                style={{
+                  background: K.glass,
+                  border: `1px solid ${K.hairline}`,
+                  color: K.ink,
+                  width: 210,
+                  position: "relative",
+                  zIndex: 1,
+                }}
               />
               {rebateSearchTerm && (
                 <button
                   onClick={() => { setRebateSearchTerm(""); setCurrentPage(1); }}
-                  className={`absolute right-2 top-1/2 -translate-y-1/2 ${T.textMuted} hover:text-red-500 transition-colors`}
+                  className="absolute right-2 top-1/2 -translate-y-1/2"
+                  style={{ color: K.faint, zIndex: 2 }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = APPLE.red)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = K.faint)}
                 >
                   <X size={11} />
                 </button>
@@ -579,13 +692,18 @@ const RebateProgramList = ({
             <button
               ref={filterBtnRef}
               onClick={() => setShowFilters((v) => !v)}
-              className={`px-2.5 py-1.5 text-xs border rounded-lg flex items-center gap-1.5 font-medium transition-all ${
-                showFilters ? "bg-blue-50 border-blue-300 text-blue-700" : T.btn
-              }`}
+              className="px-3 py-1.5 text-xs rounded-md flex items-center gap-1.5 font-medium transition-all"
+              style={{
+                background: showFilters ? `${APPLE.blue}1c` : K.chipBg,
+                color: showFilters ? APPLE.blue : K.muted,
+                border: `1px solid ${showFilters ? `${APPLE.blue}55` : K.hairline}`,
+              }}
+              onMouseEnter={(e) => { if (!showFilters) { e.currentTarget.style.background = K.hover; e.currentTarget.style.color = K.ink; } }}
+              onMouseLeave={(e) => { if (!showFilters) { e.currentTarget.style.background = K.chipBg; e.currentTarget.style.color = K.muted; } }}
             >
               <Filter size={12} />
               Filters
-              {hasFilters && <span className="w-2 h-2 rounded-full bg-blue-500" />}
+              {hasFilters && <span className="w-2 h-2 rounded-full" style={{ background: APPLE.blue }} />}
             </button>
           </div>
         </div>
@@ -593,7 +711,7 @@ const RebateProgramList = ({
         {/* Filter panel via portal */}
         {showFilters && (
           <FilterPanel
-            isDark={isDark} T={T}
+            isDark={isDark} T={T} K={K}
             selectedRebateTypeFilter={selectedRebateTypeFilter}
             setSelectedRebateTypeFilter={setSelectedRebateTypeFilter}
             selectedRebateStatusFilter={selectedRebateStatusFilter}
@@ -614,11 +732,12 @@ const RebateProgramList = ({
         {/* ── Active Filter Chips ───────────────────────────────────────────── */}
         {hasFilters && (
           <div
-            className={`px-4 py-2 border-b flex flex-wrap gap-1.5 items-center ${
-              isDark ? "bg-slate-800/50 border-slate-700" : "bg-slate-50 border-slate-100"
-            }`}
+            className="px-4 py-2 border-b flex flex-wrap gap-1.5 items-center"
+            style={{ borderColor: K.hairline, background: `${K.chipBg}` }}
           >
-            <span className={`text-[10px] font-semibold uppercase tracking-wider ${T.textMuted}`}>Active:</span>
+            <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: K.faint }}>
+              Active:
+            </span>
             {selectedRebateTypeFilter !== "All" && (
               <Chip label={`Type: ${selectedRebateTypeFilter}`} color="blue" isDark={isDark}
                 onRemove={() => { setSelectedRebateTypeFilter("All"); setCurrentPage(1); }} />
@@ -637,7 +756,10 @@ const RebateProgramList = ({
             )}
             <button
               onClick={() => { onClearFilters(); setCurrentPage(1); }}
-              className={`text-[10px] underline ml-1 ${T.textSecondary} hover:text-red-500 transition-colors`}
+              className="text-[10px] underline ml-1 transition-colors"
+              style={{ color: K.muted }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = APPLE.red)}
+              onMouseLeave={(e) => (e.currentTarget.style.color = K.muted)}
             >
               Clear all
             </button>
@@ -645,30 +767,33 @@ const RebateProgramList = ({
         )}
 
         {/* ── Table ────────────────────────────────────────────────────────── */}
-        <div className="overflow-x-auto">
-          <table className={`w-full text-xs ${T.tableBg}`}>
+        <div className="overflow-x-auto rb-scroll">
+          <table className="w-full text-xs" style={{ background: "transparent" }}>
             <thead>
-              <tr className={`border-b ${T.thead}`}>
+              <tr className="border-b" style={{ borderColor: K.hairline, background: `${K.chipBg}` }}>
                 {visibleCols.map((col) => (
                   <th
                     key={col.key}
                     onClick={col.sortable ? () => toggleSort(col.key) : undefined}
-                    className={`px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest whitespace-nowrap ${T.textSecondary} ${
-                      col.sortable ? "cursor-pointer select-none hover:text-blue-500 transition-colors" : ""
+                    className={`px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest whitespace-nowrap ${
+                      col.sortable ? "cursor-pointer select-none" : ""
                     }`}
+                    style={{ color: col.sortable ? K.muted : K.faint }}
+                    onMouseEnter={(e) => { if (col.sortable) e.currentTarget.style.color = APPLE.blue; }}
+                    onMouseLeave={(e) => { if (col.sortable) e.currentTarget.style.color = K.muted; }}
                   >
                     <div className="flex items-center gap-1.5">
                       <col.icon size={10} />
                       {col.label}
-                      {/* Show lock badge next to "Status" header when user cannot update */}
                       {col.key === "status" && !canUpdateStatus && (
                         <span
                           title="You don't have permission to change status"
-                          className={`ml-1 inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-semibold border ${
-                            isDark
-                              ? "bg-slate-700/50 text-slate-400 border-slate-600/50"
-                              : "bg-slate-100 text-slate-400 border-slate-200"
-                          }`}
+                          className="ml-1 inline-flex items-center gap-0.5 px-1 py-0.5 rounded-md text-[9px] font-semibold border"
+                          style={{
+                            background: K.chipBg,
+                            color: K.faint,
+                            borderColor: K.hairline,
+                          }}
                         >
                           <Lock size={8} />
                           Read-only
@@ -677,31 +802,45 @@ const RebateProgramList = ({
                       {col.sortable && (
                         sortKey === col.key
                           ? sortDir === "asc"
-                            ? <ChevronUp size={11} className="text-blue-500" />
-                            : <ChevronDown size={11} className="text-blue-500" />
-                          : <ArrowUpDown size={10} className={T.textMuted} />
+                            ? <ChevronUp size={11} style={{ color: APPLE.blue }} />
+                            : <ChevronDown size={11} style={{ color: APPLE.blue }} />
+                          : <ArrowUpDown size={10} style={{ color: K.faint }} />
                       )}
                     </div>
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody className={`divide-y ${T.divider}`}>
+            <tbody>
               {paginated.length > 0 ? (
                 paginated.map((r) => (
-                  <tr key={r.code} className={`transition-colors duration-100 border-b ${T.row}`}>
+                  <tr
+                    key={r.code}
+                    className="transition-colors duration-100 border-b"
+                    style={{ borderColor: K.hairline }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = K.chipBg)}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  >
                     {/* Code */}
                     <td className="px-4 py-2.5">
                       <button onClick={() => onRebateClick(r)} className="flex items-center gap-2 group text-left w-full">
-                        <div className={`w-6 h-6 rounded flex items-center justify-center flex-shrink-0 ${isDark ? "bg-blue-900/40" : "bg-blue-50"}`}>
-                          <Percent size={10} className="text-blue-500" />
+                        <div
+                          className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
+                          style={{ background: `${APPLE.blue}1c` }}
+                        >
+                          <Percent size={10} style={{ color: APPLE.blue }} />
                         </div>
                         <div className="min-w-0">
-                          <span className={`font-semibold group-hover:text-blue-600 transition-colors ${T.textPrimary}`}>
+                          <span
+                            className="font-semibold transition-colors"
+                            style={{ color: K.ink }}
+                            onMouseEnter={(e) => (e.currentTarget.style.color = APPLE.blue)}
+                            onMouseLeave={(e) => (e.currentTarget.style.color = K.ink)}
+                          >
                             {r.code}
                           </span>
                           {r.description && (
-                            <p className={`text-[10px] truncate ${T.textMuted}`}>{r.description}</p>
+                            <p className="text-[10px] truncate" style={{ color: K.faint }}>{r.description}</p>
                           )}
                         </div>
                       </button>
@@ -712,13 +851,13 @@ const RebateProgramList = ({
                         <TypeBadge type={r.type} isDark={isDark} />
                       </td>
                     )}
-                    {/* Status — passes canUpdate so the dropdown knows its mode */}
+                    {/* Status */}
                     {columnVisibility.status && (
                       <td className="px-4 py-2.5">
                         <StatusDropdown
                           active={r.active}
                           isDark={isDark}
-                          canUpdate={canUpdateStatus}           // ← NEW
+                          canUpdate={canUpdateStatus}
                           onRequestChange={(newActive) =>
                             requestStatusChange(r.code, r.active, newActive)
                           }
@@ -727,13 +866,13 @@ const RebateProgramList = ({
                     )}
                     {/* Start Date */}
                     {columnVisibility.from && (
-                      <td className={`px-4 py-2.5 tabular-nums whitespace-nowrap ${T.textSecondary}`}>
+                      <td className="px-4 py-2.5 rb-num whitespace-nowrap" style={{ color: K.muted }}>
                         {fmtDate(r.from)}
                       </td>
                     )}
                     {/* End Date */}
                     {columnVisibility.to && (
-                      <td className={`px-4 py-2.5 tabular-nums whitespace-nowrap ${T.textSecondary}`}>
+                      <td className="px-4 py-2.5 rb-num whitespace-nowrap" style={{ color: K.muted }}>
                         {fmtDate(r.to)}
                       </td>
                     )}
@@ -742,14 +881,17 @@ const RebateProgramList = ({
               ) : (
                 <tr>
                   <td colSpan={visibleCols.length}>
-                    <div className={`py-16 px-4 text-center ${isDark ? "bg-slate-900" : "bg-white"}`}>
-                      <div className={`w-14 h-14 mx-auto rounded-xl flex items-center justify-center mb-4 ${isDark ? "bg-slate-800" : "bg-slate-100"}`}>
-                        <HandCoins size={22} className={T.textMuted} />
+                    <div className="py-16 px-4 text-center">
+                      <div
+                        className="w-14 h-14 mx-auto rounded-lg flex items-center justify-center mb-4"
+                        style={{ background: K.chipBg }}
+                      >
+                        <HandCoins size={22} style={{ color: K.faint }} />
                       </div>
-                      <h3 className={`text-sm font-bold mb-1 ${T.textPrimary}`}>
+                      <h3 className="text-sm font-bold mb-1" style={{ color: K.ink }}>
                         {rebates.length === 0 ? "No Rebate Programs Yet" : "No Results Found"}
                       </h3>
-                      <p className={`text-xs max-w-xs mx-auto ${T.textSecondary}`}>
+                      <p className="text-xs max-w-xs mx-auto" style={{ color: K.muted }}>
                         {rebates.length === 0
                           ? "Create your first rebate program to get started."
                           : "Try adjusting your search terms or clearing filters."}
@@ -757,7 +899,11 @@ const RebateProgramList = ({
                       {hasFilters && (
                         <button
                           onClick={() => { onClearFilters(); setCurrentPage(1); }}
-                          className="mt-3 px-4 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                          className="mt-3 px-4 py-1.5 text-xs font-medium text-white rounded-md transition-colors"
+                          style={{
+                            background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
+                            boxShadow: `0 4px 16px -6px ${APPLE.blue}66`,
+                          }}
                         >
                           Clear Filters
                         </button>
@@ -772,30 +918,38 @@ const RebateProgramList = ({
 
         {/* ── Pagination ───────────────────────────────────────────────────── */}
         {sorted.length > 0 && (
-          <div className={`flex flex-wrap gap-2 items-center justify-between px-4 py-2.5 border-t rounded-b-xl ${T.headerBg}`}>
-            <p className={`text-[11px] ${T.textSecondary}`}>
+          <div
+            className="flex flex-wrap gap-2 items-center justify-between px-4 py-2.5 border-t rounded-b-xl"
+            style={{ borderColor: K.hairline }}
+          >
+            <p className="text-[11px]" style={{ color: K.muted }}>
               Showing{" "}
-              <span className={`font-semibold ${T.textPrimary}`}>
+              <span className="font-semibold" style={{ color: K.ink }}>
                 {(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, sorted.length)}
               </span>{" "}
               of{" "}
-              <span className={`font-semibold ${T.textPrimary}`}>{sorted.length}</span>
+              <span className="font-semibold" style={{ color: K.ink }}>{sorted.length}</span>
             </p>
             <div className="flex items-center gap-1">
               <PaginationButton icon={ChevronsLeft}  onClick={() => setCurrentPage(1)}                                   disabled={safePage === 1}          isDark={isDark} />
               <PaginationButton icon={ChevronLeft}   onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}          disabled={safePage === 1}          isDark={isDark} />
               {getPageNums(safePage, totalPages).map((p, i) =>
                 p === "..." ? (
-                  <span key={`e${i}`} className={`w-7 text-center text-xs ${T.textMuted}`}>…</span>
+                  <span key={`e${i}`} className="w-7 text-center text-xs" style={{ color: K.faint }}>…</span>
                 ) : (
                   <button
                     key={p}
                     onClick={() => setCurrentPage(p)}
-                    className={`w-7 h-7 rounded text-xs font-medium transition-all ${
-                      safePage === p
-                        ? "bg-blue-600 text-white shadow"
-                        : isDark ? "text-slate-300 hover:bg-slate-700" : "text-slate-600 hover:bg-slate-100"
-                    }`}
+                    className="w-7 h-7 rounded-md text-xs font-medium rb-num transition-all"
+                    style={{
+                      background: safePage === p
+                        ? `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`
+                        : "transparent",
+                      color: safePage === p ? "#FFFFFF" : K.muted,
+                      boxShadow: safePage === p ? `0 4px 12px -4px ${APPLE.blue}88` : "none",
+                    }}
+                    onMouseEnter={(e) => { if (safePage !== p) { e.currentTarget.style.background = K.chipBg; e.currentTarget.style.color = K.ink; } }}
+                    onMouseLeave={(e) => { if (safePage !== p) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = K.muted; } }}
                   >
                     {p}
                   </button>

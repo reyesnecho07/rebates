@@ -1,119 +1,150 @@
-import React, { useState, useEffect } from "react";
-import { Calculator, Save, X } from "lucide-react";
+// src/components/rebate/QuotaModal.jsx
+import React, { useState, useEffect, useMemo } from "react";
+import { Calculator, Save, X, Lock } from "lucide-react";
 import { useTheme } from '../../context/ThemeContext';
 
-const QuotaModal = ({ isOpen, onClose, customer, onSave, quotaPeriods, importedQuotas = [], rebateType = "Fixed", quotaType = "withQuota", selectedFrequency = "" }) => {
-  const { theme } = useTheme();
-  const [localQuotas, setLocalQuotas] = useState({});
-
-useEffect(() => {
-  if (!customer) return;
-  
-  const monthlyPeriods = getMonthlyPeriodsFromQuotaPeriods();
-  const initialQuotas = {};
-  
-  const totalSlots = Math.max(
-    monthlyPeriods.length,
-    customer.quotas?.length || 0,
-    importedQuotas?.length || 0
-  );
-  
-  if (totalSlots === 0) {
-    setLocalQuotas({});
-    return;
-  }
-
-  for (let i = 0; i < totalSlots; i++) {
-    // Priority: existing customer quota > imported quota > empty
-    const fromCustomer = customer.quotas?.[i];
-    const fromImported = Array.isArray(importedQuotas) 
-      ? (typeof importedQuotas[i] === 'object' 
-          ? importedQuotas[i]?.TargetQty 
-          : importedQuotas[i])
-      : undefined;
-    
-    initialQuotas[i] = (fromCustomer !== undefined && fromCustomer !== "")
-      ? fromCustomer
-      : (fromImported !== undefined && fromImported !== "")
-        ? String(fromImported)
-        : "";
-  }
-  
-  setLocalQuotas(initialQuotas);
-}, [customer, importedQuotas, quotaPeriods]);
-
-const addMonths = (date, n) => {
-  const d = new Date(date);
-  const day = d.getDate();
-  d.setDate(1);
-  d.setMonth(d.getMonth() + n);
-  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-  d.setDate(Math.min(day, last));
-  return d;
+/* ─── Apple system colour language ───────────────────────────────────────── */
+const APPLE = {
+  blue:   "#0A84FF",
+  purple: "#BF5AF2",
+  red:    "#FF453A",
+  orange: "#FF9F0A",
+  green:  "#32D74B",
+  gray:   "#8E8E93",
 };
 
-const getMonthlyPeriodsFromQuotaPeriods = () => {
-  const monthlyPeriods = [];
-  const fmt = (d, opts) => d.toLocaleDateString('en-US', opts);
-  const sOpt = { month: 'short', day: 'numeric' };
-  const lOpt = { month: 'short', day: 'numeric', year: 'numeric' };
+const dashTokens = (isDark) => ({
+  ink:       isDark ? "#F2F2F7" : "#1C1C1E",
+  muted:     isDark ? "#98989F" : "#6E6E73",
+  faint:     isDark ? "#68686D" : "#AEAEB2",
+  glass:     isDark ? "rgba(30,30,36,0.6)"   : "rgba(255,255,255,0.65)",
+  glassDeep: isDark ? "rgba(24,24,28,0.95)"  : "rgba(255,255,255,0.98)",
+  hairline:  isDark ? "rgba(255,255,255,0.08)" : "rgba(60,60,67,0.12)",
+  rim:       isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.8)",
+  chipBg:    isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
+  hover:     isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
+  shadow:    isDark ? "0 20px 50px -14px rgba(0,0,0,0.65)" : "0 20px 50px -18px rgba(30,41,79,0.18)",
+  bg:        isDark ? "#000000" : "#EEF1F7",
+});
 
-  quotaPeriods.forEach((qp) => {
-    if (!qp.startDate || !qp.endDate) {
-      // fallback: no dates, use quarter name
-      const quarterNames = ["Q1","Q2","Q3","Q4"];
-      const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-      const quarterIndex = quarterNames.indexOf(qp.quarter);
-      const startMonth = quarterIndex * 3;
-      for (let i = 0; i < 3; i++) {
-        const mn = monthNames[startMonth + i];
-        const yr = new Date().getFullYear();
-        monthlyPeriods.push({
-          period: `${mn} ${yr}`, label: mn, month: mn, year: yr,
-          quarter: qp.quarter, quarterPeriod: qp.period,
-          dates: `${mn} ${yr}`
+const DASH_FONT = `
+  .dash-page, .dash-page * { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif; }
+  .dash-glass { -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%); }
+  .dash-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
+  .dash-scroll::-webkit-scrollbar-thumb { background: rgba(142,142,147,0.4); border-radius: 999px; }
+  .dash-scroll::-webkit-scrollbar-track { background: transparent; }
+  @keyframes dash-pop { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+  .dash-pop { animation: dash-pop 0.2s cubic-bezier(0.16,1,0.3,1); }
+`;
+
+const QuotaModal = ({
+  isOpen,
+  onClose,
+  customer,
+  onSave,
+  quotaPeriods,
+  importedQuotas = [],
+  rebateType = "Fixed",
+  quotaType = "withQuota",
+  selectedFrequency = "",
+  access,
+}) => {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
+  const K = dashTokens(isDark);
+
+  const canEdit = !!access?.canEdit;
+
+  const [localQuotas, setLocalQuotas] = useState({});
+
+  /* ── Derive the periods to display ─────────────────────────────────────
+     • Quarterly frequency → ONE entry per QUARTER (never expand to months).
+       If the parent already supplied quarterly entries (each with `.quarter`),
+       use them as-is. Otherwise, consolidate any monthly entries into their
+       parent quarter.
+     • Any other frequency → use the periods exactly as given.
+  */
+  const displayPeriods = useMemo(() => {
+    if (!Array.isArray(quotaPeriods) || quotaPeriods.length === 0) return [];
+
+    if (selectedFrequency !== "Quarterly") return quotaPeriods;
+
+    // Already quarterly? (every entry carries a .quarter)
+    const alreadyQuarterly = quotaPeriods.every(p => p && p.quarter);
+    if (alreadyQuarterly) return quotaPeriods;
+
+    // Consolidate monthly periods into quarters, preserving order.
+    const order = [];
+    const byKey = new Map();
+    const fmt = (d, opts) => new Date(d).toLocaleDateString('en-US', opts);
+
+    quotaPeriods.forEach(p => {
+      if (!p) return;
+      const start = p.startDate ? new Date(p.startDate) : null;
+      const qIdx  = start ? Math.floor(start.getMonth() / 3) : 0;
+      const y     = p.year || (start ? start.getFullYear() : "");
+      const qName = p.quarter || ["Q1", "Q2", "Q3", "Q4"][qIdx];
+      const key   = `${qName} ${y}`;
+
+      if (!byKey.has(key)) {
+        byKey.set(key, {
+          period:    key,
+          label:     key,
+          quarter:   qName,
+          year:      y,
+          startDate: p.startDate,
+          endDate:   p.endDate,
+          dates:     p.dates,
         });
+        order.push(key);
+      } else {
+        const existing = byKey.get(key);
+        existing.endDate = p.endDate || existing.endDate;
+        if (existing.startDate && existing.endDate) {
+          existing.dates = `${fmt(existing.startDate, { month: 'short', day: 'numeric' })} - ${fmt(existing.endDate, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+        }
       }
+    });
+
+    return order.map(k => byKey.get(k));
+  }, [quotaPeriods, selectedFrequency]);
+
+  useEffect(() => {
+    if (!customer) return;
+
+    const initialQuotas = {};
+
+    const totalSlots = Math.max(
+      displayPeriods.length,
+      customer.quotas?.length || 0,
+      importedQuotas?.length || 0
+    );
+
+    if (totalSlots === 0) {
+      setLocalQuotas({});
       return;
     }
 
-    const ed = new Date(qp.endDate);
-    let mStart = new Date(qp.startDate);
+    for (let i = 0; i < totalSlots; i++) {
+      const fromCustomer = customer.quotas?.[i];
+      const fromImported = Array.isArray(importedQuotas)
+        ? (typeof importedQuotas[i] === 'object'
+            ? importedQuotas[i]?.TargetQty
+            : importedQuotas[i])
+        : undefined;
 
-    while (mStart <= ed) {
-      // stop if we've landed exactly on the end date (previous slice closed it)
-      if (mStart.getTime() === ed.getTime()) break;
-
-      const mNext = addMonths(mStart, 1);
-      const isLast = mNext >= ed;
-      const mEnd = isLast
-        ? new Date(ed)
-        : (() => { const d = new Date(mNext); d.setDate(d.getDate() - 1); return d; })();
-
-      const mn = fmt(mStart, { month: 'long' });
-      const yr = mStart.getFullYear();
-
-      monthlyPeriods.push({
-        period:        `${mn} ${yr}`,
-        label:         mn,
-        startDate:     new Date(mStart),
-        endDate:       new Date(mEnd),
-        dates:         `${fmt(mStart, sOpt)} - ${fmt(mEnd, lOpt)}`,
-        month:         mn,
-        year:          yr,
-        quarter:       qp.quarter,
-        quarterPeriod: qp.period,
-      });
-
-      if (isLast) break;
-      mStart = mNext;
+      initialQuotas[i] = (fromCustomer !== undefined && fromCustomer !== "")
+        ? fromCustomer
+        : (fromImported !== undefined && fromImported !== "")
+          ? String(fromImported)
+          : "";
     }
-  });
 
-  return monthlyPeriods;
-};
+    setLocalQuotas(initialQuotas);
+  }, [customer, importedQuotas, displayPeriods]);
 
   const handleQuotaChange = (periodIndex, value) => {
+    if (!canEdit) return;
     if (value === "" || /^-?\d*\.?\d*$/.test(value)) {
       setLocalQuotas(prev => ({
         ...prev,
@@ -122,41 +153,20 @@ const getMonthlyPeriodsFromQuotaPeriods = () => {
     }
   };
 
-  // Add this helper function in Nexchem_RebateSetup.js
-const getMonthNamesFromPeriods = () => {
-  const monthlyPeriods = getMonthlyPeriodsFromQuotaPeriods();
-  return monthlyPeriods.map(period => period.label || period.month || period.period);
-};
+  const handleSave = () => {
+    if (!canEdit) return;
+    const quotasArray = displayPeriods.map((period, index) => ({
+      Month: period.label || period.month || period.period,
+      TargetQty: localQuotas[index] || "0"
+    }));
 
-// In QuotaModal.js:
+    console.log('🟢 QuotaModal saving:', quotasArray);
 
-const handleSave = () => {
-  const monthlyPeriods = getMonthlyPeriodsFromQuotaPeriods();
-  const quotasArray = monthlyPeriods.map((period, index) => ({
-    Month: period.label || period.month || period.period,
-    TargetQty: localQuotas[index] || "0"
-  }));
-  
-  console.log('🟢 QuotaModal saving:', quotasArray); // ADD THIS DEBUG LINE
-  
-  onSave(quotasArray);
-  onClose();
-};
-
-  const getDisplayPeriods = () => {
-    if (selectedFrequency === "Quarterly") {
-      return getMonthlyPeriodsFromQuotaPeriods();
-    } else {
-      return quotaPeriods.map((period, index) => ({
-        ...period,
-        label: period.label || period.month || period.period
-      }));
-    }
+    onSave(quotasArray);
+    onClose();
   };
 
   const getQuotaFields = () => {
-    const displayPeriods = getDisplayPeriods();
-    
     return displayPeriods.map((period, index) => ({
       label: period.label || period.month || period.period,
       key: index.toString(),
@@ -166,75 +176,86 @@ const handleSave = () => {
     }));
   };
 
-  const displayPeriods = getDisplayPeriods();
-
   if (!isOpen || !customer) return null;
 
+  const isQuarterlyView = selectedFrequency === "Quarterly";
+
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
-      <div className={`rounded-2xl w-[95%] max-w-7xl max-h-[90vh] overflow-hidden relative shadow-2xl border-0 ${
-        theme === 'dark'
-          ? 'bg-gray-800 border-gray-700'
-          : 'bg-white border-0'
-      }`}>
-        <div className={`flex items-center justify-between px-6 py-5 border-b ${
-          theme === 'dark'
-            ? 'bg-gradient-to-r from-blue-900/30 to-blue-800/30 border-blue-800'
-            : 'bg-gradient-to-r from-blue-50 to-blue-100 border-blue-200'
-        }`}>
+    <div className="dash-page fixed inset-0 flex items-center justify-center z-50 p-4"
+      style={{
+        backgroundColor: isDark ? "rgba(10,10,14,0.65)" : "rgba(0,0,0,0.4)",
+        backdropFilter: "blur(16px)",
+        WebkitBackdropFilter: "blur(16px)",
+      }}>
+      <style>{DASH_FONT}</style>
+
+      <div
+        className="dash-glass dash-pop rounded-[28px] w-[95%] max-w-7xl max-h-[90vh] overflow-hidden flex flex-col"
+        style={{ background: K.glassDeep, border: `1px solid ${K.rim}`, boxShadow: K.shadow }}
+      >
+        {/* Header */}
+        <div
+          className="flex items-center justify-between px-6 py-5 border-b flex-shrink-0"
+          style={{ borderColor: K.hairline }}
+        >
           <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-xl backdrop-blur-sm ${
-              theme === 'dark'
-                ? 'bg-blue-500/30'
-                : 'bg-blue-500/20'
-            }`}>
-              <Calculator className={`w-5 h-5 ${
-                theme === 'dark' ? 'text-blue-300' : 'text-blue-600'
-              }`} />
+            <div
+              className="w-10 h-10 rounded-xl flex items-center justify-center"
+              style={{
+                background: `linear-gradient(155deg, ${APPLE.blue} 0%, #0A4FD1 100%)`,
+                boxShadow: `0 4px 12px -4px ${APPLE.blue}88`,
+              }}
+            >
+              <Calculator className="w-5 h-5 text-white" />
             </div>
             <div className="space-y-1">
-              <h2 className={`text-xl font-bold ${
-                theme === 'dark' ? 'text-gray-100' : 'text-gray-900'
-              }`}>
+              <h2 className="text-xl font-bold" style={{ color: K.ink }}>
                 Manage Fixed Quotas - {selectedFrequency}
               </h2>
-              <p className={`text-sm ${
-                theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
-              }`}>
+              <p className="text-sm" style={{ color: K.muted }}>
                 {customer.code} • {customer.name}
-                {selectedFrequency === "Quarterly" && ` • ${quotaPeriods.length} Quarter${quotaPeriods.length !== 1 ? 's' : ''}`}
+                {isQuarterlyView && ` • ${displayPeriods.length} Quarter${displayPeriods.length !== 1 ? 's' : ''}`}
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className={`p-2.5 rounded-xl transition-all duration-200 border ${
-              theme === 'dark'
-                ? 'bg-gray-700/80 hover:bg-gray-600 border-gray-600 hover:border-gray-500'
-                : 'bg-white/80 hover:bg-white border-blue-200 hover:border-blue-300'
-            }`}
-          >
-            <X className={`w-5 h-5 transition-colors ${
-              theme === 'dark'
-                ? 'text-gray-400 hover:text-gray-300'
-                : 'text-gray-600 hover:text-gray-800'
-            }`} />
-          </button>
+          <div className="flex items-center gap-2">
+            {!canEdit && (
+              <span
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
+                style={{ background: `${APPLE.red}1c`, color: APPLE.red, border: `1px solid ${APPLE.red}33` }}
+              >
+                <Lock className="w-3.5 h-3.5" /> View Only
+              </span>
+            )}
+            <button
+              onClick={onClose}
+              className="w-9 h-9 rounded-full flex items-center justify-center transition-all"
+              style={{ background: K.chipBg, color: K.muted }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hairline; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = K.chipBg; }}
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
-        {selectedFrequency === "Quarterly" && (
-          <div className={`px-6 py-4 border-b ${
-            theme === 'dark'
-              ? 'bg-gray-800 border-gray-700'
-              : 'bg-gray-50 border-gray-200'
-          }`}>
+        {/* Quarter Tabs — informational chips */}
+        {isQuarterlyView && displayPeriods.length > 0 && (
+          <div
+            className="px-6 py-3 border-b flex-shrink-0"
+            style={{ borderColor: K.hairline }}
+          >
             <div className="flex flex-wrap gap-2">
-              {quotaPeriods.map((quarter, index) => (
-                <div key={index} className={`px-4 py-2 rounded-lg text-sm font-medium ${
-                  theme === 'dark'
-                    ? 'bg-blue-700 text-blue-100'
-                    : 'bg-blue-500 text-white'
-                }`}>
+              {displayPeriods.map((quarter, index) => (
+                <div
+                  key={index}
+                  className="px-4 py-1.5 rounded-full text-xs font-semibold"
+                  style={{
+                    background: `${APPLE.blue}1c`,
+                    color: APPLE.blue,
+                    border: `1px solid ${APPLE.blue}33`,
+                  }}
+                >
                   {quarter.period}
                 </div>
               ))}
@@ -242,50 +263,53 @@ const handleSave = () => {
           </div>
         )}
 
-        <div className={`p-8 max-h-[60vh] overflow-y-auto custom-scrollbar ${
-          theme === 'dark' ? 'bg-gray-800' : ''
-        }`}>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        {/* Body */}
+        <div className="p-6 flex-1 overflow-y-auto dash-scroll">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
             {getQuotaFields().map((field, index) => (
-              <div 
-                key={field.key} 
-                className={`border rounded-2xl p-6 hover:shadow-lg transition-all duration-300 group ${
-                  theme === 'dark'
-                    ? 'bg-gray-700 border-gray-600 hover:border-blue-600 hover:bg-gray-700/50'
-                    : 'bg-white border-blue-100 hover:border-blue-200 hover:bg-blue-50/30'
-                }`}
+              <div
+                key={field.key}
+                className="rounded-2xl p-5 transition-all duration-200 dash-glass"
+                style={{
+                  background: K.glass,
+                  border: `1px solid ${K.hairline}`,
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = `${APPLE.blue}55`; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = K.hairline; }}
               >
                 <div className="mb-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-2 h-2 rounded-full ${
-                        theme === 'dark' ? 'bg-blue-400' : 'bg-blue-500'
-                      }`}></div>
-                      <h3 className={`font-bold text-base ${
-                        theme === 'dark' ? 'text-gray-100' : 'text-gray-900'
-                      }`}>{field.label}</h3>
+                  <div className="flex items-center justify-between mb-2 gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ background: APPLE.blue }}
+                      />
+                      <h3 className="font-bold text-base truncate" style={{ color: K.ink }}>
+                        {field.label}
+                      </h3>
                     </div>
-                    {selectedFrequency === "Quarterly" && field.quarter && (
-                      <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                        theme === 'dark'
-                          ? 'bg-blue-900/50 text-blue-300'
-                          : 'bg-blue-100 text-blue-700'
-                      }`}>
+                    {isQuarterlyView && field.quarter && (
+                      <span
+                        className="text-[10px] px-2 py-0.5 rounded-full font-semibold shrink-0"
+                        style={{
+                          background: `${APPLE.blue}1c`,
+                          color: APPLE.blue,
+                          border: `1px solid ${APPLE.blue}33`,
+                        }}
+                      >
                         {field.quarter}
                       </span>
                     )}
                   </div>
                   {field.dates && (
-                    <p className={`text-xs font-medium ${
-                      theme === 'dark' ? 'text-gray-400' : 'text-gray-500'
-                    }`}>{field.dates}</p>
+                    <p className="text-xs font-medium" style={{ color: K.faint }}>
+                      {field.dates}
+                    </p>
                   )}
                 </div>
-                
-                <div className="space-y-3">
-                  <label className={`text-sm font-semibold ${
-                    theme === 'dark' ? 'text-gray-300' : 'text-gray-700'
-                  }`}>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-widest" style={{ color: K.muted }}>
                     Target Qty
                   </label>
                   <input
@@ -293,11 +317,14 @@ const handleSave = () => {
                     value={localQuotas[index] || ""}
                     onChange={(e) => handleQuotaChange(index, e.target.value)}
                     placeholder="Enter qty"
-                    className={`w-full px-4 py-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:border-transparent transition-all duration-200 font-medium ${
-                      theme === 'dark'
-                        ? 'bg-gray-600 border-gray-500 text-gray-200 placeholder-gray-400 focus:ring-blue-500/50 focus:border-blue-400'
-                        : 'bg-white border-blue-200 text-gray-800 placeholder-gray-400 focus:ring-blue-500/50 focus:border-blue-400'
-                    }`}
+                    disabled={!canEdit}
+                    className="w-full px-4 py-3 rounded-xl text-sm font-medium focus:outline-none transition-all dash-glass"
+                    style={{
+                      background: K.glass,
+                      border: `1px solid ${K.hairline}`,
+                      color: K.ink,
+                      opacity: !canEdit ? 0.6 : 1,
+                    }}
                   />
                 </div>
               </div>
@@ -306,57 +333,73 @@ const handleSave = () => {
 
           {displayPeriods.length === 0 && (
             <div className="text-center py-12">
-              <div className={`w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-4 border ${
-                theme === 'dark'
-                  ? 'bg-blue-900/20 border-blue-800'
-                  : 'bg-blue-50 border-blue-100'
-              }`}>
-                <Calculator className={`w-8 h-8 ${
-                  theme === 'dark' ? 'text-blue-400' : 'text-blue-400'
-                }`} />
+              <div
+                className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-4"
+                style={{
+                  background: `${APPLE.blue}14`,
+                  border: `1px solid ${APPLE.blue}33`,
+                }}
+              >
+                <Calculator className="w-8 h-8" style={{ color: APPLE.blue }} />
               </div>
-              <h3 className={`text-lg font-semibold mb-2 ${
-                theme === 'dark' ? 'text-gray-300' : 'text-gray-600'
-              }`}>No Quota Periods</h3>
-              <p className={`text-sm max-w-md mx-auto ${
-                theme === 'dark' ? 'text-gray-500' : 'text-gray-500'
-              }`}>
+              <h3 className="text-lg font-semibold mb-2" style={{ color: K.ink }}>
+                No Quota Periods
+              </h3>
+              <p className="text-sm max-w-md mx-auto" style={{ color: K.muted }}>
                 Configure date ranges and frequency settings to generate quota periods for management.
               </p>
             </div>
           )}
         </div>
 
-        <div className={`flex justify-between items-center p-8 border-t ${
-          theme === 'dark'
-            ? 'bg-blue-900/10 border-blue-800'
-            : 'bg-blue-50/30 border-blue-100'
-        }`}>
-          <div className={`text-sm ${
-            theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
-          }`}>
-            {displayPeriods.length} month{displayPeriods.length !== 1 ? 's' : ''} configured
-            {selectedFrequency === "Quarterly" && ` across ${quotaPeriods.length} quarter${quotaPeriods.length !== 1 ? 's' : ''}`}
+        {/* Footer */}
+        <div
+          className="flex justify-between items-center px-6 py-4 border-t flex-shrink-0"
+          style={{ borderColor: K.hairline, background: K.glassDeep }}
+        >
+          <div className="text-sm" style={{ color: K.muted }}>
+            <strong style={{ color: K.ink }}>{displayPeriods.length}</strong>{' '}
+            {isQuarterlyView
+              ? `quarter${displayPeriods.length !== 1 ? 's' : ''}`
+              : `month${displayPeriods.length !== 1 ? 's' : ''}`}{' '}
+            configured
           </div>
-          
+
           <div className="flex gap-3">
             <button
               onClick={onClose}
-              className={`px-6 py-3 rounded-xl transition-all duration-200 font-medium border ${
-                theme === 'dark'
-                  ? 'bg-gray-700 text-gray-300 hover:bg-gray-600 border-gray-600 hover:border-gray-500'
-                  : 'bg-white text-gray-700 hover:bg-white border-gray-300 hover:border-gray-400'
-              }`}
+              className="px-6 py-2.5 rounded-full text-sm font-medium transition-all"
+              style={{ border: `1px solid ${K.hairline}`, color: K.muted }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hover; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = 'transparent'; }}
             >
-              Cancel
+              {canEdit ? 'Cancel' : 'Close'}
             </button>
-            <button
-              onClick={handleSave}
-              className="px-8 py-3 bg-blue-600 text-white hover:bg-blue-700 rounded-xl transition-all duration-200 font-semibold flex items-center gap-2 hover:scale-105 shadow-lg shadow-blue-500/30"
-            >
-              <Save className="w-4 h-4" />
-              Save All Quotas
-            </button>
+            {canEdit ? (
+              <button
+                onClick={handleSave}
+                className="px-6 py-2.5 rounded-full text-sm font-semibold flex items-center gap-2 text-white transition-all"
+                style={{
+                  background: `linear-gradient(155deg, ${APPLE.blue} 0%, #0A4FD1 100%)`,
+                  boxShadow: `0 4px 16px -6px ${APPLE.blue}88`,
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.9'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+              >
+                <Save className="w-4 h-4" />
+                Save All Quotas
+              </button>
+            ) : (
+              <button
+                disabled
+                title="You do not have permission to edit quotas"
+                className="px-6 py-2.5 rounded-full text-sm font-semibold flex items-center gap-2 cursor-not-allowed"
+                style={{ background: K.chipBg, color: K.faint }}
+              >
+                <Lock className="w-4 h-4" />
+                Save All Quotas
+              </button>
+            )}
           </div>
         </div>
       </div>

@@ -18,7 +18,8 @@ IF EXISTS (SELECT 1 FROM OITM WHERE ItemCode = @list_of_cols_val_tab_del)
 			OITM
 		SET
 			ItemName = T0.ItemName,
-			ItmsGrpCod = T0.ItmsGrpCod
+			ItmsGrpCod = T0.ItmsGrpCod,
+			PurPackUn = T0.PurPackUn
 		FROM
 			[192.168.11.103].ZZZ_VCP_TEST.OITM T0
 		WHERE
@@ -36,7 +37,8 @@ ELSE
 		(
 			ItemCode    NVARCHAR(20),
 			ItemName    NVARCHAR(100),
-			ItmsGrpCod  INT
+			ItmsGrpCod  INT,
+			PurPackUn	NUMERIC(19,6)
 		)
 
 		--Insert into temp table

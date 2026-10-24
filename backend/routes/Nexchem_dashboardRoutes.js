@@ -1,4 +1,3 @@
-
 import express from 'express';
 import sql from 'mssql';
 import { getPool } from '../services/databaseService.js';
@@ -33,6 +32,402 @@ const getPoolWithFallback = async (databaseName) => {
   return pool;
 };
 
+/* ══════════════════════════════════════════════════════════════════
+   CUSTOMER-SPECIFIC REBATE DATE RANGE
+   When RebateProgram has no DateFrom/DateTo, the enrollment / date
+   range is stored per-customer inside one of these tables:
+     Fixed       → FixCustRebate
+     Percentage  → PerCustRebate
+     Incremental → IncCustRebate
+   Each customer may have its own DateFrom/DateTo (e.g. customer 1
+   starts January, customer 3 starts April).
+   ══════════════════════════════════════════════════════════════════ */
+const CUSTOMER_REBATE_TABLE_BY_TYPE = {
+  Fixed:       'FixCustRebate',
+  Percentage:  'PerCustRebate',
+  Incremental: 'IncCustRebate',
+};
+
+const getCustomerRebateDateRange = async (customerCode, rebateCode, rebateType, pool) => {
+  const table = CUSTOMER_REBATE_TABLE_BY_TYPE[rebateType];
+  if (!table) {
+    console.log(`⚠️ [CUST-RANGE] Unknown rebateType "${rebateType}" — skipping customer range lookup`);
+    return { dateFrom: '', dateTo: '', table: null };
+  }
+
+  try {
+    const result = await pool.request()
+      .input('customerCode', sql.NVarChar(50), customerCode)
+      .input('rebateCode',   sql.NVarChar(50), rebateCode)
+      .query(`
+        SELECT DateFrom, DateTo
+        FROM ${table}
+        WHERE CardCode = @customerCode AND RebateCode = @rebateCode
+      `);
+
+    if (result.recordset.length === 0) {
+      console.log(`ℹ️ [CUST-RANGE] No row in ${table} for ${customerCode} / ${rebateCode}`);
+      return { dateFrom: '', dateTo: '', table };
+    }
+
+    const rec = result.recordset[0];
+    const dateFrom = rec.DateFrom ? new Date(rec.DateFrom).toISOString().split('T')[0] : '';
+    const dateTo   = rec.DateTo   ? new Date(rec.DateTo).toISOString().split('T')[0]   : '';
+
+    console.log(`✅ [CUST-RANGE] ${table} → ${customerCode}/${rebateCode}: ${dateFrom || '(none)'} → ${dateTo || '(none)'}`);
+    return { dateFrom, dateTo, table };
+  } catch (err) {
+    console.error(`❌ [CUST-RANGE] Error querying ${table}:`, err.message);
+    return { dateFrom: '', dateTo: '', table };
+  }
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   SHARED: resolve rebate date range
+   Priority: customer table (FixCustRebate / PerCustRebate /
+             IncCustRebate) OVERRIDES RebateProgram.
+   ══════════════════════════════════════════════════════════════════ */
+const resolveRebateDateRange = async (customerCode, rebateCode, rebateType, ownPool) => {
+  let rebateDateFrom = '';
+  let rebateDateTo   = '';
+  let isActive       = false;
+  let frequency      = 'Quarterly';
+  let dateRangeSource = 'RebateProgram';
+
+  try {
+    // ── Step 1: RebateProgram defaults ────────────────────────────────
+    const rebatePeriodResult = await ownPool.request()
+      .input('rebateCode', sql.NVarChar(50), rebateCode)
+      .query(`
+        SELECT DateFrom, DateTo, IsActive, Frequency
+        FROM RebateProgram
+        WHERE RebateCode = @rebateCode
+      `);
+
+    if (rebatePeriodResult.recordset.length > 0) {
+      const rec = rebatePeriodResult.recordset[0];
+      rebateDateFrom = rec.DateFrom ? new Date(rec.DateFrom).toISOString().split('T')[0] : '';
+      rebateDateTo   = rec.DateTo   ? new Date(rec.DateTo).toISOString().split('T')[0]   : '';
+      isActive       = rec.IsActive === 1;
+      frequency      = rec.Frequency || 'Quarterly';
+    } else {
+      console.log(`⚠️ [RANGE-RESOLVE] RebateProgram row not found for ${rebateCode}`);
+    }
+
+    // ── Step 2: ALWAYS check the customer-specific table ──────────────
+    // Customer-specific dates TAKE PRECEDENCE over program dates so
+    // transactions outside each customer's enrollment window are excluded.
+    if (rebateType) {
+      console.log(`🔎 [RANGE-RESOLVE] Checking customer-specific table for ${rebateType}`);
+      const custRange = await getCustomerRebateDateRange(customerCode, rebateCode, rebateType, ownPool);
+
+      if (custRange.dateFrom) {
+        rebateDateFrom  = custRange.dateFrom;      // override program
+        dateRangeSource = custRange.table;
+      }
+      if (custRange.dateTo) {
+        rebateDateTo    = custRange.dateTo;        // override program
+        dateRangeSource = custRange.table;
+      }
+    }
+
+    console.log('📅 [RANGE-RESOLVE] Resolved rebate period:', {
+      customerCode, rebateCode, rebateType,
+      rebateDateFrom, rebateDateTo, isActive, frequency, dateRangeSource
+    });
+  } catch (err) {
+    console.error('❌ [RANGE-RESOLVE] Error:', err.message);
+  }
+
+  return { rebateDateFrom, rebateDateTo, isActive, frequency, dateRangeSource };
+};
+
+// ── Pagination helpers ──────────────────────────────────────────────
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
+
+const clampPaging = (page, pageSize) => {
+  const p = Math.max(1, parseInt(page) || 1);
+  const s = Math.max(1, Math.min(MAX_PAGE_SIZE, parseInt(pageSize) || DEFAULT_PAGE_SIZE));
+  return { page: p, pageSize: s, offset: (p - 1) * s };
+};
+
+async function getPaginatedCustomersFixed(pool, rebateCode, offset, pageSize) {
+  const countRes = await pool.request()
+    .input('rebateCode', sql.NVarChar(50), rebateCode)
+    .query(`SELECT COUNT(*) as total FROM FixCustRebate WHERE RebateCode = @rebateCode`);
+  const total = countRes.recordset[0].total;
+
+  const pageRes = await pool.request()
+    .input('rebateCode', sql.NVarChar(50), rebateCode)
+    .input('startRow', sql.Int, offset + 1)
+    .input('endRow', sql.Int, offset + pageSize)
+    .query(`
+      SELECT Id, code, name, QtrRebate, DateFrom, DateTo FROM (
+        SELECT Id, CardCode as code, CardName as name, QtrRebate, DateFrom, DateTo,
+               ROW_NUMBER() OVER (ORDER BY CardName) as rn
+        FROM FixCustRebate
+        WHERE RebateCode = @rebateCode
+      ) AS paged
+      WHERE rn BETWEEN @startRow AND @endRow
+      ORDER BY rn
+    `);
+
+  const rows = pageRes.recordset;
+  if (rows.length === 0) return { customers: [], total };
+
+  const idReq = pool.request();
+  rows.forEach((r, i) => idReq.input(`id${i}`, sql.Int, r.Id));
+  const idParams = rows.map((_, i) => `@id${i}`).join(',');
+  const quotaRes = await idReq.query(`
+    SELECT CustRebateId, Id as quotaId, Month, TargetQty
+    FROM FixCustQuota
+    WHERE CustRebateId IN (${idParams})
+    ORDER BY Id
+  `);
+
+  const quotaMap = new Map();
+  quotaRes.recordset.forEach(q => {
+    if (!quotaMap.has(q.CustRebateId)) quotaMap.set(q.CustRebateId, []);
+    quotaMap.get(q.CustRebateId).push(q.TargetQty || 0);
+  });
+
+  const customers = rows.map(r => {
+    const quotas = [...(quotaMap.get(r.Id) || [])];
+    while (quotas.length < 3) quotas.push(0);
+    return {
+      code: r.code,
+      name: r.name,
+      qtrRebate: r.QtrRebate || 0,
+      quotas,
+      dateFrom: r.DateFrom ? new Date(r.DateFrom).toISOString().split('T')[0] : '',
+      dateTo:   r.DateTo   ? new Date(r.DateTo).toISOString().split('T')[0]   : '',
+      type: 'fixed'
+    };
+  });
+
+  return { customers, total };
+}
+
+async function getPaginatedCustomersPercentage(pool, rebateCode, offset, pageSize) {
+  const countRes = await pool.request()
+    .input('rebateCode', sql.NVarChar(50), rebateCode)
+    .query(`SELECT COUNT(*) as total FROM PerCustRebate WHERE RebateCode = @rebateCode`);
+  const total = countRes.recordset[0].total;
+
+  const pageRes = await pool.request()
+    .input('rebateCode', sql.NVarChar(50), rebateCode)
+    .input('startRow', sql.Int, offset + 1)
+    .input('endRow', sql.Int, offset + pageSize)
+    .query(`
+      SELECT Id, code, name, QtrRebate, DateFrom, DateTo FROM (
+        SELECT Id, CardCode as code, CardName as name, QtrRebate, DateFrom, DateTo,
+               ROW_NUMBER() OVER (ORDER BY CardName) as rn
+        FROM PerCustRebate
+        WHERE RebateCode = @rebateCode
+      ) AS paged
+      WHERE rn BETWEEN @startRow AND @endRow
+      ORDER BY rn
+    `);
+
+  const rows = pageRes.recordset;
+  if (rows.length === 0) return { customers: [], total };
+
+  const idReq = pool.request();
+  rows.forEach((r, i) => idReq.input(`id${i}`, sql.Int, r.Id));
+  const idParams = rows.map((_, i) => `@id${i}`).join(',');
+  const quotaRes = await idReq.query(`
+    SELECT PerCustRebateId, Id as quotaId, Month, TargetQty
+    FROM PerCustQuota
+    WHERE PerCustRebateId IN (${idParams})
+    ORDER BY Id
+  `);
+
+  const quotaMap = new Map();
+  quotaRes.recordset.forEach(q => {
+    if (!quotaMap.has(q.PerCustRebateId)) quotaMap.set(q.PerCustRebateId, []);
+    quotaMap.get(q.PerCustRebateId).push(q.TargetQty || 0);
+  });
+
+  const customers = rows.map(r => {
+    const quotas = [...(quotaMap.get(r.Id) || [])];
+    while (quotas.length < 3) quotas.push(0);
+    return {
+      code: r.code,
+      name: r.name,
+      qtrRebate: r.QtrRebate || 0,
+      quotas,
+      dateFrom: r.DateFrom ? new Date(r.DateFrom).toISOString().split('T')[0] : '',
+      dateTo:   r.DateTo   ? new Date(r.DateTo).toISOString().split('T')[0]   : '',
+      type: 'percentage'
+    };
+  });
+
+  return { customers, total };
+}
+
+async function getPaginatedCustomersIncremental(pool, rebateCode, offset, pageSize) {
+  const countRes = await pool.request()
+    .input('rebateCode', sql.NVarChar(50), rebateCode)
+    .query(`SELECT COUNT(*) as total FROM IncCustRebate WHERE RebateCode = @rebateCode`);
+  const total = countRes.recordset[0].total;
+
+  const pageRes = await pool.request()
+    .input('rebateCode', sql.NVarChar(50), rebateCode)
+    .input('startRow', sql.Int, offset + 1)
+    .input('endRow', sql.Int, offset + pageSize)
+    .query(`
+      SELECT Id, code, name, QtrRebate, DateFrom, DateTo FROM (
+        SELECT Id, CardCode as code, CardName as name, QtrRebate, DateFrom, DateTo,
+               ROW_NUMBER() OVER (ORDER BY CardName) as rn
+        FROM IncCustRebate
+        WHERE RebateCode = @rebateCode
+      ) AS paged
+      WHERE rn BETWEEN @startRow AND @endRow
+      ORDER BY rn
+    `);
+
+  const rows = pageRes.recordset;
+  if (rows.length === 0) return { customers: [], total };
+
+  const idReq = pool.request();
+  rows.forEach((r, i) => idReq.input(`id${i}`, sql.Int, r.Id));
+  const idParams = rows.map((_, i) => `@id${i}`).join(',');
+  const rangeRes = await idReq.query(`
+    SELECT IncCustRebateId, RangeNo, MinQty, MaxQty, RebatePerBag
+    FROM IncCustRange
+    WHERE IncCustRebateId IN (${idParams})
+    ORDER BY RangeNo
+  `);
+
+  const rangeMap = new Map();
+  rangeRes.recordset.forEach(r => {
+    if (!rangeMap.has(r.IncCustRebateId)) rangeMap.set(r.IncCustRebateId, []);
+    rangeMap.get(r.IncCustRebateId).push({
+      rangeNo: r.RangeNo, minQty: r.MinQty || 0, maxQty: r.MaxQty || 0, rebatePerBag: r.RebatePerBag || 0
+    });
+  });
+
+  const customers = rows.map(r => ({
+    code: r.code,
+    name: r.name,
+    qtrRebate: r.QtrRebate || 0,
+    ranges: rangeMap.get(r.Id) || [],
+    dateFrom: r.DateFrom ? new Date(r.DateFrom).toISOString().split('T')[0] : '',
+    dateTo:   r.DateTo   ? new Date(r.DateTo).toISOString().split('T')[0]   : '',
+    type: 'incremental'
+  }));
+
+  return { customers, total };
+}
+async function getPaginatedItemsFixed(pool, rebateCode, offset, pageSize) {
+  const countRes = await pool.request()
+    .input('rebateCode', sql.NVarChar(50), rebateCode)
+    .query(`SELECT COUNT(*) as total FROM FixProdRebate WHERE RebateCode = @rebateCode`);
+  const total = countRes.recordset[0].total;
+
+  const pageRes = await pool.request()
+    .input('rebateCode', sql.NVarChar(50), rebateCode)
+    .input('startRow', sql.Int, offset + 1)
+    .input('endRow', sql.Int, offset + pageSize)
+    .query(`
+      SELECT code, description, UnitPerQty, uom, rebate FROM (
+        SELECT ItemCode as code, ItemName as description, UnitPerQty, UnitOfMeasure as uom, RebatePerBag as rebate,
+               ROW_NUMBER() OVER (ORDER BY ItemName) as rn
+        FROM FixProdRebate
+        WHERE RebateCode = @rebateCode
+      ) AS paged
+      WHERE rn BETWEEN @startRow AND @endRow
+      ORDER BY rn
+    `);
+
+  const items = pageRes.recordset.map(i => ({
+    code: i.code, description: i.description, unitPerQty: i.UnitPerQty || 1,
+    uom: i.uom || '', rebate: i.rebate || 0, type: 'fixed'
+  }));
+
+  return { items, total };
+}
+
+async function getPaginatedItemsPercentage(pool, rebateCode, offset, pageSize) {
+  const countRes = await pool.request()
+    .input('rebateCode', sql.NVarChar(50), rebateCode)
+    .query(`SELECT COUNT(*) as total FROM PerProdRebate WHERE RebateCode = @rebateCode`);
+  const total = countRes.recordset[0].total;
+
+  const pageRes = await pool.request()
+    .input('rebateCode', sql.NVarChar(50), rebateCode)
+    .input('startRow', sql.Int, offset + 1)
+    .input('endRow', sql.Int, offset + pageSize)
+    .query(`
+      SELECT code, description, UnitPerQty, uom, percentage FROM (
+        SELECT ItemCode as code, ItemName as description, UnitPerQty, UnitOfMeasure as uom, PercentagePerBag as percentage,
+               ROW_NUMBER() OVER (ORDER BY ItemName) as rn
+        FROM PerProdRebate
+        WHERE RebateCode = @rebateCode
+      ) AS paged
+      WHERE rn BETWEEN @startRow AND @endRow
+      ORDER BY rn
+    `);
+
+  const items = pageRes.recordset.map(i => ({
+    code: i.code, description: i.description, unitPerQty: i.UnitPerQty || 1,
+    uom: i.uom || '', percentage: i.percentage || 0, type: 'percentage'
+  }));
+
+  return { items, total };
+}
+
+async function getPaginatedItemsIncremental(pool, rebateCode, offset, pageSize) {
+  const countRes = await pool.request()
+    .input('rebateCode', sql.NVarChar(50), rebateCode)
+    .query(`SELECT COUNT(*) as total FROM IncItemRebate WHERE RebateCode = @rebateCode`);
+  const total = countRes.recordset[0].total;
+
+  const pageRes = await pool.request()
+    .input('rebateCode', sql.NVarChar(50), rebateCode)
+    .input('startRow', sql.Int, offset + 1)
+    .input('endRow', sql.Int, offset + pageSize)
+    .query(`
+      SELECT Id, code, description, UnitPerQty, uom FROM (
+        SELECT Id, ItemCode as code, ItemName as description, UnitPerQty, UnitOfMeasure as uom,
+               ROW_NUMBER() OVER (ORDER BY ItemName) as rn
+        FROM IncItemRebate
+        WHERE RebateCode = @rebateCode
+      ) AS paged
+      WHERE rn BETWEEN @startRow AND @endRow
+      ORDER BY rn
+    `);
+
+  const rows = pageRes.recordset;
+  if (rows.length === 0) return { items: [], total };
+
+  const idReq = pool.request();
+  rows.forEach((r, i) => idReq.input(`id${i}`, sql.Int, r.Id));
+  const idParams = rows.map((_, i) => `@id${i}`).join(',');
+  const rangeRes = await idReq.query(`
+    SELECT ItemRebateId, RangeNo, MinQty, MaxQty, RebatePerBag
+    FROM IncItemRange
+    WHERE ItemRebateId IN (${idParams})
+    ORDER BY RangeNo
+  `);
+
+  const rangeMap = new Map();
+  rangeRes.recordset.forEach(r => {
+    if (!rangeMap.has(r.ItemRebateId)) rangeMap.set(r.ItemRebateId, []);
+    rangeMap.get(r.ItemRebateId).push({
+      rangeNo: r.RangeNo, minQty: r.MinQty || 0, maxQty: r.MaxQty || 0, rebatePerBag: r.RebatePerBag || 0
+    });
+  });
+
+  const items = rows.map(r => ({
+    code: r.code, description: r.description, unitPerQty: r.UnitPerQty || 1,
+    uom: r.uom || '', ranges: rangeMap.get(r.Id) || [], type: 'incremental'
+  }));
+
+  return { items, total };
+}
+
 // In your backend file (the long one you provided), update the /rebates endpoint GET method:
 
 router.route('/rebates')
@@ -62,10 +457,10 @@ router.route('/rebates')
           IsActive,
           SlpName as salesEmployee,
           Frequency,
-          CreatedDate as createdDate  -- ADD THIS LINE
+          CreatedDate as createdDate
         FROM 
           RebateProgram
-        ORDER BY CreatedDate DESC  -- ORDER BY CREATED DATE DESCENDING
+        ORDER BY CreatedDate DESC
       `;
 
       const result = await pool.request().query(query);
@@ -89,7 +484,7 @@ router.route('/rebates')
           active: isActive,
           salesEmployee: rebate.salesEmployee || 'Not specified',
           frequency: rebate.Frequency || 'Quarterly',
-          createdDate: rebate.createdDate ? new Date(rebate.createdDate).toISOString() : new Date().toISOString()  // ADD THIS LINE
+          createdDate: rebate.createdDate ? new Date(rebate.createdDate).toISOString() : new Date().toISOString()
         };
       });
 
@@ -358,6 +753,49 @@ const generateCompleteMonthlyData = (rawTransactions, rebateItems, startDate, en
   });
 };
 
+router.get('/rebate/:rebateCode/customers', async (req, res) => {
+  let pool;
+  try {
+    const { rebateCode } = req.params;
+    const { db, page, pageSize } = req.query;
+    const databaseToUse = db || 'NEXCHEM';
+
+    pool = await getPoolWithFallback(databaseToUse);
+    if (!pool) {
+      return res.status(500).json({ success: false, message: `Database pool for ${databaseToUse} not available` });
+    }
+
+    const typeRes = await pool.request()
+      .input('rebateCode', sql.NVarChar(50), rebateCode)
+      .query('SELECT RebateType FROM RebateProgram WHERE RebateCode = @rebateCode');
+    if (typeRes.recordset.length === 0) {
+      return res.status(404).json({ success: false, message: `Rebate ${rebateCode} not found` });
+    }
+    const rebateType = typeRes.recordset[0].RebateType;
+    const { page: p, pageSize: s, offset } = clampPaging(page, pageSize);
+
+    let result;
+    if (rebateType === 'Fixed') result = await getPaginatedCustomersFixed(pool, rebateCode, offset, s);
+    else if (rebateType === 'Incremental') result = await getPaginatedCustomersIncremental(pool, rebateCode, offset, s);
+    else if (rebateType === 'Percentage') result = await getPaginatedCustomersPercentage(pool, rebateCode, offset, s);
+    else return res.status(400).json({ success: false, message: `Unknown rebate type: ${rebateType}` });
+
+    res.json({
+      success: true,
+      data: {
+        customers: result.customers,
+        page: p,
+        pageSize: s,
+        total: result.total,
+        hasMore: offset + result.customers.length < result.total
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error fetching paginated customers:', error);
+    res.status(500).json({ success: false, message: 'Error fetching customers', error: error.message });
+  }
+});
+
 // Get rebate program details by rebate code
 router.get('/rebate/:rebateCode/details', async (req, res) => {
   let pool;
@@ -383,9 +821,8 @@ router.get('/rebate/:rebateCode/details', async (req, res) => {
       });
     }
 
-    // First get rebate basic info to determine type
     const rebateInfoQuery = `
-      SELECT RebateCode, RebateType, SlpName as salesEmployee, DateFrom, DateTo, IsActive, Frequency, QuotaType
+      SELECT RebateCode, RebateType, SlpName as salesEmployee, DateFrom, DateTo, IsActive, Frequency, QuotaType, DateRangeScope
       FROM RebateProgram 
       WHERE RebateCode = @rebateCode
     `;
@@ -404,303 +841,25 @@ router.get('/rebate/:rebateCode/details', async (req, res) => {
     const rebateInfo = rebateInfoResult.recordset[0];
     const rebateType = rebateInfo.RebateType;
 
-    let customers = [];
-    let items = [];
+    const FIRST_PAGE_SIZE = 50;
+    let customersResult, itemsResult;
 
-// Update the Fixed rebate customer query in the /rebate/:rebateCode/details endpoint
-if (rebateType === 'Fixed') {
-  // Fixed Rebate - Customers with quotas
-const fixedCustomersQuery = `
-  SELECT
-    T1.CardCode as code,
-    T1.CardName as name,
-    T1.QtrRebate,
-    T2.Id as quotaId,  -- ADDED THIS LINE
-    T2.Month,
-    T2.TargetQty
-  FROM RebateProgram T0
-    INNER JOIN FixCustRebate T1 ON T0.RebateCode = T1.RebateCode
-    LEFT JOIN FixCustQuota T2 ON T1.Id = T2.CustRebateId
-  WHERE T0.RebateCode = @rebateCode
-  ORDER BY T1.CardName, T2.Id  -- CHANGED from T2.Month to T2.Id
-`;
-
-  const fixedCustomersResult = await pool.request()
-    .input('rebateCode', sql.NVarChar(50), rebateCode)
-    .query(fixedCustomersQuery);
-
-// Group customers and their monthly quotas
-const customerMap = new Map();
-fixedCustomersResult.recordset.forEach(row => {
-  if (!row.code) return;
-  
-  if (!customerMap.has(row.code)) {
-    customerMap.set(row.code, {
-      code: row.code,
-      name: row.name,
-      qtrRebate: row.QtrRebate || 0,
-      quotas: [],
-      quotaDetails: [], // NEW: Store quota details with IDs
-      type: 'fixed'
-    });
-  }
-  
-  if (row.quotaId && row.Month && row.TargetQty !== null) {
-    customerMap.get(row.code).quotaDetails.push({
-      id: row.quotaId,
-      month: row.Month,
-      targetQty: row.TargetQty || 0
-    });
-  }
-});
-
-// Convert to array with proper structure
-customers = Array.from(customerMap.values()).map(customer => {
-  // Sort quotaDetails by id to maintain database order
-  customer.quotaDetails.sort((a, b) => a.id - b.id);
-  
-  // Extract just the target values in order
-  const quotaArray = customer.quotaDetails.map(q => q.targetQty);
-  
-  // Ensure we have at least 3 entries
-  while (quotaArray.length < 3) {
-    quotaArray.push(0);
-  }
-  
-  return {
-    code: customer.code,
-    name: customer.name,
-    qtrRebate: customer.qtrRebate,
-    quotas: quotaArray, // Array of quotas in correct order
-    quotaDetails: customer.quotaDetails, // Keep detailed info with IDs
-    type: 'fixed'
-  };
-});
-
-
-// Fixed Rebate - Items
-const fixedItemsQuery = `
-  SELECT
-    T3.ItemCode as code,
-    T3.ItemName as description,
-    T3.UnitPerQty,
-    T3.UnitOfMeasure as uom, 
-    T3.RebatePerBag as rebate
-  FROM RebateProgram T0
-    INNER JOIN FixProdRebate T3 ON T0.RebateCode = T3.RebateCode
-  WHERE T0.RebateCode = @rebateCode
-  ORDER BY T3.ItemName
-`;
-
-const fixedItemsResult = await pool.request()
-  .input('rebateCode', sql.NVarChar(50), rebateCode)
-  .query(fixedItemsQuery);
-
-items = fixedItemsResult.recordset.map(item => ({
-  code: item.code,
-  description: item.description,
-  unitPerQty: item.UnitPerQty || 1,
-  uom: item.uom || '',
-  rebate: item.rebate || 0,
-  type: 'fixed'
-}));
-
-} else if (rebateType === 'Incremental') {
-  // Incremental Rebate - Customers with ranges
-  const incrementalCustomersQuery = `
-    SELECT 
-      T1.CardCode as code,
-      T1.CardName as name,
-      T1.QtrRebate,
-      T2.RangeNo as customerRangeNo,
-      T2.MinQty as customerMinQty,
-      T2.MaxQty as customerMaxQty,
-      T2.RebatePerBag as customerRebatePerBag
-    FROM RebateProgram T0
-      INNER JOIN IncCustRebate T1 ON T0.RebateCode = T1.RebateCode
-      LEFT JOIN IncCustRange T2 ON T1.Id = T2.IncCustRebateId
-    WHERE T0.RebateCode = @rebateCode
-    ORDER BY T1.CardName, T2.RangeNo
-  `;
-
-  const incrementalCustomersResult = await pool.request()
-    .input('rebateCode', sql.NVarChar(50), rebateCode)
-    .query(incrementalCustomersQuery);
-
-  // Group customers and their ranges
-  const customerMap = new Map();
-  incrementalCustomersResult.recordset.forEach(row => {
-    if (!row.code) return;
-    
-    if (!customerMap.has(row.code)) {
-      customerMap.set(row.code, {
-        code: row.code,
-        name: row.name || 'Unknown Customer',
-        qtrRebate: row.QtrRebate || 0,
-        ranges: [],
-        type: 'incremental'
-      });
+    if (rebateType === 'Fixed') {
+      customersResult = await getPaginatedCustomersFixed(pool, rebateCode, 0, FIRST_PAGE_SIZE);
+      itemsResult = await getPaginatedItemsFixed(pool, rebateCode, 0, FIRST_PAGE_SIZE);
+    } else if (rebateType === 'Incremental') {
+      customersResult = await getPaginatedCustomersIncremental(pool, rebateCode, 0, FIRST_PAGE_SIZE);
+      itemsResult = await getPaginatedItemsIncremental(pool, rebateCode, 0, FIRST_PAGE_SIZE);
+    } else if (rebateType === 'Percentage') {
+      customersResult = await getPaginatedCustomersPercentage(pool, rebateCode, 0, FIRST_PAGE_SIZE);
+      itemsResult = await getPaginatedItemsPercentage(pool, rebateCode, 0, FIRST_PAGE_SIZE);
+    } else {
+      customersResult = { customers: [], total: 0 };
+      itemsResult = { items: [], total: 0 };
     }
-    
-    if (row.customerRangeNo) {
-      customerMap.get(row.code).ranges.push({
-        rangeNo: row.customerRangeNo,
-        minQty: row.customerMinQty || 0,
-        maxQty: row.customerMaxQty || 0,
-        rebatePerBag: row.customerRebatePerBag || 0
-      });
-    }
-  });
 
-  customers = Array.from(customerMap.values());
-
-  // Incremental Rebate - Items with ranges
-  const incrementalItemsQuery = `
-    SELECT 
-      T3.ItemCode as code,
-      T3.ItemName as description,
-      T3.UnitPerQty,
-      T3.UnitOfMeasure as uom, 
-      T4.RangeNo as itemRangeNo,
-      T4.MinQty as itemMinQty,
-      T4.MaxQty as itemMaxQty,
-      T4.RebatePerBag as itemRebatePerBag
-    FROM RebateProgram T0
-      INNER JOIN IncItemRebate T3 ON T0.RebateCode = T3.RebateCode
-      LEFT JOIN IncItemRange T4 ON T3.Id = T4.ItemRebateId
-    WHERE T0.RebateCode = @rebateCode
-    ORDER BY T3.ItemName, T4.RangeNo
-  `;
-
-  const incrementalItemsResult = await pool.request()
-    .input('rebateCode', sql.NVarChar(50), rebateCode)
-    .query(incrementalItemsQuery);
-
-  // Group items and their ranges
-  const itemMap = new Map();
-  incrementalItemsResult.recordset.forEach(row => {
-    if (!row.code) return;
-    
-    if (!itemMap.has(row.code)) {
-      itemMap.set(row.code, {
-        code: row.code,
-        description: row.description || 'Unknown Item',
-        unitPerQty: row.UnitPerQty || 1,
-        uom: row.uom || '',
-        ranges: [],
-        type: 'incremental'
-      });
-    }
-    
-    if (row.itemRangeNo) {
-      itemMap.get(row.code).ranges.push({
-        rangeNo: row.itemRangeNo,
-        minQty: row.itemMinQty || 0,
-        maxQty: row.itemMaxQty || 0,
-        rebatePerBag: row.itemRebatePerBag || 0
-      });
-    }
-  });
-
-  items = Array.from(itemMap.values());
-}// In the Percentage rebate section, update the customer query to include qtrRebate:
-else if (rebateType === 'Percentage') {
-  // Percentage Rebate - Customers with quotas
-// Percentage Rebate - Customers with quotas
-const percentageCustomersQuery = `
-  SELECT
-    T1.CardCode as code,
-    T1.CardName as name,
-    T1.QtrRebate,
-    T2.Id as quotaId,  -- ADDED THIS LINE
-    T2.Month,
-    T2.TargetQty
-  FROM RebateProgram T0
-    INNER JOIN PerCustRebate T1 ON T0.RebateCode = T1.RebateCode
-    LEFT JOIN PerCustQuota T2 ON T1.Id = T2.PerCustRebateId
-  WHERE T0.RebateCode = @rebateCode
-  ORDER BY T1.CardName, T2.Id  -- CHANGED from T2.Month to T2.Id
-`;
-
-  const percentageCustomersResult = await pool.request()
-    .input('rebateCode', sql.NVarChar(50), rebateCode)
-    .query(percentageCustomersQuery);
-
-// Group customers and their monthly quotas
-const customerMap = new Map();
-percentageCustomersResult.recordset.forEach(row => {
-  if (!row.code) return;
-  
-  if (!customerMap.has(row.code)) {
-    customerMap.set(row.code, {
-      code: row.code,
-      name: row.name,
-      qtrRebate: row.QtrRebate || 0,
-      quotas: [],
-      quotaDetails: [], // NEW: Store quota details with IDs
-      type: 'percentage'
-    });
-  }
-  
-  if (row.quotaId && row.Month && row.TargetQty !== null) {
-    customerMap.get(row.code).quotaDetails.push({
-      id: row.quotaId,
-      month: row.Month,
-      targetQty: row.TargetQty || 0
-    });
-  }
-});
-
-// Convert to array with proper structure
-customers = Array.from(customerMap.values()).map(customer => {
-  // Sort quotaDetails by id to maintain database order
-  customer.quotaDetails.sort((a, b) => a.id - b.id);
-  
-  // Extract just the target values in order
-  const quotaArray = customer.quotaDetails.map(q => q.targetQty);
-  
-  // Ensure we have at least 3 entries
-  while (quotaArray.length < 3) {
-    quotaArray.push(0);
-  }
-  
-  return {
-    code: customer.code,
-    name: customer.name,
-    qtrRebate: customer.qtrRebate,
-    quotas: quotaArray, // Array of quotas in correct order
-    quotaDetails: customer.quotaDetails, // Keep detailed info with IDs
-    type: 'percentage'
-  };
-});
-
-  // Percentage Rebate - Items
-  const percentageItemsQuery = `
-    SELECT
-      T3.ItemCode as code,
-      T3.ItemName as description,
-      T3.UnitPerQty,
-      T3.UnitOfMeasure as uom, 
-      T3.PercentagePerBag as percentage
-    FROM RebateProgram T0
-      INNER JOIN PerProdRebate T3 ON T0.RebateCode = T3.RebateCode
-    WHERE T0.RebateCode = @rebateCode
-    ORDER BY T3.ItemName
-  `;
-
-  const percentageItemsResult = await pool.request()
-    .input('rebateCode', sql.NVarChar(50), rebateCode)
-    .query(percentageItemsQuery);
-
-  items = percentageItemsResult.recordset.map(item => ({
-    code: item.code,
-    description: item.description,
-    unitPerQty: item.UnitPerQty || 1,
-    uom: item.uom || '',
-    percentage: item.percentage || 0,
-    type: 'percentage'
-  }));
-}
+    const customers = customersResult.customers;
+    const items = itemsResult.items;
 
     console.log(`📋 Rebate ${rebateCode} details:`, {
       type: rebateType,
@@ -718,11 +877,16 @@ customers = Array.from(customerMap.values()).map(customer => {
         salesEmployee: rebateInfo.salesEmployee || 'Not specified',
         dateFrom: rebateInfo.DateFrom ? new Date(rebateInfo.DateFrom).toISOString().split('T')[0] : '',
         dateTo: rebateInfo.DateTo ? new Date(rebateInfo.DateTo).toISOString().split('T')[0] : '',
+        dateRangeScope: rebateInfo.DateRangeScope || 'Global',
         frequency: rebateInfo.Frequency || 'Quarterly',
         quotaType: rebateInfo.QuotaType || 'N/A',
         isActive: rebateInfo.IsActive === 1,
         customers: customers,
-        items: items
+        items: items,
+        totalCustomers: customersResult.total,
+        totalItems: itemsResult.total,
+        hasMoreCustomers: customers.length < customersResult.total,
+        hasMoreItems: items.length < itemsResult.total
       }
     });
 
@@ -828,7 +992,7 @@ router.put('/rebate/customer', async (req, res) => {
         SELECT Id, Month, TargetQty 
         FROM FixCustQuota 
         WHERE CustRebateId = @customerId
-        ORDER BY Id  -- ORDER BY ID to maintain database order
+        ORDER BY Id
       `;
       
       const existingQuotas = await pool.request()
@@ -853,11 +1017,9 @@ router.put('/rebate/customer', async (req, res) => {
         });
       }
       
-      // Update quotas by matching ORDER (frontend sends quotas in same order as displayed)
-      // Ensure quotas is an array
+      // Update quotas by matching ORDER
       const quotasArray = Array.isArray(quotas) ? quotas : [];
       
-      // Update each quota by ID in the order they appear in the database
       for (let i = 0; i < existingQuotas.recordset.length; i++) {
         const existingQuota = existingQuotas.recordset[i];
         const newValue = quotasArray[i] || 0;
@@ -987,7 +1149,7 @@ router.put('/rebate/customer', async (req, res) => {
         SELECT Id, Month, TargetQty 
         FROM PerCustQuota 
         WHERE PerCustRebateId = @customerId
-        ORDER BY Id  -- ORDER BY ID to maintain database order
+        ORDER BY Id
       `;
       
       const existingQuotas = await pool.request()
@@ -1438,7 +1600,9 @@ router.put('/rebate/item', async (req, res) => {
   }
 });
 
-// Get detailed customer transaction data - DAILY TRANSACTIONS (Updated for incremental with auto date)
+/* ══════════════════════════════════════════════════════════════════
+   TRANSACTIONS — now with customer-specific date range fallback
+   ══════════════════════════════════════════════════════════════════ */
 router.get('/customer/:customerCode/transactions', async (req, res) => {
   try {
     const { customerCode } = req.params;
@@ -1472,39 +1636,14 @@ router.get('/customer/:customerCode/transactions', async (req, res) => {
       });
     }
 
-    // Get rebate program period FIRST
-    const rebatePeriodQuery = `
-      SELECT DateFrom, DateTo, IsActive, Frequency 
-      FROM RebateProgram
-      WHERE RebateCode = @rebateCode
-    `;
-
-    const rebatePeriodResult = await ownPool.request()
-      .input('rebateCode', sql.NVarChar(50), rebateCode)
-      .query(rebatePeriodQuery);
-
-    let rebateDateFrom = '';
-    let rebateDateTo = '';
-    let isActive = false;
-    let frequency = 'Quarterly';
-    
-if (rebatePeriodResult.recordset.length > 0) {
-  rebateDateFrom = rebatePeriodResult.recordset[0].DateFrom ? 
-    new Date(rebatePeriodResult.recordset[0].DateFrom).toISOString().split('T')[0] : '';
-  rebateDateTo = rebatePeriodResult.recordset[0].DateTo ? 
-    new Date(rebatePeriodResult.recordset[0].DateTo).toISOString().split('T')[0] : '';
-  isActive = rebatePeriodResult.recordset[0].IsActive === 1;
-  frequency = rebatePeriodResult.recordset[0].Frequency || 'Quarterly';  // ADD THIS LINE - get frequency from database
-  
-  console.log('📅 Rebate period from database:', { 
-    rebateDateFrom, 
-    rebateDateTo,
-    isActive,
-    frequency  // ADD THIS to log
-  });
-} else {
-  console.log('⚠️ Rebate not found in database:', rebateCode);
-}
+    // ── Resolve rebate date range (RebateProgram → customer table fallback) ──
+    const {
+      rebateDateFrom,
+      rebateDateTo,
+      isActive,
+      frequency,
+      dateRangeSource
+    } = await resolveRebateDateRange(customerCode, rebateCode, rebateType, ownPool);
 
     // Determine date range - NEW LOGIC
     let startDate, endDate;
@@ -1534,6 +1673,18 @@ if (rebatePeriodResult.recordset.length > 0) {
       endDate = rebateDateTo;
       dateSource = 'rebate_period_fallback';
       console.log('📅 Priority 4: Using rebate period as fallback');
+    } else if (rebateDateFrom) {
+      // Only start available (from customer table) — open-ended to today
+      startDate = rebateDateFrom;
+      endDate = new Date().toISOString().split('T')[0];
+      dateSource = 'customer_range_open_end';
+      console.log('📅 Priority 4b: Using customer-specific start date, open-ended');
+    } else if (rebateDateTo) {
+      const endYear = new Date(rebateDateTo).getFullYear();
+      startDate = `${endYear}-01-01`;
+      endDate = rebateDateTo;
+      dateSource = 'customer_range_open_start';
+      console.log('📅 Priority 4c: Using customer-specific end date, open start');
     } else {
       const today = new Date();
       const currentYear = today.getFullYear();
@@ -1543,10 +1694,23 @@ if (rebatePeriodResult.recordset.length > 0) {
       console.log('📅 Priority 5: Using default period (current year)');
     }
 
+    // ✅ NEW: Always clamp the final window to the customer-specific range.
+    // Any transaction outside FixCustRebate / PerCustRebate / IncCustRebate
+    // DateFrom → DateTo will therefore be excluded from transaction records.
+    if (rebateDateFrom && startDate < rebateDateFrom) {
+      console.log(`📅 Clamping startDate ${startDate} → ${rebateDateFrom} (customer range)`);
+      startDate = rebateDateFrom;
+    }
+    if (rebateDateTo && endDate > rebateDateTo) {
+      console.log(`📅 Clamping endDate ${endDate} → ${rebateDateTo} (customer range)`);
+      endDate = rebateDateTo;
+    }
+
     console.log('📅 Final date range:', { 
       startDate, 
       endDate, 
-      dateSource
+      dateSource,
+      dateRangeSource
     });
 
     // Get rebate program details based on type
@@ -1668,8 +1832,9 @@ if (rebatePeriodResult.recordset.length > 0) {
       rebateCode: firstRecord.RebateCode,
       rebateType: firstRecord.RebateType,
       salesEmployee: firstRecord.SlpName,
-      dateFrom: firstRecord.DateFrom ? new Date(firstRecord.DateFrom).toISOString().split('T')[0] : '',
-      dateTo: firstRecord.DateTo ? new Date(firstRecord.DateTo).toISOString().split('T')[0] : '',
+      // Prefer the customer-specific dates so the frontend auto-fills the range
+      dateFrom: rebateDateFrom || (firstRecord.DateFrom ? new Date(firstRecord.DateFrom).toISOString().split('T')[0] : ''),
+      dateTo:   rebateDateTo   || (firstRecord.DateTo   ? new Date(firstRecord.DateTo).toISOString().split('T')[0]   : ''),
       isActive: firstRecord.IsActive,
       customer: {
         code: firstRecord.CardCode,
@@ -1731,53 +1896,66 @@ if (rebatePeriodResult.recordset.length > 0) {
     }
 
     console.log(`📋 ${rebateType} items for ${customerCode}:`, rebateItemCodes.length);
-    console.log(`📋 Date range for transactions:`, { startDate, endDate, dateSource });
+    console.log(`📋 Date range for transactions:`, { startDate, endDate, dateSource, dateRangeSource });
 
     // If no rebate items found, return empty transactions
     if (rebateItemCodes.length === 0) {
       console.log('⚠️ No rebate items found for this customer');
-res.json({
-  success: true,
-  data: {
-    transactions: transactions,
-    rebateType: rebateType,
-    customerCode: customerCode,
-    rebateCode: rebateCode,
-    rebateDetails: {
-      ...rebateDetails,
-      frequency: frequency  // ADD frequency to rebateDetails
-    },
-    summary: summary,
-    rebateItems: Array.from(rebateItemMap.values()),
-    dateRange: {
-      periodFrom: startDate,
-      periodTo: endDate,
-      totalDays: summary.totalDays,
-      autoLoaded: dateSource !== 'manual',
-      dateSource: dateSource,
-      rebatePeriodAvailable: !!(rebateDateFrom && rebateDateTo),
-      rebatePeriod: {
-        from: rebateDateFrom,
-        to: rebateDateTo
-      },
-      frequency: frequency  // ADD THIS LINE
-    },
-    frequency: frequency  // ADD THIS LINE at root level too
-  }
-});
+      return res.json({
+        success: true,
+        data: {
+          transactions: [],
+          rebateType: rebateType,
+          customerCode: customerCode,
+          rebateCode: rebateCode,
+          rebateDetails: {
+            ...rebateDetails,
+            frequency: frequency
+          },
+          summary: {
+            totalTransactions: 0,
+            totalActualSales: 0,
+            totalQtyForReb: 0,
+            totalDays: 0,
+            eligibleTransactions: 0,
+            partiallyEligibleTransactions: 0,
+            notEligibleTransactions: 0,
+            totalQuota: 0,
+            overallCumulativeQty: 0,
+            progressPercentage: 0,
+            totalRebateAmount: 0,
+            dateRange: { startDate, endDate, daysCovered: 0 }
+          },
+          rebateItems: [],
+          dateRange: {
+            periodFrom: startDate,
+            periodTo: endDate,
+            totalDays: 0,
+            autoLoaded: dateSource !== 'manual',
+            dateSource: dateSource,
+            dateRangeSource: dateRangeSource,
+            rebatePeriodAvailable: !!(rebateDateFrom && rebateDateTo),
+            rebatePeriod: {
+              from: rebateDateFrom,
+              to: rebateDateTo
+            },
+            frequency: frequency
+          },
+          frequency: frequency
+        }
+      });
     }
 
-    // Get SAP transactions
     let sapQuery = `
       SELECT
         CONVERT(VARCHAR(10), T0.DocDate, 120) as Date,
         T0.ItemCode,
         T0.Dscription as Item,
         T0.Quantity as ActualSales,
-        --T0.DocEntry,
         T0.DocNum as InvoiceNumber,
-        --T0.NumAtCard as CustomerReference,
-        T0.CardName as CustomerName
+        T0.CardName as CustomerName,
+        T0.Gtotal      as Gtotal,
+        T0.PriceAfVAT  as PriceAfVAT
       FROM
         OINV T0
       WHERE
@@ -1806,48 +1984,46 @@ res.json({
     const sapResult = await request.query(sapQuery);
     console.log('📄 SAP transactions found:', sapResult.recordset.length);
 
-      // Check for ARCM documents and adjust transactions
     let adjustedTransactions = sapResult.recordset.map(trans => ({
-    Date: trans.Date,
-    Item: trans.Item,
-    ItemCode: trans.ItemCode,
-    ActualSales: trans.ActualSales || 0,
-    InvoiceNumber: trans.InvoiceNumber,
-    CustomerReference: trans.CustomerReference,
-    PriceAfVAT: trans.PriceAfVAT,
-    Treetype: trans.Treetype 
-  }));
+      Date: trans.Date,
+      Item: trans.Item,
+      ItemCode: trans.ItemCode,
+      ActualSales: trans.ActualSales || 0,
+      InvoiceNumber: trans.InvoiceNumber,
+      CustomerReference: trans.CustomerReference,
+      PriceAfVAT: trans.PriceAfVAT,
+      Gtotal: trans.Gtotal,
+      Treetype: trans.Treetype
+    }));
 
-  try {
-    // Get ARCM adjustments
-    adjustedTransactions = await adjustForARCM(
-      sapPool, 
-      customerCode, 
-      adjustedTransactions, 
-      startDate, 
-      endDate
-    );
-    console.log(`📊 After ARCM adjustment: ${adjustedTransactions.length} transactions`);
-  } catch (arcmError) {
-    console.error('⚠️ ARCM adjustment failed, using original transactions:', arcmError.message);
-    // Continue with original transactions if adjustment fails
-    adjustedTransactions = sapResult.recordset;
-  }
+    try {
+      // Get ARCM adjustments
+      adjustedTransactions = await adjustForARCM(
+        sapPool, 
+        customerCode, 
+        adjustedTransactions, 
+        startDate, 
+        endDate
+      );
+      console.log(`📊 After ARCM adjustment: ${adjustedTransactions.length} transactions`);
+    } catch (arcmError) {
+      console.error('⚠️ ARCM adjustment failed, using original transactions:', arcmError.message);
+      adjustedTransactions = sapResult.recordset;
+    }
 
-    // Process transactions based on rebate type
-// Process transactions based on rebate type using ADJUSTED transactions
-let transactions = [];
-let totalQuota = 0;
+    // Process transactions based on rebate type using ADJUSTED transactions
+    let transactions = [];
+    let totalQuota = 0;
 
-if (rebateType === 'Fixed') {
-  totalQuota = Object.values(rebateDetails.quotas || {}).reduce((sum, quota) => sum + quota, 0);
-  transactions = processFixedTransactions(adjustedTransactions, rebateItemMap, totalQuota, rebateDetails, frequency)
-} else if (rebateType === 'Incremental') {
-  transactions = processIncrementalTransactions(adjustedTransactions, rebateItemMap, customerRanges, rebateDetails, frequency);
-} else if (rebateType === 'Percentage') {
-  totalQuota = Object.values(rebateDetails.quotas || {}).reduce((sum, quota) => sum + quota, 0);
-  transactions = processPercentageTransactions(adjustedTransactions, rebateItemMap, rebateDetails, frequency);
-}
+    if (rebateType === 'Fixed') {
+      totalQuota = Object.values(rebateDetails.quotas || {}).reduce((sum, quota) => sum + quota, 0);
+      transactions = processFixedTransactions(adjustedTransactions, rebateItemMap, totalQuota, rebateDetails, frequency)
+    } else if (rebateType === 'Incremental') {
+      transactions = processIncrementalTransactions(adjustedTransactions, rebateItemMap, customerRanges, rebateDetails, frequency);
+    } else if (rebateType === 'Percentage') {
+      totalQuota = Object.values(rebateDetails.quotas || {}).reduce((sum, quota) => sum + quota, 0);
+      transactions = processPercentageTransactions(adjustedTransactions, rebateItemMap, rebateDetails, frequency);
+    }
 
     // Sort by date descending for display
     transactions.sort((a, b) => new Date(b.Date) - new Date(a.Date));
@@ -1890,7 +2066,10 @@ if (rebateType === 'Fixed') {
         rebateType: rebateType,
         customerCode: customerCode,
         rebateCode: rebateCode,
-        rebateDetails: rebateDetails,
+        rebateDetails: {
+          ...rebateDetails,
+          frequency: frequency
+        },
         summary: summary,
         rebateItems: Array.from(rebateItemMap.values()),
         dateRange: {
@@ -1899,12 +2078,15 @@ if (rebateType === 'Fixed') {
           totalDays: summary.totalDays,
           autoLoaded: dateSource !== 'manual',
           dateSource: dateSource,
+          dateRangeSource: dateRangeSource,
           rebatePeriodAvailable: !!(rebateDateFrom && rebateDateTo),
           rebatePeriod: {
             from: rebateDateFrom,
             to: rebateDateTo
-          }
-        }
+          },
+          frequency: frequency
+        },
+        frequency: frequency
       }
     });
 
@@ -1923,14 +2105,12 @@ const processFixedTransactions = (sapTransactions, rebateItemMap, totalQuota, re
   const transactions = [];
   const itemCumulativeMap = new Map();
 
-  // Add frequency parameter to function signature
   const isMonthly = frequency === 'Monthly';
   
   const sortedSapTransactions = [...sapTransactions].sort((a, b) => 
     new Date(a.Date) - new Date(b.Date)
   );
 
-  // For Monthly: We don't need cumulative tracking across months
   if (isMonthly) {
     const monthlyGroups = {};
     sortedSapTransactions.forEach(sapTrans => {
@@ -1948,7 +2128,6 @@ const processFixedTransactions = (sapTransactions, rebateItemMap, totalQuota, re
       monthlyGroups[monthKey].totalSales += sapTrans.ActualSales || 0;
     });
     
-    // Process each month independently
     Object.keys(monthlyGroups).forEach(monthKey => {
       const monthData = monthlyGroups[monthKey];
       let monthCumulative = 0;
@@ -1961,7 +2140,6 @@ const processFixedTransactions = (sapTransactions, rebateItemMap, totalQuota, re
         const rebateItem = rebateItemMap.get(itemCode);
         if (!rebateItem) return;
         
-        // Calculate for this transaction
         let qtyForReb = actualSales;
         let unitPerQty = rebateItem.unitPerQty || 1;
         
@@ -1971,20 +2149,33 @@ const processFixedTransactions = (sapTransactions, rebateItemMap, totalQuota, re
         
         monthCumulative += qtyForReb;
         
+        const rebatePerBag = rebateItem.rebatePerBag || 0;
+        const rebateAmount = qtyForReb * rebatePerBag;
+
         transactions.push({
           Date: sapTrans.Date,
           Item: itemName,
           ItemCode: itemCode,
           ActualSales: actualSales,
+          QtyForReb: qtyForReb,
           RebateType: 'Fixed',
           Frequency: 'Monthly',
           IsMonthly: true,
-          // For monthly, we don't track cumulative across months
           MonthKey: monthKey,
           MonthName: monthData.monthName,
           Is25kgItem: itemName && itemName.toLowerCase().includes('25kg'),
-          CalculationNote: itemName && itemName.toLowerCase().includes('25kg') && unitPerQty > 1 ? 
-            `${actualSales} ÷ ${unitPerQty} = ${qtyForReb.toFixed(2)}` : null
+          UnitPerQty: unitPerQty,
+          RebatePerBag: rebatePerBag,
+          RebateAmount: rebateAmount,
+          Amount: rebateAmount,
+          InvoiceNumber: sapTrans.InvoiceNumber,
+          CustomerReference: sapTrans.CustomerReference,
+          PriceAfVAT: sapTrans.PriceAfVAT,
+          Gtotal: sapTrans.Gtotal,
+          CalculationNote: `${qtyForReb.toFixed(2)} × ₱${rebatePerBag.toFixed(2)} = ₱${rebateAmount.toFixed(2)}` 
+            + (itemName && itemName.toLowerCase().includes('25kg') && unitPerQty > 1 
+                ? ` (25kg: ${actualSales} ÷ ${unitPerQty})` 
+                : '')
         });
       });
     });
@@ -2002,7 +2193,6 @@ const processFixedTransactions = (sapTransactions, rebateItemMap, totalQuota, re
     let unitPerQty = rebateItem.unitPerQty || 1;
     let rebatePerBag = rebateItem.rebatePerBag || 0;
     
-    // For ALL items, check if 25kg
     if (itemName && itemName.toLowerCase().includes('25kg')) {
       qtyForReb = unitPerQty > 1 ? actualSales / unitPerQty : actualSales;
     }
@@ -2041,7 +2231,6 @@ const processFixedTransactions = (sapTransactions, rebateItemMap, totalQuota, re
       RebateItemName: rebateItem.itemName,
       IsEmptyData: false,
       IsMatchingItem: true,
-      // Calculate monthly quota based on total quota divided by number of months
       MonthQuota: totalQuota / (Object.keys(rebateDetails.quotas || {}).length || 3),
       CumulativeQtyForRebDisplay: currentCumulative,
       UnitPerQty: unitPerQty,
@@ -2049,6 +2238,8 @@ const processFixedTransactions = (sapTransactions, rebateItemMap, totalQuota, re
       TotalQtyForReb: qtyForReb,
       RebateType: 'Fixed',
       Is25kgItem: itemName && itemName.toLowerCase().includes('25kg'),
+      PriceAfVAT: sapTrans.PriceAfVAT,
+      Gtotal: sapTrans.Gtotal,
       CalculationNote: itemName && itemName.toLowerCase().includes('25kg') && unitPerQty > 1 ? 
         `${actualSales} ÷ ${unitPerQty} = ${qtyForReb.toFixed(2)}` : null
     });
@@ -2061,11 +2252,9 @@ const processFixedTransactions = (sapTransactions, rebateItemMap, totalQuota, re
 const processIncrementalTransactions = (sapTransactions, rebateItemMap, customerRanges, rebateDetails) => {
   const transactions = [];
   
-  // Use customer ranges if available
   const sortedRanges = customerRanges && customerRanges.length > 0 ? 
     [...customerRanges].sort((a, b) => a.minQty - b.minQty) : [];
   
-  // Continuous cumulative tracking (not monthly reset)
   let cumulativeQty = 0;
   let currentRange = null;
   let rebatePerBag = 0;
@@ -2082,19 +2271,15 @@ const processIncrementalTransactions = (sapTransactions, rebateItemMap, customer
     const rebateItem = rebateItemMap.get(itemCode);
     if (!rebateItem) return;
     
-    // Calculate QtyForReb
     let qtyForReb = actualSales;
     let unitPerQty = rebateItem.unitPerQty || 1;
     
-    // For ALL items, check if 25kg
     if (itemName && itemName.toLowerCase().includes('25kg')) {
       qtyForReb = unitPerQty > 1 ? actualSales / unitPerQty : actualSales;
     }
     
-    // Update cumulative qty
     cumulativeQty += qtyForReb;
     
-    // Find applicable range based on cumulative qty
     let newRange = null;
     let newRebatePerBag = 0;
     
@@ -2107,13 +2292,11 @@ const processIncrementalTransactions = (sapTransactions, rebateItemMap, customer
       }
     }
     
-    // Update current range if changed
     if (!currentRange || (newRange && newRange.rangeNo !== currentRange?.rangeNo)) {
       currentRange = newRange;
       rebatePerBag = newRebatePerBag;
     }
     
-    // Calculate progress
     let progress = 0;
     if (currentRange) {
       const rangeMin = currentRange.minQty || 0;
@@ -2125,7 +2308,6 @@ const processIncrementalTransactions = (sapTransactions, rebateItemMap, customer
       progress = Math.min((cumulativeQty / (firstRange.minQty || 1)) * 100, 100);
     }
     
-    // Determine eligibility
     let eligibilityStatus = 'Not Eligible';
     let statusMessage = 'Not Eligible';
     
@@ -2141,7 +2323,6 @@ const processIncrementalTransactions = (sapTransactions, rebateItemMap, customer
       }
     }
     
-    // Calculate rebate amount for this transaction
     const rebateAmount = currentRange ? (qtyForReb * rebatePerBag) : 0;
     
     const monthKey = `${new Date(sapTrans.Date).getFullYear()}-${String(new Date(sapTrans.Date).getMonth() + 1).padStart(2, '0')}`;
@@ -2172,6 +2353,8 @@ const processIncrementalTransactions = (sapTransactions, rebateItemMap, customer
       RangeMax: currentRange?.maxQty || 0,
       IsNewMonth: index === 0 || 
         new Date(sapTrans.Date).getMonth() !== new Date(sortedSapTransactions[index - 1].Date).getMonth(),
+      PriceAfVAT: sapTrans.PriceAfVAT,
+      Gtotal: sapTrans.Gtotal,
       CalculationNote: currentRange ? 
         `In Range ${currentRange.rangeNo} (${currentRange.minQty}-${currentRange.maxQty || '∞'})` : 
         (itemName && itemName.toLowerCase().includes('25kg') && unitPerQty > 1 ? 
@@ -2193,9 +2376,7 @@ const processPercentageTransactions = (sapTransactions, rebateItemMap, rebateDet
     new Date(a.Date) - new Date(b.Date)
   );
 
-  // Get total quota from rebate details (sum of all quotas)
   const totalQuota = Object.values(rebateDetails.quotas || {}).reduce((sum, quota) => sum + quota, 0);
-  // Calculate average monthly quota (divided by number of months)
   const monthlyQuota = totalQuota / (Object.keys(rebateDetails.quotas || {}).length || 3);
 
   sortedSapTransactions.forEach(sapTrans => {
@@ -2207,12 +2388,10 @@ const processPercentageTransactions = (sapTransactions, rebateItemMap, rebateDet
     
     if (!rebateItem) return;
     
-    // Calculate QtyForReb
     let qtyForReb = actualSales;
     let unitPerQty = rebateItem.unitPerQty || 1;
     let percentage = rebateItem.percentagePerBag || 0;
     
-    // For ALL items, check if 25kg
     if (itemName && itemName.toLowerCase().includes('25kg')) {
       qtyForReb = unitPerQty > 1 ? actualSales / unitPerQty : actualSales;
     }
@@ -2224,11 +2403,9 @@ const processPercentageTransactions = (sapTransactions, rebateItemMap, rebateDet
     const currentCumulative = itemCumulativeMap.get(itemCode) + qtyForReb;
     itemCumulativeMap.set(itemCode, currentCumulative);
     
-    // Calculate total quota
     const qtyBal = currentCumulative;
     const progress = totalQuota > 0 ? (currentCumulative / totalQuota) * 100 : 0;
     
-    // Calculate rebate amount (percentage of actual sales)
     const rebateAmount = (actualSales * percentage) / 100;
     
     let eligibilityStatus = 'Not Eligible';
@@ -2263,6 +2440,8 @@ const processPercentageTransactions = (sapTransactions, rebateItemMap, rebateDet
       RebateAmount: rebateAmount,
       RebateType: 'Percentage',
       Is25kgItem: itemName && itemName.toLowerCase().includes('25kg'),
+      PriceAfVAT: sapTrans.PriceAfVAT,
+      Gtotal: sapTrans.Gtotal,
       CalculationNote: itemName && itemName.toLowerCase().includes('25kg') && unitPerQty > 1 ? 
         `${actualSales} ÷ ${unitPerQty} = ${qtyForReb.toFixed(2)}` : null
     });
@@ -2285,7 +2464,6 @@ router.get('/test-sap-connection/:customerCode', async (req, res) => {
       });
     }
 
-    // Simple test query
     const testQuery = `
       SELECT TOP 5
         T0.CardCode,
@@ -2337,7 +2515,6 @@ router.get('/test-sap-connection', async (req, res) => {
       });
     }
 
-    // Test query
     const testQuery = `
       SELECT 
         @@SERVERNAME as ServerName,
@@ -2385,10 +2562,8 @@ router.get('/test-customer-sap/:customerCode', async (req, res) => {
       });
     }
 
-    // Get sample invoices for customer
     const invoiceQuery = `
       SELECT TOP 5
-        --T0.DocEntry,
         T0.DocNum,
         CONVERT(VARCHAR(10), T0.DocDate, 120) as DocDate,
         T0.CardCode,
@@ -2407,7 +2582,6 @@ router.get('/test-customer-sap/:customerCode', async (req, res) => {
       .input('customerCode', sql.NVarChar(50), customerCode)
       .query(invoiceQuery);
 
-    // Get customer details
     const customerQuery = `
       SELECT TOP 1
         CardCode,
@@ -2459,7 +2633,6 @@ router.get('/debug/rebate/:rebateCode/incremental-data', async (req, res) => {
       });
     }
 
-    // Check if rebate exists and is incremental
     const rebateCheck = await pool.request()
       .input('rebateCode', sql.NVarChar(50), rebateCode)
       .query(`
@@ -2484,7 +2657,6 @@ router.get('/debug/rebate/:rebateCode/incremental-data', async (req, res) => {
       });
     }
 
-    // Get customers
     const customersQuery = `
       SELECT 
         T1.CardCode,
@@ -2504,7 +2676,6 @@ router.get('/debug/rebate/:rebateCode/incremental-data', async (req, res) => {
       .input('rebateCode', sql.NVarChar(50), rebateCode)
       .query(customersQuery);
 
-    // Get items
     const itemsQuery = `
       SELECT 
         T3.ItemCode,
@@ -2567,7 +2738,6 @@ router.get('/test-item-matching/:customerCode/:rebateCode', async (req, res) => 
       });
     }
 
-    // Get rebate items from OWN
     const rebateItemsQuery = `
       SELECT
         T3.ItemCode,
@@ -2581,7 +2751,6 @@ router.get('/test-item-matching/:customerCode/:rebateCode', async (req, res) => 
       .input('rebateCode', sql.NVarChar(50), rebateCode)
       .query(rebateItemsQuery);
 
-    // Get SAP items for customer
     const sapItemsQuery = `
       SELECT
         T0.ItemCode,
@@ -2595,7 +2764,6 @@ router.get('/test-item-matching/:customerCode/:rebateCode', async (req, res) => 
       .input('customerCode', sql.NVarChar(50), customerCode)
       .query(sapItemsQuery);
 
-    // Find matches
     const matchedItems = [];
     const unmatchedRebateItems = [];
     const unmatchedSapItems = [];
@@ -2619,7 +2787,6 @@ router.get('/test-item-matching/:customerCode/:rebateCode', async (req, res) => 
       }
     });
 
-    // Check SAP items not in rebate
     sapItems.recordset.forEach(sapItem => {
       const isInRebate = rebateItems.recordset.some(rebateItem => 
         rebateItem.ItemCode === sapItem.ItemCode || 
@@ -2655,7 +2822,9 @@ router.get('/test-item-matching/:customerCode/:rebateCode', async (req, res) => 
   }
 });
 
-// Get customer monthly quota performance with auto date handling
+/* ══════════════════════════════════════════════════════════════════
+   MONTHLY QUOTA — with customer-specific date range fallback
+   ══════════════════════════════════════════════════════════════════ */
 router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
   try {
     const { customerCode } = req.params;
@@ -2687,30 +2856,14 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
       });
     }
 
-    // Get rebate program period
-    const rebatePeriodQuery = `
-      SELECT DateFrom, DateTo, IsActive, Frequency 
-      FROM RebateProgram
-      WHERE RebateCode = @rebateCode
-    `;
-
-    const rebatePeriodResult = await ownPool.request()
-      .input('rebateCode', sql.NVarChar(50), rebateCode)
-      .query(rebatePeriodQuery);
-
-    let rebateDateFrom = '';
-    let rebateDateTo = '';
-    let isActive = false;
-    let frequency = 'Quarterly';
-    
-    if (rebatePeriodResult.recordset.length > 0) {
-      rebateDateFrom = rebatePeriodResult.recordset[0].DateFrom ? 
-        new Date(rebatePeriodResult.recordset[0].DateFrom).toISOString().split('T')[0] : '';
-      rebateDateTo = rebatePeriodResult.recordset[0].DateTo ? 
-        new Date(rebatePeriodResult.recordset[0].DateTo).toISOString().split('T')[0] : '';
-      isActive = rebatePeriodResult.recordset[0].IsActive === 1;
-        frequency = rebatePeriodResult.recordset[0].Frequency || 'Quarterly';
-    }
+    // ── Resolve rebate date range (with customer table fallback) ──
+    const {
+      rebateDateFrom,
+      rebateDateTo,
+      isActive,
+      frequency,
+      dateRangeSource
+    } = await resolveRebateDateRange(customerCode, rebateCode, rebateType, ownPool);
 
     // Determine date range
     let startDate, endDate;
@@ -2728,6 +2881,15 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
       startDate = rebateDateFrom;
       endDate = rebateDateTo;
       dateSource = 'rebate_period_fallback';
+    } else if (rebateDateFrom) {
+      startDate = rebateDateFrom;
+      endDate = new Date().toISOString().split('T')[0];
+      dateSource = 'customer_range_open_end';
+    } else if (rebateDateTo) {
+      const endYear = new Date(rebateDateTo).getFullYear();
+      startDate = `${endYear}-01-01`;
+      endDate = rebateDateTo;
+      dateSource = 'customer_range_open_start';
     } else {
       const currentYear = new Date().getFullYear();
       startDate = `${currentYear}-01-01`;
@@ -2735,7 +2897,7 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
       dateSource = 'current_year';
     }
 
-    console.log('📅 Monthly quota date range:', { startDate, endDate, dateSource });
+    console.log('📅 Monthly quota date range:', { startDate, endDate, dateSource, dateRangeSource });
 
     // Get transactions to calculate monthly performance
     const transactionsResponse = await fetch(
@@ -2745,12 +2907,12 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
     );
     
     let monthlyQuotas = [];
+    let ranges = [];
     
     if (transactionsResponse.ok) {
       const transactionsData = await transactionsResponse.json();
       
       if (transactionsData.success && transactionsData.data.transactions) {
-        // Group transactions by month
         const monthlyGroups = {};
         transactionsData.data.transactions.forEach(trans => {
           const date = new Date(trans.Date);
@@ -2771,9 +2933,7 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
           monthlyGroups[monthKey].totalActualSales += trans.ActualSales;
         });
         
-        // Get quota targets and rebate ranges based on rebate type
         let quotaTargets = {};
-        let ranges = [];
         
         if (rebateType === 'Fixed') {
           const quotaQuery = `
@@ -2794,7 +2954,6 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
             }
           });
         } else if (rebateType === 'Incremental') {
-          // Get ranges for incremental rebate
           const rangesQuery = `
             SELECT RangeNo, MinQty, MaxQty, RebatePerBag
             FROM IncCustRebate T1
@@ -2815,7 +2974,6 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
             rebatePerBag: row.RebatePerBag
           }));
           
-          // Use first range min as target for display
           if (ranges.length > 0) {
             quotaTargets = { 1: ranges[0].minQty };
           }
@@ -2839,7 +2997,6 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
           });
         }
         
-        // Create monthly quota data
         const sortedMonths = Object.keys(monthlyGroups).sort();
         let cumulativeAchieved = 0;
         
@@ -2848,7 +3005,6 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
           const achieved = monthData.totalQtyForReb;
           cumulativeAchieved += achieved;
           
-          // Get target based on rebate type
           let target = 0;
           let currentRange = null;
           let rebatePerBag = 0;
@@ -2864,7 +3020,6 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
             status = achieved >= target ? 'Achieved' : 'In Progress';
             
           } else if (rebateType === 'Incremental') {
-            // For incremental, find current range based on cumulative achieved
             let foundRange = null;
             for (const range of ranges) {
               if (cumulativeAchieved >= range.minQty && 
@@ -2880,10 +3035,9 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
               RangeMin = foundRange.minQty;
               RangeMax = foundRange.maxQty;
               rebatePerBag = foundRange.rebatePerBag;
-              progress = 100; // If in range, consider 100% for current range
+              progress = 100;
               status = 'In Range';
             } else if (ranges.length > 0) {
-              // Not in any range yet, find next range
               const nextRange = ranges.find(r => r.minQty > cumulativeAchieved);
               if (nextRange) {
                 target = nextRange.minQty;
@@ -2892,7 +3046,6 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
                 progress = (cumulativeAchieved / nextRange.minQty) * 100;
                 status = 'Working Toward Next Range';
               } else {
-                // Beyond all ranges, use last range
                 const lastRange = ranges[ranges.length - 1];
                 target = lastRange.maxQty || lastRange.minQty;
                 RangeMin = lastRange.minQty;
@@ -2926,7 +3079,6 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
             RangeMin: RangeMin,
             RangeMax: RangeMax,
             isEmptyMonth: achieved === 0,
-            // For incremental specific
             displayTarget: RangeMax ? `Max: ${RangeMax}` : `Min: ${RangeMin || 0}`,
             displayAchieved: `Achieved: ${achieved}`,
             displayCumulative: `Cumulative: ${cumulativeAchieved}`,
@@ -2938,7 +3090,6 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
       }
     }
     
-    // If no data, return empty or sample data
     if (monthlyQuotas.length === 0) {
       const currentDate = new Date();
       for (let i = 5; i >= 0; i--) {
@@ -2977,7 +3128,6 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
         customerCode: customerCode,
         rebateCode: rebateCode,
         rebateType: rebateType,
-        // Include ranges for incremental type
         ...(rebateType === 'Incremental' && {
           ranges: ranges || []
         }),
@@ -2986,6 +3136,7 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
           periodTo: endDate,
           autoLoaded: dateSource !== 'manual',
           dateSource: dateSource,
+          dateRangeSource: dateRangeSource,
           rebatePeriodAvailable: !!(rebateDateFrom && rebateDateTo),
           rebatePeriod: {
             from: rebateDateFrom,
@@ -3028,7 +3179,6 @@ router.put('/payouts/:payoutId/status', async (req, res) => {
       });
     }
 
-    // Check if PayoutHistory table exists, if not create it
     const tableCheckQuery = `
       IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'PayoutHistory')
       BEGIN
@@ -3050,7 +3200,6 @@ router.put('/payouts/:payoutId/status', async (req, res) => {
     
     await ownPool.request().query(tableCheckQuery);
 
-    // Update payout status
     const updateQuery = `
       UPDATE PayoutHistory 
       SET Status = @status, 
@@ -3112,7 +3261,6 @@ router.post('/payouts/save', async (req, res) => {
       });
     }
 
-    // Check if PayoutHistory table exists, if not create it
     const tableCheckQuery = `
       IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'PayoutHistory')
       BEGIN
@@ -3134,7 +3282,6 @@ router.post('/payouts/save', async (req, res) => {
     
     await ownPool.request().query(tableCheckQuery);
 
-    // Upsert payout data
     const upsertQuery = `
       MERGE PayoutHistory AS target
       USING (SELECT 
@@ -3192,7 +3339,9 @@ router.post('/payouts/save', async (req, res) => {
   }
 });
 
-// Add this endpoint to get customer/:customerCode/total-achieved
+/* ══════════════════════════════════════════════════════════════════
+   TOTAL ACHIEVED — with customer-specific date range fallback
+   ══════════════════════════════════════════════════════════════════ */
 router.get('/customer/:customerCode/total-achieved', async (req, res) => {
   try {
     const { customerCode } = req.params;
@@ -3215,26 +3364,10 @@ router.get('/customer/:customerCode/total-achieved', async (req, res) => {
       });
     }
 
-    // Get rebate period first
-    const rebatePeriodQuery = `
-      SELECT DateFrom, DateTo, IsActive, Frequency 
-      FROM RebateProgram
-      WHERE RebateCode = @rebateCode
-    `;
-
-    const rebatePeriodResult = await ownPool.request()
-      .input('rebateCode', sql.NVarChar(50), rebateCode)
-      .query(rebatePeriodQuery);
-
-    let rebateDateFrom = '';
-    let rebateDateTo = '';
-    
-    if (rebatePeriodResult.recordset?.length > 0) {
-      rebateDateFrom = rebatePeriodResult.recordset[0].DateFrom ? 
-        new Date(rebatePeriodResult.recordset[0].DateFrom).toISOString().split('T')[0] : '';
-      rebateDateTo = rebatePeriodResult.recordset[0].DateTo ? 
-        new Date(rebatePeriodResult.recordset[0].DateTo).toISOString().split('T')[0] : '';
-    }
+    // ── Resolve rebate period (with customer table fallback) ──
+    const { rebateDateFrom, rebateDateTo } = await resolveRebateDateRange(
+      customerCode, rebateCode, rebateType, ownPool
+    );
 
     // Get rebate item codes
     let itemQuery = '';
@@ -3262,7 +3395,6 @@ router.get('/customer/:customerCode/total-achieved', async (req, res) => {
       .input('rebateCode', sql.NVarChar(50), rebateCode)
       .query(itemQuery);
 
-    // FIX: Check if recordset exists and is an array
     const itemCodes = itemResult.recordset ? 
       itemResult.recordset.map(row => row.ItemCode).filter(code => code) : 
       [];
@@ -3281,7 +3413,6 @@ router.get('/customer/:customerCode/total-achieved', async (req, res) => {
       });
     }
 
-    // Get SAP transactions for ALL rebate items in the period
     const sapPool = getDatabasePool('NEXCHEM');
     if (!sapPool) {
       return res.status(500).json({
@@ -3319,7 +3450,6 @@ router.get('/customer/:customerCode/total-achieved', async (req, res) => {
 
     const sapResult = await request.query(sapQuery);
     
-    // Calculate total QtyForReb
     let totalAchieved = 0;
     const transactions = sapResult.recordset || [];
     
@@ -3327,7 +3457,6 @@ router.get('/customer/:customerCode/total-achieved', async (req, res) => {
       const actualSales = transaction.ActualSales || 0;
       const itemName = transaction.Item || '';
       
-      // For 25kg items, divide by 2
       if (itemName && itemName.toLowerCase().includes('25kg')) {
         totalAchieved += actualSales / 2;
       } else {
@@ -3353,7 +3482,7 @@ router.get('/customer/:customerCode/total-achieved', async (req, res) => {
       success: false,
       message: 'Error calculating total achieved',
       error: error.message,
-      stack: error.stack // Include stack trace for debugging
+      stack: error.stack
     });
   }
 });
@@ -3375,7 +3504,6 @@ router.get('/rebates-summary', async (req, res) => {
 
     console.log('🔍 Fetching rebates summary with progress calculation and database payout data');
 
-    // Check if PayoutHistory table exists
     const tableCheckQuery = `
       SELECT COUNT(*) as tableCount
       FROM INFORMATION_SCHEMA.TABLES 
@@ -3386,7 +3514,6 @@ router.get('/rebates-summary', async (req, res) => {
     const hasPayoutHistory = tableCheckResult.recordset[0]?.tableCount > 0;
     console.log(`PayoutHistory table exists: ${hasPayoutHistory}`);
 
-    // Query for Fixed rebate customers with details
     let fixedQuery = `
       SELECT DISTINCT
         T0.RebateCode,
@@ -3405,7 +3532,6 @@ router.get('/rebates-summary', async (req, res) => {
         T3.ItemName,
         T3.RebatePerBag,
         T3.UnitPerQty,
-        -- Get created date from customer creation or use dateFrom as fallback
         ISNULL(T1.CreatedDate, T0.CreatedDate) as CreatedDate
       FROM
         RebateProgram T0
@@ -3419,7 +3545,6 @@ router.get('/rebates-summary', async (req, res) => {
         AND T3.ItemCode IS NOT NULL
     `;
 
-    // Query for Percentage rebate customers
     let percentageQuery = `
       SELECT DISTINCT
         T0.RebateCode,
@@ -3438,7 +3563,6 @@ router.get('/rebates-summary', async (req, res) => {
         T3.ItemName,
         T3.PercentagePerBag,
         T3.UnitPerQty,
-        -- Get created date from customer creation or use dateFrom as fallback
         ISNULL(T1.CreatedDate, T0.CreatedDate) as CreatedDate
       FROM
         RebateProgram T0
@@ -3452,7 +3576,6 @@ router.get('/rebates-summary', async (req, res) => {
         AND T3.ItemCode IS NOT NULL
     `;
 
-    // Query for Incremental rebate customers
     let incrementalQuery = `
       SELECT DISTINCT
         T0.RebateCode,
@@ -3476,7 +3599,6 @@ router.get('/rebates-summary', async (req, res) => {
         T4.MinQty as ItemMinQty,
         T4.MaxQty as ItemMaxQty,
         T4.RebatePerBag as ItemRebatePerBag,
-        -- Get created date from customer creation or use dateFrom as fallback
         ISNULL(T1.CreatedDate, T0.CreatedDate) as CreatedDate
       FROM
         RebateProgram T0
@@ -3491,7 +3613,6 @@ router.get('/rebates-summary', async (req, res) => {
         AND T3.ItemCode IS NOT NULL
     `;
 
-    // Build WHERE conditions
     const conditions = [];
     const request = pool.request();
     
@@ -3517,7 +3638,6 @@ router.get('/rebates-summary', async (req, res) => {
       percentageQuery += whereClause;
     }
 
-    // Execute all queries
     console.log('Executing queries for rebate data...');
     const [fixedResult, incrementalResult, percentageResult] = await Promise.all([
       request.query(fixedQuery),
@@ -3533,14 +3653,12 @@ router.get('/rebates-summary', async (req, res) => {
     
     console.log(`Results found: ${fixedResult.recordset.length} Fixed, ${incrementalResult.recordset.length} Incremental, ${percentageResult.recordset.length} Percentage`);
     
-    // Group by customer to aggregate items and ranges
     const customerMap = new Map();
 
     allResults.forEach(row => {
       const customerKey = `${row.CardCode}_${row.RebateCode}`;
       
       if (!customerMap.has(customerKey)) {
-        // Use CreatedDate if available, otherwise use dateFrom as fallback
         const createdDate = row.CreatedDate || row.DateFrom || new Date();
         
         customerMap.set(customerKey, {
@@ -3554,9 +3672,8 @@ router.get('/rebates-summary', async (req, res) => {
           isActive: row.IsActive === '1' || row.IsActive === 1 || row.IsActive === true,
           frequency: row.Frequency || 'Quarterly',
           qtrRebate: row.QtrRebate || 0,
-          // ADDED: Store the created date for sorting
           createdDate: createdDate,
-          quotas: new Map(), // Will store month-target pairs
+          quotas: new Map(),
           items: new Set(),
           itemCodes: new Set(),
           itemDetails: [],
@@ -3567,21 +3684,17 @@ router.get('/rebates-summary', async (req, res) => {
       
       const customerData = customerMap.get(customerKey);
       
-      // Add quota data for Fixed and Percentage
       if ((row.RebateType === 'Fixed' || row.RebateType === 'Percentage') && row.Month && row.TargetQty !== null) {
         customerData.quotas.set(row.Month, row.TargetQty);
       }
       
-      // Add item
       if (row.ItemName && !customerData.items.has(row.ItemName)) {
         customerData.items.add(row.ItemName);
       }
       
-      // Add item code
       if (row.ItemCode && !customerData.itemCodes.has(row.ItemCode)) {
         customerData.itemCodes.add(row.ItemCode);
         
-        // Store item details based on rebate type
         const itemDetail = {
           itemCode: row.ItemCode,
           itemName: row.ItemName,
@@ -3602,7 +3715,6 @@ router.get('/rebates-summary', async (req, res) => {
         customerData.itemDetails.push(itemDetail);
       }
       
-      // Add ranges for incremental
       if (row.RebateType === 'Incremental' && row.RangeNo) {
         const range = {
           rangeNo: row.RangeNo,
@@ -3611,7 +3723,6 @@ router.get('/rebates-summary', async (req, res) => {
           rebatePerBag: row.RebatePerBag || 0
         };
         
-        // Check if range already exists
         const exists = customerData.ranges.some(r => 
           r.rangeNo === range.rangeNo && 
           r.minQty === range.minQty && 
@@ -3626,112 +3737,86 @@ router.get('/rebates-summary', async (req, res) => {
 
     console.log(`Total unique customers found: ${customerMap.size}`);
 
-    // GET REAL-TIME PAYOUT DATA FROM DATABASE
-// GET REAL-TIME PAYOUT DATA FROM DATABASE
-const payoutDataMap = new Map();
+    const payoutDataMap = new Map();
 
-if (hasPayoutHistory) {
-  try {
-    // Get all CardCodes and RebateCodes from our map
-    const customerKeys = Array.from(customerMap.keys());
-    const cardCodes = Array.from(new Set(customerKeys.map(key => key.split('_')[0])));
-    const rebateCodes = Array.from(new Set(customerKeys.map(key => key.split('_')[1])));
-    
-    console.log(`Fetching payout data for ${cardCodes.length} customers...`);
-    
-    // Check column names
-    const columnCheckQuery = `
-      SELECT COLUMN_NAME 
-      FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_NAME = 'PayoutHistory' 
-      AND TABLE_SCHEMA = 'dbo'
-      AND COLUMN_NAME IN ('CardCode', 'CustomerCode', 'BaseAmount', 'AmountReleased')
-    `;
-    
-    const columnResult = await pool.request().query(columnCheckQuery);
-    
-    if (columnResult.recordset.length >= 3) { // Need at least customer column, BaseAmount, and AmountReleased
-      const hasCardCode = columnResult.recordset.some(r => r.COLUMN_NAME === 'CardCode');
-      const customerColumn = hasCardCode ? 'CardCode' : 'CustomerCode';
-      const hasBaseAmount = columnResult.recordset.some(r => r.COLUMN_NAME === 'BaseAmount');
-      const hasAmountReleased = columnResult.recordset.some(r => r.COLUMN_NAME === 'AmountReleased');
-      
-      if (!hasBaseAmount || !hasAmountReleased) {
-        console.log(`⚠️ PayoutHistory table missing required columns: BaseAmount or AmountReleased`);
-      } else {
-        console.log(`✓ Using '${customerColumn}' column in PayoutHistory table`);
+    if (hasPayoutHistory) {
+      try {
+        const customerKeys = Array.from(customerMap.keys());
+        const cardCodes = Array.from(new Set(customerKeys.map(key => key.split('_')[0])));
+        const rebateCodes = Array.from(new Set(customerKeys.map(key => key.split('_')[1])));
         
-        // Build parameterized query - CALCULATE rebate balance as (BaseAmount - AmountReleased)
-        const payoutQuery = `
-          SELECT 
-            ${customerColumn} as CardCode,
-            RebateCode,
-            SUM(ISNULL(BaseAmount, 0)) AS TotalAmount,
-            SUM(ISNULL(AmountReleased, 0)) AS TotalReleased,
-            SUM(ISNULL(BaseAmount, 0) - ISNULL(AmountReleased, 0)) AS TotalBalance,
-            COUNT(*) as TransactionCount
-          FROM PayoutHistory
-          WHERE ${customerColumn} IN (${cardCodes.map((_, i) => `@cardCode${i}`).join(',')})
-            AND RebateCode IN (${rebateCodes.map((_, i) => `@rebateCode${i}`).join(',')})
-          GROUP BY ${customerColumn}, RebateCode
+        console.log(`Fetching payout data for ${cardCodes.length} customers...`);
+        
+        const columnCheckQuery = `
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_NAME = 'PayoutHistory' 
+          AND TABLE_SCHEMA = 'dbo'
+          AND COLUMN_NAME IN ('CardCode', 'CustomerCode', 'BaseAmount', 'AmountReleased')
         `;
         
-        const payoutRequest = pool.request();
+        const columnResult = await pool.request().query(columnCheckQuery);
         
-        // Add parameters
-        cardCodes.forEach((code, index) => {
-          payoutRequest.input(`cardCode${index}`, sql.NVarChar(50), code);
-        });
-        
-        rebateCodes.forEach((code, index) => {
-          payoutRequest.input(`rebateCode${index}`, sql.NVarChar(50), code);
-        });
-        
-        const payoutResult = await payoutRequest.query(payoutQuery);
-        
-        console.log(`✓ Found ${payoutResult.recordset.length} payout records in database`);
-        
-        // Store payout data
-        payoutResult.recordset.forEach(row => {
-          if (row.CardCode) {
-            const key = `${row.CardCode}_${row.RebateCode}`;
+        if (columnResult.recordset.length >= 3) {
+          const hasCardCode = columnResult.recordset.some(r => r.COLUMN_NAME === 'CardCode');
+          const customerColumn = hasCardCode ? 'CardCode' : 'CustomerCode';
+          const hasBaseAmount = columnResult.recordset.some(r => r.COLUMN_NAME === 'BaseAmount');
+          const hasAmountReleased = columnResult.recordset.some(r => r.COLUMN_NAME === 'AmountReleased');
+          
+          if (!hasBaseAmount || !hasAmountReleased) {
+            console.log(`⚠️ PayoutHistory table missing required columns: BaseAmount or AmountReleased`);
+          } else {
+            console.log(`✓ Using '${customerColumn}' column in PayoutHistory table`);
             
-            const rebateAmount = parseFloat(row.TotalAmount) || 0;
-            const paidAmount = parseFloat(row.TotalReleased) || 0;
-            // This now calculates balance as (BaseAmount - AmountReleased)
-            const rebateBalance = parseFloat(row.TotalBalance) || 0;
+            const payoutQuery = `
+              SELECT 
+                ${customerColumn} as CardCode,
+                RebateCode,
+                SUM(ISNULL(BaseAmount, 0)) AS TotalAmount,
+                SUM(ISNULL(AmountReleased, 0)) AS TotalReleased,
+                SUM(ISNULL(BaseAmount, 0) - ISNULL(AmountReleased, 0)) AS TotalBalance,
+                COUNT(*) as TransactionCount
+              FROM PayoutHistory
+              WHERE PayoutId NOT LIKE 'SAP-%'
+                AND Period NOT LIKE 'Balance of %'
+              GROUP BY ${customerColumn}, RebateCode
+            `;
+
+            const payoutResult = await pool.request().query(payoutQuery);
             
-            // Verify the calculation
-            const calculatedBalance = rebateAmount - paidAmount;
-            if (Math.abs(rebateBalance - calculatedBalance) > 0.01) {
-              console.log(`⚠️ Balance mismatch for ${key}: DB=${rebateBalance}, Calculated=${calculatedBalance}`);
-            }
+            console.log(`✓ Found ${payoutResult.recordset.length} payout records in database`);
             
-            payoutDataMap.set(key, {
-              rebateAmount: rebateAmount,
-              paidAmount: paidAmount,
-              rebateBalance: rebateBalance,
-              transactionCount: row.TransactionCount || 0,
-              fromDatabase: true
+            payoutResult.recordset.forEach(row => {
+              if (row.CardCode) {
+                const key = `${row.CardCode}_${row.RebateCode}`;
+                
+                const rebateAmount = parseFloat(row.TotalAmount) || 0;
+                const paidAmount = parseFloat(row.TotalReleased) || 0;
+                const rebateBalance = parseFloat(row.TotalBalance) || 0;
+                
+                payoutDataMap.set(key, {
+                  rebateAmount: rebateAmount,
+                  paidAmount: paidAmount,
+                  rebateBalance: rebateBalance,
+                  transactionCount: row.TransactionCount || 0,
+                  fromDatabase: true
+                });
+              }
             });
           }
-        });
+        } else {
+          console.log(`⚠️ PayoutHistory table exists but missing required columns`);
+        }
+        
+      } catch (payoutError) {
+        console.error('❌ Error fetching payout data:', payoutError.message);
       }
-    } else {
-      console.log(`⚠️ PayoutHistory table exists but missing required columns`);
     }
-    
-  } catch (payoutError) {
-    console.error('❌ Error fetching payout data:', payoutError.message);
-  }
-}
 
-    // Convert to array and calculate progress/status
     const customerPromises = Array.from(customerMap.values()).map(async (customer) => {
       const itemsArray = Array.from(customer.items);
       const itemCodesArray = Array.from(customer.itemCodes);
       
-      // Calculate progress based on rebate type
       let progress = 0;
       let totalAchieved = 0;
       let quotaStatus = "Starting";
@@ -3740,7 +3825,6 @@ if (hasPayoutHistory) {
       let totalQuota = 0;
 
       try {
-        // Fetch transactions to calculate progress
         console.log(`Fetching transactions for ${customer.code} (${customer.rebateCode})...`);
         const transResponse = await fetch(
           `http://192.168.100.193:3009/api/dashboard/customer/${customer.code}/transactions?` +
@@ -3751,7 +3835,6 @@ if (hasPayoutHistory) {
         if (transResponse.ok) {
           const transData = await transResponse.json();
           if (transData.success && transData.data.transactions) {
-            // Sum all QtyForReb values
             totalAchieved = transData.data.transactions.reduce((sum, t) => {
               return sum + (t.QtyForReb || t.ActualSales || 0);
             }, 0);
@@ -3761,17 +3844,11 @@ if (hasPayoutHistory) {
         console.log(`⚠️ Could not get transaction data for ${customer.code}:`, transError.message);
       }
 
-      // Set progress to total achieved
       progress = totalAchieved;
 
-      // Calculate status based on rebate type
       if (customer.rebateType === 'Fixed' || customer.rebateType === 'Percentage') {
         totalQuota = Array.from(customer.quotas.values()).reduce((sum, quota) => sum + quota, 0);
         
-        // Calculate progress percentage
-        const progressPercentage = totalQuota > 0 ? (totalAchieved / totalQuota) * 100 : 0;
-        
-        // Set status based on total achieved
         if (totalAchieved >= totalQuota) {
           quotaStatus = "Met Quota";
           rebateStatus = "Eligible";
@@ -3787,7 +3864,6 @@ if (hasPayoutHistory) {
         }
         
       } else if (customer.rebateType === 'Incremental') {
-        // Check if in any range based on TOTAL achieved
         if (customer.ranges && customer.ranges.length > 0) {
           const sortedRanges = [...customer.ranges].sort((a, b) => a.minQty - b.minQty);
           
@@ -3801,7 +3877,6 @@ if (hasPayoutHistory) {
             }
           }
           
-          // If not in any range but has achievements
           if (!currentRange && totalAchieved > 0) {
             quotaStatus = "Progressing";
             rebateStatus = "Pending";
@@ -3809,7 +3884,6 @@ if (hasPayoutHistory) {
         }
       }
 
-      // GET PAYOUT DATA FROM DATABASE
       const customerKey = `${customer.code}_${customer.rebateCode}`;
       let rebateAmount = 0;
       let paidAmount = 0;
@@ -3817,7 +3891,6 @@ if (hasPayoutHistory) {
       let fromDatabase = false;
       let transactionCount = 0;
       
-      // Get payout data from database if available
       if (payoutDataMap.has(customerKey)) {
         const payoutData = payoutDataMap.get(customerKey);
         rebateAmount = payoutData.rebateAmount;
@@ -3825,14 +3898,8 @@ if (hasPayoutHistory) {
         rebateBalance = payoutData.rebateBalance;
         transactionCount = payoutData.transactionCount;
         fromDatabase = payoutData.fromDatabase;
-        
-        console.log(`Database payout for ${customer.code}: Amount=${rebateAmount}, Paid=${paidAmount}`);
       }
-      
-      // If no database data, keep amounts at 0 (will show 0 in frontend)
-      // We DON'T calculate amounts anymore - only use database values
 
-      // Generate color for UI
       const hash = customer.code ? customer.code.split('').reduce((acc, char) => {
         return char.charCodeAt(0) + ((acc << 5) - acc);
       }, 0) : 0;
@@ -3849,13 +3916,11 @@ if (hasPayoutHistory) {
         dateTo: customer.dateTo ? new Date(customer.dateTo).toISOString().split('T')[0] : '',
         frequency: customer.frequency || 'Quarterly',
         isActive: customer.isActive,
-        // PROGRESS CALCULATIONS (restored)
         progress: Math.round(progress),
         totalAchieved: totalAchieved,
         quotaStatus: quotaStatus,
         rebateStatus: rebateStatus,
         enrollment: customer.dateFrom ? new Date(customer.dateFrom).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        // ADDED: Include createdDate for frontend sorting
         createdDate: customer.createdDate ? new Date(customer.createdDate).toISOString() : new Date(customer.dateFrom).toISOString(),
         createdAt: customer.createdDate ? new Date(customer.createdDate).toISOString() : new Date(customer.dateFrom).toISOString(),
         color: color,
@@ -3868,32 +3933,26 @@ if (hasPayoutHistory) {
         ranges: customer.ranges || [],
         itemRanges: customer.itemRanges || [],
         currentRange: currentRange?.rangeNo || null,
-        // PAYOUT DATA - FROM DATABASE ONLY (unchanged)
         rebateAmount: parseFloat(rebateAmount.toFixed(2)),
         paidAmount: parseFloat(paidAmount.toFixed(2)),
         rebateBalance: parseFloat(rebateBalance.toFixed(2)),
         transactionCount: transactionCount,
         fromDatabase: fromDatabase,
-        // Progress percentage for display
         progressPercentage: totalQuota > 0 ? Math.min((totalAchieved / totalQuota) * 100, 100) : 0
       };
     });
 
-    // Wait for all promises to resolve
     console.log('Processing all customer data...');
     const summaryData = await Promise.all(customerPromises);
 
-    // Sort by created date (newest first) instead of enrollment date
     summaryData.sort((a, b) => {
-      // Use createdDate first, fall back to enrollment date, then current date
       const dateA = new Date(a.createdDate || a.createdAt || a.enrollment || new Date());
       const dateB = new Date(b.createdDate || b.createdAt || b.enrollment || new Date());
-      return dateB - dateA; // Newest first
+      return dateB - dateA;
     });
 
     const uniqueAgents = [...new Set(summaryData.map(item => item.agent))].filter(agent => agent && agent !== 'N/A');
 
-    // Calculate statistics
     const statistics = {
       totalCustomers: summaryData.length,
       fixedCustomers: summaryData.filter(item => item.rebateType === 'Fixed').length,
@@ -3921,7 +3980,6 @@ if (hasPayoutHistory) {
           payoutTableExists: hasPayoutHistory,
           dataSource: hasPayoutHistory ? 'PayoutHistory Table + Progress Calculation' : 'Progress Calculation Only',
           note: 'Payout amounts from database, progress/status calculated from transactions',
-          // ADDED: Inform frontend that sorting is by createdDate
           sorting: 'Sorted by created date (newest first)'
         }
       }
@@ -3938,17 +3996,13 @@ if (hasPayoutHistory) {
   }
 });
 
-// Add this endpoint to get incremental items for a rebate
-router.get('/rebate/:rebateCode/items', async (req, res) => {
-  let pool;
+// ── Bulk backfill: populate PayoutHistory for every enrolled customer ──────
+router.post('/rebates-sync-all', async (req, res) => {
   try {
-    const { rebateCode } = req.params;
-    const { db } = req.query;
-    
+    const { db, concurrency } = req.query;
     const databaseToUse = db || 'NEXCHEM';
+    const pool = await getPoolWithFallback(databaseToUse);
 
-    pool = await getPoolWithFallback(databaseToUse);
-    
     if (!pool) {
       return res.status(500).json({
         success: false,
@@ -3956,75 +4010,172 @@ router.get('/rebate/:rebateCode/items', async (req, res) => {
       });
     }
 
-    const query = `
-      SELECT 
-        T0.ItemCode,
-        T0.ItemName,
-        T0.UnitPerQty,
-        T1.RangeNo,
-        T1.MinQty,
-        T1.MaxQty,
-        T1.RebatePerBag
-      FROM IncItemRebate T0
-      LEFT JOIN IncItemRange T1 ON T0.Id = T1.ItemRebateId
-      WHERE T0.RebateCode = @rebateCode
-      ORDER BY T0.ItemCode, T1.RangeNo
-    `;
+    const allResult = await pool.request().query(`
+      SELECT DISTINCT CardCode, RebateCode, 'Fixed' as RebateType FROM FixCustRebate
+      UNION ALL
+      SELECT DISTINCT CardCode, RebateCode, 'Incremental' FROM IncCustRebate
+      UNION ALL
+      SELECT DISTINCT CardCode, RebateCode, 'Percentage' FROM PerCustRebate
+    `);
 
-    const result = await pool.request()
-      .input('rebateCode', sql.NVarChar(50), rebateCode)
-      .query(query);
+    const pairs = allResult.recordset.filter(p => p.CardCode && p.RebateCode);
+    console.log(`🔄 [SYNC-ALL] Starting sync for ${pairs.length} customer-rebate pairs...`);
 
-    // Group items with their ranges
-    const itemMap = new Map();
-    result.recordset.forEach(row => {
-      if (!itemMap.has(row.ItemCode)) {
-        itemMap.set(row.ItemCode, {
-          itemCode: row.ItemCode,
-          itemName: row.ItemName,
-          unitPerQty: row.UnitPerQty || 1,
-          ranges: []
-        });
+    const CONCURRENCY = Math.max(1, Math.min(10, parseInt(concurrency) || 5));
+    let done = 0;
+    let failed = 0;
+    const failures = [];
+
+    const worker = async (queue) => {
+      while (queue.length) {
+        const pair = queue.pop();
+        try {
+          const url =
+            `http://localhost:3009/api/nexchem/payouts/customer/${encodeURIComponent(pair.CardCode)}/payouts` +
+            `?db=${databaseToUse}&rebateCode=${encodeURIComponent(pair.RebateCode)}` +
+            `&rebateType=${encodeURIComponent(pair.RebateType)}&useRebatePeriod=true`;
+
+          const response = await fetch(url);
+          if (!response.ok) {
+            failed++;
+            failures.push({ ...pair, status: response.status });
+          }
+        } catch (e) {
+          failed++;
+          failures.push({ ...pair, error: e.message });
+          console.error(`❌ [SYNC-ALL] Failed for ${pair.CardCode}/${pair.RebateCode}:`, e.message);
+        }
+        done++;
+        if (done % 50 === 0 || done === pairs.length) {
+          console.log(`   [SYNC-ALL] ...${done}/${pairs.length} (${failed} failed)`);
+        }
       }
-      
-      if (row.RangeNo) {
-        itemMap.get(row.ItemCode).ranges.push({
-          rangeNo: row.RangeNo,
-          minQty: row.MinQty || 0,
-          maxQty: row.MaxQty || 0,
-          rebatePerBag: row.RebatePerBag || 0
-        });
-      }
-    });
+    };
+
+    const queue = [...pairs];
+    await Promise.all(Array.from({ length: CONCURRENCY }, () => worker(queue)));
+
+    console.log(`✅ [SYNC-ALL] Done. ${done - failed}/${pairs.length} succeeded, ${failed} failed.`);
 
     res.json({
       success: true,
-      data: {
-        rebateCode: rebateCode,
-        items: Array.from(itemMap.values())
-      }
+      message: `Synced ${done - failed}/${pairs.length} customer-rebate pairs`,
+      totalPairs: pairs.length,
+      succeeded: done - failed,
+      failed,
+      failures: failures.slice(0, 50)
     });
 
   } catch (error) {
-    console.error('❌ Error fetching incremental items:', error);
+    console.error('❌ [SYNC-ALL] Error:', error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching incremental items',
+      message: 'Bulk sync failed',
       error: error.message
     });
   }
 });
 
-// Get dashboard metrics - UPDATED with correct SQL queries
+// ── Check sync coverage ────
+router.get('/rebates-sync-status', async (req, res) => {
+  try {
+    const { db } = req.query;
+    const databaseToUse = db || 'NEXCHEM';
+    const pool = await getPoolWithFallback(databaseToUse);
+
+    if (!pool) {
+      return res.status(500).json({ success: false, message: 'Pool unavailable' });
+    }
+
+    const totalResult = await pool.request().query(`
+      SELECT COUNT(*) as total FROM (
+        SELECT CardCode, RebateCode FROM FixCustRebate
+        UNION
+        SELECT CardCode, RebateCode FROM IncCustRebate
+        UNION
+        SELECT CardCode, RebateCode FROM PerCustRebate
+      ) AS all_pairs
+    `);
+
+    const syncedResult = await pool.request().query(`
+      SELECT COUNT(DISTINCT CardCode + '_' + RebateCode) as synced
+      FROM PayoutHistory
+      WHERE PayoutId NOT LIKE 'SAP-%'
+        AND Period NOT LIKE 'Balance of %'
+    `);
+
+    const total = totalResult.recordset[0]?.total || 0;
+    const synced = syncedResult.recordset[0]?.synced || 0;
+
+    res.json({
+      success: true,
+      data: {
+        totalEnrolledPairs: total,
+        syncedPairs: synced,
+        unsyncedPairs: total - synced,
+        coveragePercent: total > 0 ? parseFloat(((synced / total) * 100).toFixed(1)) : 0
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ [SYNC-STATUS] Error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.get('/rebate/:rebateCode/items', async (req, res) => {
+  let pool;
+  try {
+    const { rebateCode } = req.params;
+    const { db, page, pageSize } = req.query;
+    const databaseToUse = db || 'NEXCHEM';
+
+    pool = await getPoolWithFallback(databaseToUse);
+    if (!pool) {
+      return res.status(500).json({ success: false, message: `Database pool for ${databaseToUse} not available` });
+    }
+
+    const typeRes = await pool.request()
+      .input('rebateCode', sql.NVarChar(50), rebateCode)
+      .query('SELECT RebateType FROM RebateProgram WHERE RebateCode = @rebateCode');
+    if (typeRes.recordset.length === 0) {
+      return res.status(404).json({ success: false, message: `Rebate ${rebateCode} not found` });
+    }
+    const rebateType = typeRes.recordset[0].RebateType;
+    const { page: p, pageSize: s, offset } = clampPaging(page, pageSize);
+
+    let result;
+    if (rebateType === 'Fixed') result = await getPaginatedItemsFixed(pool, rebateCode, offset, s);
+    else if (rebateType === 'Incremental') result = await getPaginatedItemsIncremental(pool, rebateCode, offset, s);
+    else if (rebateType === 'Percentage') result = await getPaginatedItemsPercentage(pool, rebateCode, offset, s);
+    else return res.status(400).json({ success: false, message: `Unknown rebate type: ${rebateType}` });
+
+    res.json({
+      success: true,
+      data: {
+        items: result.items,
+        page: p,
+        pageSize: s,
+        total: result.total,
+        hasMore: offset + result.items.length < result.total
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error fetching paginated items:', error);
+    res.status(500).json({ success: false, message: 'Error fetching items', error: error.message });
+  }
+});
+
+// Get dashboard metrics
 router.get('/metrics', async (req, res) => {
   let pool;
   try {
     const { db } = req.query;
-    
+
     const databaseToUse = db || 'NEXCHEM';
-    
+
     pool = await getPoolWithFallback(databaseToUse);
-    
+
     if (!pool) {
       return res.status(500).json({
         success: false,
@@ -4034,54 +4185,71 @@ router.get('/metrics', async (req, res) => {
 
     console.log(`📊 Fetching dashboard metrics from ${databaseToUse} database...`);
 
-    // First, check if PayoutHistory table exists
     const tableCheckQuery = `
       SELECT COUNT(*) as tableCount
       FROM INFORMATION_SCHEMA.TABLES 
       WHERE TABLE_NAME = 'PayoutHistory' AND TABLE_SCHEMA = 'dbo'
     `;
 
-    let totalRebatePaid = 0;
-    let totalUnpaidRebate = 0;
-    
+    let totalRebatePaid     = 0;
+    let totalUnpaidRebate   = 0;
+    let totalOutstanding    = 0;
+    let totalOverReleased   = 0;
+    let totalNetBalance     = 0;
+
     try {
       const tableCheckResult = await pool.request().query(tableCheckQuery);
-      
+
       if (tableCheckResult.recordset[0]?.tableCount > 0) {
         console.log('PayoutHistory table exists, fetching metrics...');
-        
-        // Table exists, get data using YOUR SQL queries
+
         const totalRebatePaidQuery = `
           SELECT 
-            SUM(ISNULL(AmountReleased, 0)) AS [Total Rebate Paid]
+            SUM(ISNULL(AmountReleased, 0))                        AS [Total Rebate Paid],
+            SUM(ISNULL(BaseAmount, 0) - ISNULL(AmountReleased, 0)) AS [Total Unpaid Rebate]
           FROM PayoutHistory
         `;
 
-        const totalUnpaidRebateQuery = `
-          SELECT SUM(ISNULL(RebateBalance, 0)) AS [Total Unpaid Rebate]
-          FROM PayoutHistory p1
-          WHERE CreatedDate = (
-              SELECT MAX(CreatedDate)
-              FROM PayoutHistory p2
-              WHERE p2.CardCode = p1.CardCode
-          )
-          AND CardCode IS NOT NULL
+        const balanceBreakdownQuery = `
+          SELECT
+            SUM(CASE WHEN CustomerBalance > 0 THEN CustomerBalance ELSE 0 END)  AS [Total Outstanding],
+            SUM(CASE WHEN CustomerBalance < 0 THEN CustomerBalance ELSE 0 END)  AS [Total OverReleased],
+            SUM(CustomerBalance)                                                AS [Total Net Balance]
+          FROM (
+            SELECT
+              p1.CardCode,
+              ISNULL(p1.RebateBalance, 0) AS CustomerBalance
+            FROM PayoutHistory p1
+            WHERE p1.CreatedDate = (
+                SELECT MAX(p2.CreatedDate)
+                FROM PayoutHistory p2
+                WHERE p2.CardCode = p1.CardCode
+            )
+            AND p1.CardCode IS NOT NULL
+          ) AS CustomerBalances
         `;
 
-        console.log('🔍 Executing SQL for Total Rebate Paid...');
+        console.log('🔍 Executing SQL for Total Rebate Paid / Unpaid...');
         const paidResult = await pool.request().query(totalRebatePaidQuery);
-        
-        console.log('🔍 Executing SQL for Total Unpaid Rebate...');
-        const unpaidResult = await pool.request().query(totalUnpaidRebateQuery);
 
-        totalRebatePaid = paidResult.recordset[0]?.['Total Rebate Paid'] || 0;
-        totalUnpaidRebate = unpaidResult.recordset[0]?.['Total Unpaid Rebate'] || 0;
+        console.log('🔍 Executing SQL for Balance breakdown...');
+        const balanceResult = await pool.request().query(balanceBreakdownQuery);
+
+        totalRebatePaid   = Number(paidResult.recordset[0]?.['Total Rebate Paid'])   || 0;
+        totalUnpaidRebate = Number(paidResult.recordset[0]?.['Total Unpaid Rebate']) || 0;
+
+        totalOutstanding  = Number(balanceResult.recordset[0]?.['Total Outstanding'])  || 0;
+        totalOverReleased = Number(balanceResult.recordset[0]?.['Total OverReleased']) || 0;
+        totalNetBalance   = Number(balanceResult.recordset[0]?.['Total Net Balance'])  || 0;
 
         console.log('📊 PayoutHistory results:', {
           totalRebatePaid,
           totalUnpaidRebate,
-          paidResultColumns: paidResult.recordset[0] ? Object.keys(paidResult.recordset[0]) : [],
-          unpaidResultColumns: unpaidResult.recordset[0] ? Object.keys(unpaidResult.recordset[0]) : []
+          totalOutstanding,
+          totalOverReleased,
+          totalNetBalance,
+          paidColumns:    paidResult.recordset[0]    ? Object.keys(paidResult.recordset[0])    : [],
+          balanceColumns: balanceResult.recordset[0] ? Object.keys(balanceResult.recordset[0]) : [],
         });
       } else {
         console.log('⚠️ PayoutHistory table does not exist, using defaults');
@@ -4090,7 +4258,6 @@ router.get('/metrics', async (req, res) => {
       console.log('❌ PayoutHistory table check/query failed:', tableError.message);
     }
 
-    // Get active customers count - FIXED QUERY
     let activeCustomers = 0;
     try {
       console.log('🔍 Fetching active customers count...');
@@ -4112,14 +4279,13 @@ router.get('/metrics', async (req, res) => {
       console.log('Active customers query failed:', activeError.message);
     }
 
-    // Get new customers this month
     let newCustomersThisMonth = 0;
     try {
       console.log('🔍 Fetching new customers this month...');
       const currentDate = new Date();
       const currentMonth = currentDate.getMonth() + 1;
       const currentYear = currentDate.getFullYear();
-      
+
       const newCustomersQuery = `
         SELECT COUNT(DISTINCT CardCode) as newCustomersThisMonth
         FROM (
@@ -4137,25 +4303,29 @@ router.get('/metrics', async (req, res) => {
         .input('currentMonth', sql.Int, currentMonth)
         .input('currentYear', sql.Int, currentYear)
         .query(newCustomersQuery);
-      
+
       newCustomersThisMonth = newResult.recordset[0]?.newCustomersThisMonth || 0;
       console.log(`New customers this month: ${newCustomersThisMonth}`);
     } catch (newError) {
       console.log('New customers query failed:', newError.message);
     }
 
-    // Format currency values
-    const formatCurrency = (amount) => {
-      return parseFloat(amount).toFixed(2);
-    };
+    const EPS = 0.005;
+    const snap = (n) => (Math.abs(n) < EPS ? 0 : n);
 
     const formattedMetrics = {
-      totalRebatePaid: totalRebatePaid,
-      totalUnpaidRebate: totalUnpaidRebate,
-      activeCustomers: activeCustomers,
-      newCustomersThisMonth: newCustomersThisMonth,
-      totalRebatePaidValue: parseFloat(totalRebatePaid),
-      totalUnpaidRebateValue: parseFloat(totalUnpaidRebate)
+      totalRebatePaid:          snap(totalRebatePaid),
+      totalUnpaidRebate:        snap(totalUnpaidRebate),
+      totalOutstandingRebate:   snap(totalOutstanding),
+      totalOverReleasedRebate:  snap(totalOverReleased),
+      totalNetBalance:          snap(totalNetBalance),
+      activeCustomers,
+      newCustomersThisMonth,
+      totalRebatePaidValue:         parseFloat(snap(totalRebatePaid).toFixed(2)),
+      totalUnpaidRebateValue:       parseFloat(snap(totalUnpaidRebate).toFixed(2)),
+      totalOutstandingRebateValue:  parseFloat(snap(totalOutstanding).toFixed(2)),
+      totalOverReleasedRebateValue: parseFloat(snap(totalOverReleased).toFixed(2)),
+      totalNetBalanceValue:         parseFloat(snap(totalNetBalance).toFixed(2)),
     };
 
     console.log('📊 Final dashboard metrics:', formattedMetrics);
@@ -4175,7 +4345,10 @@ router.get('/metrics', async (req, res) => {
   }
 });
 
-// In backend.js, update or create a new endpoint for daily transactions
+
+/* ══════════════════════════════════════════════════════════════════
+   DAILY TRANSACTIONS — with customer-specific date range fallback
+   ══════════════════════════════════════════════════════════════════ */
 router.get('/customer/:customerCode/daily-transactions', async (req, res) => {
   try {
     const { customerCode } = req.params;
@@ -4191,32 +4364,29 @@ router.get('/customer/:customerCode/daily-transactions', async (req, res) => {
       });
     }
 
-    // Get rebate program period and frequency
-    const rebatePeriodQuery = `
-      SELECT DateFrom, DateTo, Frequency
-      FROM RebateProgram
-      WHERE RebateCode = @rebateCode
-    `;
+    // ── Resolve rebate period (with customer table fallback) ──
+    const { rebateDateFrom, rebateDateTo, frequency } = await resolveRebateDateRange(
+      customerCode, rebateCode, rebateType, ownPool
+    );
 
-    const rebatePeriodResult = await ownPool.request()
-      .input('rebateCode', sql.NVarChar(50), rebateCode)
-      .query(rebatePeriodQuery);
-
-    let startDate, endDate, frequency = 'Quarterly';
-    
-    if (rebatePeriodResult.recordset.length > 0) {
-      const rebateInfo = rebatePeriodResult.recordset[0];
-      startDate = rebateInfo.DateFrom ? 
-        new Date(rebateInfo.DateFrom).toISOString().split('T')[0] : '';
-      endDate = rebateInfo.DateTo ? 
-        new Date(rebateInfo.DateTo).toISOString().split('T')[0] : '';
-      frequency = rebateInfo.Frequency || 'Quarterly';
+    let startDate, endDate;
+    if (rebateDateFrom && rebateDateTo) {
+      startDate = rebateDateFrom;
+      endDate   = rebateDateTo;
+    } else if (rebateDateFrom) {
+      startDate = rebateDateFrom;
+      endDate   = new Date().toISOString().split('T')[0];
+    } else if (rebateDateTo) {
+      startDate = `${new Date(rebateDateTo).getFullYear()}-01-01`;
+      endDate   = rebateDateTo;
     } else {
-      // Fallback to current quarter/month
       const today = new Date();
       startDate = `${today.getFullYear()}-01-01`;
       endDate = today.toISOString().split('T')[0];
     }
+
+    if (rebateDateFrom && startDate < rebateDateFrom) startDate = rebateDateFrom;
+    if (rebateDateTo   && endDate   > rebateDateTo)   endDate   = rebateDateTo;
 
     // Get rebate items for this customer
     let itemQuery = '';
@@ -4246,7 +4416,6 @@ router.get('/customer/:customerCode/daily-transactions', async (req, res) => {
 
     const itemCodes = itemResult.recordset.map(row => row.ItemCode);
     
-    // Get SAP transactions
     const sapPool = getDatabasePool('NEXCHEM');
     if (!sapPool) {
       return res.status(500).json({
@@ -4316,7 +4485,6 @@ router.get('/customer/:customerCode/daily-transactions', async (req, res) => {
 
     const sapResult = await request.query(sapQuery);
     
-    // Process daily transactions
     const dailyTransactions = sapResult.recordset.map(transaction => {
       const date = new Date(transaction.Date);
       
@@ -4336,7 +4504,6 @@ router.get('/customer/:customerCode/daily-transactions', async (req, res) => {
       };
     });
 
-    // Calculate cumulative sales
     let cumulativeSales = 0;
     const dailyDataWithCumulative = dailyTransactions.map(transaction => {
       cumulativeSales += transaction.actualSales;
@@ -4346,7 +4513,6 @@ router.get('/customer/:customerCode/daily-transactions', async (req, res) => {
       };
     });
 
-    // Group by month for summary
     const monthlySummary = {};
     dailyTransactions.forEach(transaction => {
       const monthKey = transaction.monthYear;
@@ -4363,7 +4529,6 @@ router.get('/customer/:customerCode/daily-transactions', async (req, res) => {
       monthlySummary[monthKey].daysWithSales++;
     });
 
-    // Calculate averages
     Object.keys(monthlySummary).forEach(monthKey => {
       const month = monthlySummary[monthKey];
       month.dailyAverage = month.daysWithSales > 0 ? month.totalSales / month.daysWithSales : 0;
@@ -4427,14 +4592,14 @@ router.get('/customer/:customerCode/details', async (req, res) => {
       });
     }
 
-    // Get customer basic info WITH FREQUENCY
     const customerQuery = `
       SELECT 
         CustomerInfo.code,
         CustomerInfo.name,
         CustomerInfo.status,
         CustomerInfo.enrollmentDate,
-        RP.Frequency  -- ADD THIS LINE to get frequency
+        RP.Frequency,
+        RP.QuotaType
       FROM (
         SELECT 
           CardCode as code,
@@ -4476,13 +4641,12 @@ router.get('/customer/:customerCode/details', async (req, res) => {
 
     const customerInfo = customerResult.recordset[0];
     console.log('📊 Customer info with frequency:', {
-  code: customerInfo.code,
-  name: customerInfo.name,
-  frequency: customerInfo.Frequency,
-  rebateType: customerInfo.RebateType
-});
+      code: customerInfo.code,
+      name: customerInfo.name,
+      frequency: customerInfo.Frequency,
+      rebateType: customerInfo.RebateType
+    });
 
-    // Get rebate programs for this customer WITH FREQUENCY
     const rebatesQuery = `
       SELECT DISTINCT
         T0.RebateCode,
@@ -4491,7 +4655,7 @@ router.get('/customer/:customerCode/details', async (req, res) => {
         T0.DateFrom,
         T0.DateTo,
         T0.IsActive,
-        T0.Frequency  -- ADD THIS LINE
+        T0.Frequency
       FROM RebateProgram T0
       LEFT JOIN FixCustRebate T1 ON T0.RebateCode = T1.RebateCode
       LEFT JOIN IncCustRebate T2 ON T0.RebateCode = T2.RebateCode
@@ -4505,14 +4669,12 @@ router.get('/customer/:customerCode/details', async (req, res) => {
 
     const rebates = rebatesResult.recordset;
 
-    // If customer has rebates, get the first one for detailed data
     let detailedData = {};
     let dateRangeInfo = {};
     
     if (rebates.length > 0) {
       const primaryRebate = rebates[0];
       
-      // Get quota summary data
       const quotaSummaryResponse = await fetch(
         `http://${req.headers.host}/api/dashboard/customer/${customerCode}/quota-summary?` +
         `db=${databaseToUse}&rebateCode=${primaryRebate.RebateCode}&rebateType=${primaryRebate.RebateType}&` +
@@ -4533,7 +4695,6 @@ router.get('/customer/:customerCode/details', async (req, res) => {
         }
       }
 
-      // Get transaction data
       const transResponse = await fetch(
         `http://${req.headers.host}/api/dashboard/customer/${customerCode}/transactions?` +
         `db=${databaseToUse}&rebateCode=${primaryRebate.RebateCode}&rebateType=${primaryRebate.RebateType}&` +
@@ -4548,7 +4709,6 @@ router.get('/customer/:customerCode/details', async (req, res) => {
         }
       }
 
-      // Get payout data
       const payoutResponse = await fetch(
         `http://${req.headers.host}/api/dashboard/customer/${customerCode}/payouts?` +
         `db=${databaseToUse}&rebateCode=${primaryRebate.RebateCode}&rebateType=${primaryRebate.RebateType}&` +
@@ -4573,6 +4733,7 @@ router.get('/customer/:customerCode/details', async (req, res) => {
         rebateType: rebates.length > 0 ? rebates[0].RebateType : 'Not Assigned',
         rebateCode: rebates.length > 0 ? rebates[0].RebateCode : 'Not Assigned',
         frequency: customerInfo.Frequency || (rebates.length > 0 ? rebates[0].Frequency : 'Quarterly'),
+        quotaType: customerInfo.QuotaType || (rebates.length > 0 ? rebates[0].QuotaType : 'N/A'),
         rebateDateFrom: rebates.length > 0 ? (rebates[0].DateFrom ? new Date(rebates[0].DateFrom).toISOString().split('T')[0] : '') : '',
         rebateDateTo: rebates.length > 0 ? (rebates[0].DateTo ? new Date(rebates[0].DateTo).toISOString().split('T')[0] : '') : '',
         dateRange: dateRangeInfo
@@ -4714,7 +4875,6 @@ router.get('/debug/databases', async (req, res) => {
           continue;
         }
         
-        // Test connection with a simple query
         const testQuery = `SELECT DB_NAME() as dbName, @@SERVERNAME as serverName`;
         const testResult = await pool.request().query(testQuery);
         
@@ -4734,24 +4894,20 @@ router.get('/debug/databases', async (req, res) => {
       }
     }
     
-    // Also test SAP data specifically
     const sapTest = {};
     const sapPool = getDatabasePool('NEXCHEM');
     if (sapPool) {
       try {
-        // Check if OINV table exists
         const tableCheck = await sapPool.request()
           .query(`SELECT COUNT(*) as tableCount FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'OINV'`);
         
         sapTest.tableExists = tableCheck.recordset[0]?.tableCount > 0;
         
-        // Get sample data count
         const sampleCount = await sapPool.request()
           .query(`SELECT COUNT(*) as invoiceCount FROM OINV WHERE DocType = 'I'`);
         
         sapTest.invoiceCount = sampleCount.recordset[0]?.invoiceCount || 0;
         
-        // Get a sample customer
         const sampleCustomer = await sapPool.request()
           .query(`SELECT TOP 1 CardCode, CardName FROM OINV WHERE DocType = 'I' ORDER BY DocDate DESC`);
         
@@ -4769,7 +4925,6 @@ router.get('/debug/databases', async (req, res) => {
         sapDatabase: sapTest,
         configCheck: {
           hasNEXCHEMConfig: !!getDatabasePool('NEXCHEM'),
-          //hasNEXCHEMConfig: !!getDatabasePool('NEXCHEM'),
           currentTime: new Date().toISOString()
         }
       }
@@ -4785,14 +4940,9 @@ router.get('/debug/databases', async (req, res) => {
   }
 });
 
-// ARCM adjustment - subtracts returns directly without adding return entries
-// Handles both:
-//   (a) SAP "Copy From Invoice" linked credit memos (BaseRef + BaseType = 13)
-//   (b) Standalone credit memos where the invoice DocNum is manually entered
-//       into the U_Ar_Inv_No UDF instead of being linked via Copy From
+// ARCM adjustment
 const adjustForARCM = async (sapPool, customerCode, originalTransactions, startDate, endDate) => {
   try {
-    // Create a map of original transactions by invoice number and item for quick lookup
     const originalMap = new Map();
     originalTransactions.forEach(trans => {
       if (trans.InvoiceNumber) {
@@ -4801,17 +4951,10 @@ const adjustForARCM = async (sapPool, customerCode, originalTransactions, startD
       }
     });
 
-    // Extend the window forward so credit memos posted after the viewed
-    // period closes are still caught (same fix as fetchSAPJournalEntries
-    // in payoutRoutes.js).
     const today = new Date();
     const periodEnd = new Date(endDate);
     const effectiveEndDate = today > periodEnd ? today : periodEnd;
 
-    // Query to find ARCM documents that reference original invoices,
-    // via either BaseRef (linked) or U_Ar_Inv_No (standalone UDF match).
-    // NOTE: SAP stores "no link" as BaseRef = 0 / BaseType = -1, NOT NULL —
-    // so we must exclude 0 explicitly, not just check IS NOT NULL.
     const arcmQuery = `
       SELECT
         T0.DocNum as CreditMemoNumber,
@@ -4828,7 +4971,7 @@ const adjustForARCM = async (sapPool, customerCode, originalTransactions, startD
           ELSE 'Standalone (UDF)'
         END as MatchSource
       FROM
-        ORIN T0  -- Returns/Credit Memos
+        ORIN T0
       WHERE
         T0.CardCode = @customerCode
         AND T0.DocDate >= @startDate
@@ -4846,7 +4989,7 @@ const adjustForARCM = async (sapPool, customerCode, originalTransactions, startD
       .query(arcmQuery);
 
     if (arcmResult.recordset.length === 0) {
-      return originalTransactions; // No ARCM documents found
+      return originalTransactions;
     }
 
     console.log(`📝 Found ${arcmResult.recordset.length} ARCM documents for customer ${customerCode}`);
@@ -4854,7 +4997,6 @@ const adjustForARCM = async (sapPool, customerCode, originalTransactions, startD
       console.log(`   CM ${r.CreditMemoNumber} → Invoice ${r.OriginalDocNum} (${r.MatchSource}), Item ${r.ItemCode}, Qty ${r.ReturnQuantity}`)
     );
 
-    // Create a map of adjustments keyed by original document number and item
     const adjustments = new Map();
 
     arcmResult.recordset.forEach(arcm => {
@@ -4875,20 +5017,17 @@ const adjustForARCM = async (sapPool, customerCode, originalTransactions, startD
     });
     console.log(`📊 Applying adjustments to ${adjustments.size} original invoice items`);
 
-    // Create adjusted transactions - directly subtract returns from originals
     const adjustedTransactions = originalTransactions.map(trans => {
       const key = `${trans.InvoiceNumber}_${trans.ItemCode}`;
       const adjustment = adjustments.get(key);
 
       if (adjustment && adjustment.totalReturnQty > 0) {
-        // This transaction has returns, subtract the return quantity
         const originalQty = trans.ActualSales || 0;
         const adjustedQty = Math.max(0, originalQty - adjustment.totalReturnQty);
 
         console.log(`✏️ Adjusting: Invoice ${trans.InvoiceNumber}, Item ${trans.ItemCode}`);
         console.log(`   Original: ${originalQty}, Returns: ${adjustment.totalReturnQty}, Final: ${adjustedQty}`);
 
-        // Return adjusted transaction - NO separate return entry
         return {
           ...trans,
           ActualSales: adjustedQty,
@@ -4901,7 +5040,6 @@ const adjustForARCM = async (sapPool, customerCode, originalTransactions, startD
         };
       }
 
-      // No adjustment needed
       return trans;
     });
     console.log(`✅ ARCM adjustment complete: ${adjustments.size} items adjusted`);
@@ -4909,7 +5047,7 @@ const adjustForARCM = async (sapPool, customerCode, originalTransactions, startD
     return adjustedTransactions;
   } catch (error) {
     console.error('❌ Error adjusting for ARCM documents:', error);
-    return originalTransactions; // Return original transactions if adjustment fails
+    return originalTransactions;
   }
 };
 

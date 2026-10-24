@@ -1,12 +1,12 @@
 // AuthPage.js — Split-card · Image left panel · Clean right form
-// Fully converted to Tailwind CSS
+// Converted to the Nexchem / VAN / VCP Apple system design language.
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import {
   Eye, EyeOff, Lock, X, KeyRound,
   AlertCircle, CheckCircle, Shield, ShieldCheck, ArrowRight,
-  Sun, Moon, Loader2, User, HelpCircle, LayoutDashboard, Users, BarChart3,
+  Sun, Moon, Loader2, User, LayoutDashboard, Users, BarChart3,
 } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import Rebate from "../assets/Rebate.png";
@@ -14,14 +14,48 @@ import Rebate from "../assets/Rebate.png";
 const API_BASE = "http://192.168.100.193:3009/api";
 const DB_NAME  = "USER";
 
+/* ─── Apple system colour language (Nexchem / VAN / VCP / Settings) ──────── */
+const APPLE = {
+  blue:   "#0A84FF",
+  purple: "#BF5AF2",
+  red:    "#FF453A",
+  orange: "#FF9F0A",
+  green:  "#32D74B",
+  gray:   "#8E8E93",
+};
+
+const dashTokens = (isDark) => ({
+  ink:       isDark ? "#F2F2F7" : "#1C1C1E",
+  muted:     isDark ? "#98989F" : "#6E6E73",
+  faint:     isDark ? "#68686D" : "#AEAEB2",
+  glass:     isDark ? "rgba(30,30,36,0.6)"   : "rgba(255,255,255,0.65)",
+  glassDeep: isDark ? "rgba(24,24,28,0.95)"  : "rgba(255,255,255,0.98)",
+  hairline:  isDark ? "rgba(255,255,255,0.08)" : "rgba(60,60,67,0.12)",
+  rim:       isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.8)",
+  chipBg:    isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
+  hover:     isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
+  shadow:    isDark ? "0 20px 50px -14px rgba(0,0,0,0.65)" : "0 20px 50px -18px rgba(30,41,79,0.18)",
+  bg:        isDark ? "#000000" : "#EEF1F7",
+  panel:     isDark ? "rgba(22,22,28,0.92)"  : "rgba(255,255,255,0.98)",
+});
+
 /* ─── Global styles & keyframes ─────────────────────────────────────────────── */
 const GLOBAL_STYLES = `
-  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Sora:wght@300;400;500;600;700;800&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
+  .auth-page, .auth-page * { font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif; }
   *, *::before, *::after { box-sizing: border-box; }
+  .auth-glass { -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%); }
+  .auth-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
+  .auth-scroll::-webkit-scrollbar-thumb { background: rgba(142,142,147,0.4); border-radius: 999px; }
+  .auth-scroll::-webkit-scrollbar-track { background: transparent; }
+
   @keyframes floatUp    { 0%,100%{transform:translateY(0)}      50%{transform:translateY(-14px)} }
   @keyframes spinSlow   { from{transform:rotate(0deg)}          to{transform:rotate(360deg)} }
   @keyframes pulse2     { 0%,100%{opacity:.5}                   50%{opacity:1} }
   @keyframes slideIn    { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+  @keyframes dash-pop   { from{opacity:0;transform:scale(.97) translateY(6px)} to{opacity:1;transform:scale(1) translateY(0)} }
+  .auth-pop { animation: dash-pop .22s cubic-bezier(0.16,1,0.3,1); }
+
   @keyframes floatBlob  {
     0%,100% { transform: translate(0,0) scale(1); }
     33%     { transform: translate(18px,-22px) scale(1.04); }
@@ -57,56 +91,6 @@ const GLOBAL_STYLES = `
     from { opacity: 0; transform: scale(0.85); }
     to   { opacity: 1; transform: scale(1); }
   }
-  /* ── Tooltip ── */
-  .tooltip-hover {
-    position: relative;
-    display: inline-flex;
-    cursor: pointer;
-  }
-  .tooltip-hover .tooltip-text {
-    visibility: hidden;
-    opacity: 0;
-    width: 260px;
-    background-color: #0f172aee;
-    backdrop-filter: blur(14px);
-    color: #f1f5f9;
-    text-align: left;
-    border-radius: 14px;
-    padding: 12px 14px;
-    position: absolute;
-    z-index: 200;
-    bottom: calc(100% + 10px);
-    right: 0;
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 1.6;
-    transition: opacity 0.2s ease, visibility 0.2s;
-    pointer-events: none;
-    border: 1px solid rgba(255,255,255,0.12);
-    box-shadow: 0 12px 30px -4px rgba(0,0,0,0.35);
-    white-space: normal;
-    font-family: 'DM Sans', sans-serif;
-  }
-  .tooltip-hover:hover .tooltip-text {
-    visibility: visible;
-    opacity: 1;
-  }
-  .tooltip-hover .tooltip-text::after {
-    content: "";
-    position: absolute;
-    top: 100%;
-    right: 10px;
-    border-width: 6px;
-    border-style: solid;
-    border-color: #0f172aee transparent transparent transparent;
-  }
-  @media (max-width: 639px) {
-    .tooltip-hover .tooltip-text {
-      width: 220px;
-      right: -8px;
-      font-size: 11px;
-    }
-  }
 `;
 
 /* ─── Carousel slides ────────────────────────────────────────────────────────── */
@@ -114,19 +98,19 @@ const CAROUSEL_SLIDES = [
   {
     heading:     "Simplify Rebate\nManagement",
     description: "Manage rebate centralized records with flexible configuration and full audit trails.",
-    accent:      "#60a5fa",
+    accent:      APPLE.blue,
     icon:        <LayoutDashboard size={22} strokeWidth={1.7} />,
   },
   {
     heading:     "Track Customers\nEarned Rebates Instantly",
     description: "Monitor customer earned rebates, payout progress, and rebate balances in real time.",
-    accent:      "#a78bfa",
+    accent:      APPLE.purple,
     icon:        <Users size={22} strokeWidth={1.7} />,
   },
   {
     heading:     "View Customers\nReports",
     description: "Access detailed customer rebate reports, summaries, and transaction insights easily.",
-    accent:      "#34d399",
+    accent:      APPLE.green,
     icon:        <BarChart3 size={22} strokeWidth={1.7} />,
   },
 ];
@@ -184,29 +168,29 @@ function BrandPanel({ isDark }) {
 
   return (
     <div className="w-full h-full relative overflow-hidden flex flex-col items-start justify-between p-8"
-      style={{ background: "linear-gradient(160deg, #0a1628 0%, #0d1f3e 30%, #12103a 60%, #0a1628 100%)" }}>
+      style={{ background: "linear-gradient(160deg, #050b18 0%, #0a1730 30%, #0d0a2e 60%, #050b18 100%)" }}>
 
-      {/* Ambient blob 1 */}
+      {/* Ambient blob 1 — Apple blue */}
       <div className="absolute pointer-events-none rounded-full"
         style={{
           top: "10%", left: "5%", width: "70%", height: "65%",
-          background: "radial-gradient(ellipse at 40% 40%, rgba(0,210,190,.55) 0%, rgba(0,150,220,.30) 35%, transparent 70%)",
+          background: "radial-gradient(ellipse at 40% 40%, rgba(10,132,255,.55) 0%, rgba(10,132,255,.22) 35%, transparent 70%)",
           filter: "blur(52px)", animation: "floatBlob 9s ease-in-out infinite",
         }} />
 
-      {/* Ambient blob 2 */}
+      {/* Ambient blob 2 — Apple purple */}
       <div className="absolute pointer-events-none rounded-full"
         style={{
           top: "20%", left: "20%", width: "65%", height: "60%",
-          background: "radial-gradient(ellipse at 55% 55%, rgba(160,60,255,.50) 0%, rgba(100,30,200,.28) 40%, transparent 72%)",
+          background: "radial-gradient(ellipse at 55% 55%, rgba(191,90,242,.50) 0%, rgba(191,90,242,.22) 40%, transparent 72%)",
           filter: "blur(56px)", animation: "floatBlob2 11s ease-in-out infinite",
         }} />
 
-      {/* Ambient blob 3 */}
+      {/* Ambient blob 3 — soft blue glow */}
       <div className="absolute pointer-events-none rounded-full"
         style={{
           top: "30%", left: "-8%", width: "55%", height: "50%",
-          background: "radial-gradient(ellipse at 50% 50%, rgba(0,180,230,.35) 0%, transparent 68%)",
+          background: "radial-gradient(ellipse at 50% 50%, rgba(10,132,255,.35) 0%, transparent 68%)",
           filter: "blur(40px)", animation: "floatBlob 14s ease-in-out infinite reverse",
         }} />
 
@@ -223,8 +207,7 @@ function BrandPanel({ isDark }) {
           style={{ backdropFilter: "blur(8px)" }}>
           <img src={Rebate} alt="Logo" className="w-[50px] h-[50px] object-contain" />
         </div>
-        <span className="text-[13px] font-bold text-white/85 tracking-[0.2px]"
-          style={{ fontFamily: "'Sora', sans-serif" }}>
+        <span className="text-[13px] font-bold text-white/85 tracking-[0.2px]">
           Rebate Management System
         </span>
       </div>
@@ -233,13 +216,13 @@ function BrandPanel({ isDark }) {
       <div className="absolute pointer-events-none z-[2]"
         style={{ top: "8%", left: "50%", transform: "translateX(-50%)", width: "300px", height: "300px" }}>
         <div className="absolute rounded-full"
-          style={{ inset: "-10px", background: "radial-gradient(circle, rgba(0,210,190,.18) 0%, transparent 70%)", filter: "blur(16px)" }} />
+          style={{ inset: "-10px", background: `radial-gradient(circle, ${APPLE.blue}2e 0%, transparent 70%)`, filter: "blur(16px)" }} />
         <div className="absolute rounded-full"
-          style={{ inset: "10px", background: "conic-gradient(from 0deg, rgba(0,210,190,.0) 0deg, rgba(0,210,190,.85) 90deg, rgba(0,180,240,.70) 160deg, rgba(0,210,190,.0) 200deg, rgba(0,210,190,.0) 360deg)", filter: "blur(3px)", animation: "swirl 8s linear infinite", opacity: 0.85 }} />
+          style={{ inset: "10px", background: `conic-gradient(from 0deg, ${APPLE.blue}00 0deg, ${APPLE.blue}d9 90deg, ${APPLE.blue}b3 160deg, ${APPLE.blue}00 200deg, ${APPLE.blue}00 360deg)`, filter: "blur(3px)", animation: "swirl 8s linear infinite", opacity: 0.85 }} />
         <div className="absolute rounded-full"
-          style={{ inset: "28px", background: "conic-gradient(from 120deg, rgba(160,60,255,.0) 0deg, rgba(160,60,255,.80) 80deg, rgba(200,80,255,.60) 150deg, rgba(160,60,255,.0) 200deg, rgba(160,60,255,.0) 360deg)", filter: "blur(3.5px)", animation: "swirlRv 10s linear infinite", opacity: 0.80 }} />
+          style={{ inset: "28px", background: `conic-gradient(from 120deg, ${APPLE.purple}00 0deg, ${APPLE.purple}cc 80deg, ${APPLE.purple}99 150deg, ${APPLE.purple}00 200deg, ${APPLE.purple}00 360deg)`, filter: "blur(3.5px)", animation: "swirlRv 10s linear infinite", opacity: 0.80 }} />
         <div className="absolute rounded-full"
-          style={{ inset: "52px", background: "conic-gradient(from 240deg, rgba(255,80,180,.0) 0deg, rgba(255,80,180,.65) 70deg, rgba(255,120,200,.50) 130deg, rgba(255,80,180,.0) 190deg, rgba(255,80,180,.0) 360deg)", filter: "blur(4px)", animation: "swirl 12s linear infinite", opacity: 0.70 }} />
+          style={{ inset: "52px", background: `conic-gradient(from 240deg, ${APPLE.purple}00 0deg, ${APPLE.purple}a6 70deg, ${APPLE.purple}80 130deg, ${APPLE.purple}00 190deg, ${APPLE.purple}00 360deg)`, filter: "blur(4px)", animation: "swirl 12s linear infinite", opacity: 0.70 }} />
         <div className="absolute rounded-full"
           style={{ inset: "80px", background: "radial-gradient(circle at 38% 38%, rgba(220,240,255,.22) 0%, rgba(120,180,255,.08) 50%, transparent 75%)", backdropFilter: "blur(1px)" }} />
         <div className="absolute rounded-full bg-white/[0.06]"
@@ -248,13 +231,13 @@ function BrandPanel({ isDark }) {
 
       {/* Dark gradient scrim */}
       <div className="absolute bottom-0 left-0 right-0 z-[3] pointer-events-none"
-        style={{ height: "55%", background: "linear-gradient(to bottom, transparent 0%, rgba(8,14,30,.82) 55%, rgba(8,14,30,.97) 100%)" }} />
+        style={{ height: "55%", background: "linear-gradient(to bottom, transparent 0%, rgba(5,10,25,.82) 55%, rgba(5,10,25,.97) 100%)" }} />
 
       {/* Bottom carousel */}
       <div className="relative z-10 w-full">
         <div style={{ minHeight: "108px", animation: textAnimation }}>
           {/* Icon pill */}
-          <div className="inline-flex items-center gap-[7px] rounded-[20px] mb-[10px]"
+          <div className="inline-flex items-center gap-[7px] rounded-[999px] mb-[10px]"
             style={{
               background: "rgba(255,255,255,.07)",
               border: `1px solid ${slide.accent}44`,
@@ -264,7 +247,7 @@ function BrandPanel({ isDark }) {
               {React.cloneElement(slide.icon, { size: 15, strokeWidth: 1.8 })}
             </div>
             <span className="text-[10px] font-semibold tracking-[0.4px] uppercase"
-              style={{ color: slide.accent, fontFamily: "'DM Sans', sans-serif" }}>
+              style={{ color: slide.accent }}>
               {currentSlide === 0 ? "Management" : currentSlide === 1 ? "Tracking" : "Reports"}
             </span>
           </div>
@@ -272,7 +255,6 @@ function BrandPanel({ isDark }) {
           {/* Heading */}
           <h2 className="m-0 mb-2 text-white whitespace-pre-line"
             style={{
-              fontFamily: "'Sora', sans-serif",
               fontSize: "20px", fontWeight: 800, lineHeight: 1.3,
               letterSpacing: "-.3px",
               textShadow: "0 1px 16px rgba(0,0,0,.90), 0 2px 4px rgba(0,0,0,.70)",
@@ -311,9 +293,7 @@ function BrandPanel({ isDark }) {
   );
 }
 
-/* ─── Sign-in loading overlay ────────────────────────────────────────────────
-   Simplified: no checkmark badge, just spinning rings + logo + background + progress bar.
-────────────────────────────────────────────────────────────────────────────── */
+/* ─── Sign-in loading overlay ──────────────────────────────────────────────── */
 function TransitionOverlay({ visible, displayName }) {
   const [stage, setStage] = useState(0);
 
@@ -333,23 +313,22 @@ function TransitionOverlay({ visible, displayName }) {
   ];
 
   return (
-    <div className="fixed inset-0 z-[9999] overflow-hidden flex flex-col items-center justify-center"
+    <div className="fixed inset-0 z-[9999] overflow-hidden flex flex-col items-center justify-center auth-page"
       style={{
-        background: "linear-gradient(160deg, #0a1628 0%, #0d1f3e 30%, #12103a 60%, #0a1628 100%)",
-        fontFamily: "'DM Sans', sans-serif",
+        background: "linear-gradient(160deg, #050b18 0%, #0a1730 30%, #0d0a2e 60%, #050b18 100%)",
       }}>
 
       {/* Ambient blobs */}
       <div className="absolute pointer-events-none rounded-full"
         style={{
           top: "12%", left: "8%", width: "50%", height: "50%",
-          background: "radial-gradient(ellipse at 40% 40%, rgba(0,210,190,.40) 0%, rgba(0,150,220,.20) 35%, transparent 70%)",
+          background: `radial-gradient(ellipse at 40% 40%, ${APPLE.blue}66 0%, ${APPLE.blue}33 35%, transparent 70%)`,
           filter: "blur(70px)", animation: "floatBlob 9s ease-in-out infinite",
         }} />
       <div className="absolute pointer-events-none rounded-full"
         style={{
           bottom: "10%", right: "10%", width: "48%", height: "46%",
-          background: "radial-gradient(ellipse at 55% 55%, rgba(160,60,255,.38) 0%, rgba(100,30,200,.20) 40%, transparent 72%)",
+          background: `radial-gradient(ellipse at 55% 55%, ${APPLE.purple}60 0%, ${APPLE.purple}33 40%, transparent 72%)`,
           filter: "blur(70px)", animation: "floatBlob2 11s ease-in-out infinite",
         }} />
 
@@ -366,7 +345,7 @@ function TransitionOverlay({ visible, displayName }) {
           style={{
             left: `${14 + i * 14}%`, top: `${68 + (i % 3) * 7}%`,
             width: "4px", height: "4px",
-            background: i % 2 === 0 ? "#60a5fa" : "#a78bfa",
+            background: i % 2 === 0 ? APPLE.blue : APPLE.purple,
             animation: `floatUp ${3 + i * .4}s ease-in-out infinite`,
             animationDelay: `${i * .3}s`,
           }} />
@@ -382,23 +361,23 @@ function TransitionOverlay({ visible, displayName }) {
           <div className="absolute rounded-full pointer-events-none"
             style={{
               inset: "-20px",
-              background: "radial-gradient(circle, rgba(99,102,241,.35) 0%, transparent 70%)",
+              background: `radial-gradient(circle, ${APPLE.blue}59 0%, transparent 70%)`,
               filter: "blur(20px)", animation: "pulse2 2.2s ease-in-out infinite",
             }} />
 
-          {/* Ring 1 */}
+          {/* Ring 1 — Blue */}
           <div className="absolute rounded-full"
             style={{
               inset: 0,
-              background: "conic-gradient(from 0deg, rgba(96,165,250,0) 0deg, rgba(96,165,250,.9) 90deg, rgba(56,189,248,.7) 160deg, rgba(96,165,250,0) 200deg, rgba(96,165,250,0) 360deg)",
+              background: `conic-gradient(from 0deg, ${APPLE.blue}00 0deg, ${APPLE.blue}e6 90deg, ${APPLE.blue}b3 160deg, ${APPLE.blue}00 200deg, ${APPLE.blue}00 360deg)`,
               filter: "blur(2px)", animation: "swirl 3.4s linear infinite",
             }} />
 
-          {/* Ring 2 */}
+          {/* Ring 2 — Purple */}
           <div className="absolute rounded-full"
             style={{
               inset: "14px",
-              background: "conic-gradient(from 140deg, rgba(167,139,250,0) 0deg, rgba(167,139,250,.85) 80deg, rgba(192,132,252,.6) 150deg, rgba(167,139,250,0) 200deg, rgba(167,139,250,0) 360deg)",
+              background: `conic-gradient(from 140deg, ${APPLE.purple}00 0deg, ${APPLE.purple}d9 80deg, ${APPLE.purple}99 150deg, ${APPLE.purple}00 200deg, ${APPLE.purple}00 360deg)`,
               filter: "blur(2.5px)", animation: "swirlRv 4.2s linear infinite",
             }} />
 
@@ -425,7 +404,6 @@ function TransitionOverlay({ visible, displayName }) {
               className="absolute left-1/2 top-0 m-0 whitespace-nowrap font-semibold text-[#f1f5f9] transition-opacity duration-[350ms]"
               style={{
                 transform: "translateX(-50%)",
-                fontFamily: "'Sora', sans-serif",
                 fontSize: "14px",
                 opacity: stage === i ? 1 : 0,
               }}>
@@ -438,7 +416,7 @@ function TransitionOverlay({ visible, displayName }) {
         <div className="rounded-[3px] overflow-hidden" style={{ width: "168px", height: "3px", background: "rgba(255,255,255,.10)" }}>
           <div className="h-full rounded-[3px]"
             style={{
-              background: "linear-gradient(90deg, #3b82f6, #8b5cf6)",
+              background: `linear-gradient(90deg, ${APPLE.blue}, ${APPLE.purple})`,
               animation: "fillBar 2.2s cubic-bezier(.4,0,.2,1) forwards",
             }} />
         </div>
@@ -452,15 +430,16 @@ function Field({ label, icon: Icon, type = "text", value, onChange,
   disabled, placeholder, right, autoComplete, isDark }) {
   const [focused, setFocused] = useState(false);
   const lifted = focused || value.length > 0;
+  const K = dashTokens(isDark);
 
   const borderColor = focused
-    ? "#3b82f6"
-    : isDark ? "rgba(255,255,255,.10)" : "#e2e8f0";
+    ? APPLE.blue
+    : K.hairline;
 
   return (
-    <div className="relative" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+    <div className="relative">
       <div className="absolute left-[14px] top-1/2 -translate-y-1/2 z-[2] pointer-events-none transition-colors duration-150"
-        style={{ color: focused ? "#3b82f6" : isDark ? "rgba(255,255,255,.25)" : "#94a3b8" }}>
+        style={{ color: focused ? APPLE.blue : K.faint }}>
         <Icon size={14} />
       </div>
 
@@ -472,7 +451,7 @@ function Field({ label, icon: Icon, type = "text", value, onChange,
           fontWeight: lifted ? 600 : 400,
           letterSpacing: lifted ? ".8px" : "0",
           textTransform: lifted ? "uppercase" : "none",
-          color: focused ? "#3b82f6" : isDark ? "rgba(255,255,255,.30)" : "#94a3b8",
+          color: focused ? APPLE.blue : K.muted,
         }}>
         {label}
       </label>
@@ -489,13 +468,12 @@ function Field({ label, icon: Icon, type = "text", value, onChange,
           paddingRight: right ? "44px" : "14px",
           paddingTop: lifted ? "16px" : "0",
           fontSize: "13.5px",
-          fontFamily: "'DM Sans', sans-serif",
           background: isDark
-            ? (focused ? "rgba(59,130,246,.06)" : "rgba(255,255,255,.04)")
-            : (focused ? "#f8faff" : "#f8fafc"),
-          color: isDark ? "#f1f5f9" : "#0f172a",
+            ? (focused ? `${APPLE.blue}10` : K.chipBg)
+            : (focused ? `${APPLE.blue}08` : K.chipBg),
+          color: K.ink,
           border: `1.5px solid ${borderColor}`,
-          boxShadow: focused ? "0 0 0 3px rgba(59,130,246,.10)" : "none",
+          boxShadow: focused ? `0 0 0 3px ${APPLE.blue}22` : "none",
           opacity: disabled ? 0.45 : 1,
           cursor: disabled ? "not-allowed" : "text",
         }}
@@ -513,6 +491,7 @@ function Field({ label, icon: Icon, type = "text", value, onChange,
 /* ─── Password strength bar ─────────────────────────────────────────────────── */
 function StrengthMeter({ password, isDark }) {
   if (!password) return null;
+  const K = dashTokens(isDark);
 
   let score = 0;
   if (password.length >= 6)           score++;
@@ -521,10 +500,10 @@ function StrengthMeter({ password, isDark }) {
   if (/[0-9!@#$%^&*]/.test(password)) score++;
 
   const levels = [
-    { label: "Weak",   color: "#ef4444" },
-    { label: "Fair",   color: "#f97316" },
-    { label: "Good",   color: "#eab308" },
-    { label: "Strong", color: "#22c55e" },
+    { label: "Weak",   color: APPLE.red },
+    { label: "Fair",   color: APPLE.orange },
+    { label: "Good",   color: APPLE.orange },
+    { label: "Strong", color: APPLE.green },
   ];
   const lv = levels[Math.max(0, score - 1)];
 
@@ -533,7 +512,7 @@ function StrengthMeter({ password, isDark }) {
       <div className="flex gap-1 mb-1">
         {[1, 2, 3, 4].map(i => (
           <div key={i} className="flex-1 h-[3px] rounded-[3px] transition-all duration-[250ms]"
-            style={{ background: i <= score ? lv.color : isDark ? "#1e293b" : "#e2e8f0" }} />
+            style={{ background: i <= score ? lv.color : K.chipBg }} />
         ))}
       </div>
       <p className="m-0 text-[10px] font-semibold" style={{ color: lv.color }}>{lv.label}</p>
@@ -549,88 +528,88 @@ function PasswordChangeModal({
   showNewPwd, setShowNewPwd, showConfirmPwd, setShowConfirmPwd,
   pwdError, changing, onSubmit, onClose,
 }) {
-  const headingText = isDark ? "text-[#f1f5f9]" : "text-[#0f172a]";
-  const subText      = isDark ? "text-white/[0.36]" : "text-[#94a3b8]";
-  const dividerBorder = isDark ? "border-white/[0.07]" : "border-[#f1f5f9]";
+  const K = dashTokens(isDark);
 
   return (
-    <div className="fixed inset-0 z-[9000] flex items-center justify-center p-4 bg-[rgba(8,12,24,0.65)] backdrop-blur-[12px]">
+    <div className="fixed inset-0 z-[9000] flex items-center justify-center p-4"
+      style={{ background: "rgba(8,12,24,0.65)", backdropFilter: "blur(12px)" }}>
       <div
-        className={[
-          "w-[min(440px,100%)] rounded-[22px] overflow-hidden border",
-          "font-['DM_Sans',sans-serif] animate-[slideIn_.32s_cubic-bezier(.2,0,.2,1)]",
-          isDark
-            ? "bg-[rgba(13,20,40,0.97)] border-white/[0.07] shadow-[0_32px_80px_rgba(0,0,0,0.6),0_0_0_1px_rgba(255,255,255,0.05)]"
-            : "bg-white/[0.98] border-black/[0.07] shadow-[0_32px_80px_rgba(15,23,42,0.2),0_0_0_1px_rgba(0,0,0,0.04)]",
-        ].join(" ")}
+        className="auth-glass auth-pop w-[min(440px,100%)] rounded-[22px] overflow-hidden"
+        style={{
+          background: K.glassDeep,
+          border: `1px solid ${K.rim}`,
+          boxShadow: K.shadow,
+        }}
       >
         {/* Gradient header banner */}
-        <div className="relative overflow-hidden px-6 pt-6 pb-5 bg-[linear-gradient(135deg,#1d4ed8_0%,#4338ca_55%,#6d28d9_100%)]">
-          <div className="pointer-events-none absolute -top-[35%] -left-[10%] w-[60%] h-[150%] rounded-full blur-[28px] bg-[radial-gradient(ellipse,rgba(255,255,255,0.20)_0%,transparent_68%)] animate-[floatBlob_8s_ease-in-out_infinite]" />
-          <div className="pointer-events-none absolute -bottom-[45%] -right-[12%] w-[58%] h-[140%] rounded-full blur-[26px] bg-[radial-gradient(ellipse,rgba(129,140,248,0.45)_0%,transparent_70%)] animate-[floatBlob2_10s_ease-in-out_infinite]" />
+        <div className="relative overflow-hidden px-6 pt-6 pb-5"
+          style={{ background: `linear-gradient(135deg, ${APPLE.blue} 0%, #6d5be0 55%, ${APPLE.purple} 100%)` }}>
+          <div className="pointer-events-none absolute -top-[35%] -left-[10%] w-[60%] h-[150%] rounded-full blur-[28px]"
+            style={{ background: "radial-gradient(ellipse,rgba(255,255,255,0.22) 0%,transparent 68%)", animation: "floatBlob 8s ease-in-out infinite" }} />
+          <div className="pointer-events-none absolute -bottom-[45%] -right-[12%] w-[58%] h-[140%] rounded-full blur-[26px]"
+            style={{ background: "radial-gradient(ellipse,rgba(191,90,242,0.55) 0%,transparent 70%)", animation: "floatBlob2 10s ease-in-out infinite" }} />
 
           <button
             type="button"
             onClick={onClose}
             disabled={changing}
-            className={[
-              "absolute top-3.5 right-3.5 z-[3] w-[26px] h-[26px] rounded-lg",
-              "bg-white/[0.12] border border-white/[0.18] flex items-center justify-center",
-              changing ? "cursor-not-allowed opacity-50" : "cursor-pointer",
-            ].join(" ")}
+            className="absolute top-3.5 right-3.5 z-[3] w-[26px] h-[26px] rounded-lg flex items-center justify-center border"
+            style={{
+              background: "rgba(255,255,255,.12)",
+              borderColor: "rgba(255,255,255,.18)",
+              cursor: changing ? "not-allowed" : "pointer",
+              opacity: changing ? 0.5 : 1,
+            }}
           >
             <X size={12} className="text-white/[0.85]" />
           </button>
 
-          <div className="relative z-[2] w-[42px] h-[42px] rounded-[13px] bg-white/[0.14] backdrop-blur-[8px] border border-white/[0.24] flex items-center justify-center mb-3.5">
+          <div className="relative z-[2] w-[42px] h-[42px] rounded-[13px] flex items-center justify-center mb-3.5 border"
+            style={{ background: "rgba(255,255,255,.14)", borderColor: "rgba(255,255,255,.24)", backdropFilter: "blur(8px)" }}>
             <ShieldCheck size={19} className="text-white" strokeWidth={1.8} />
           </div>
 
-          <div className="relative z-[2] inline-flex items-center gap-1.5 bg-white/[0.12] border border-white/[0.20] rounded-full pl-2 pr-2.5 py-1 mb-2.5">
-            <Lock size={10} className="text-[#a5b4fc]" />
-            <span className="text-[9.5px] font-bold text-[#e0e7ff] tracking-[0.5px] uppercase">
+          <div className="relative z-[2] inline-flex items-center gap-1.5 rounded-full pl-2 pr-2.5 py-1 mb-2.5 border"
+            style={{ background: "rgba(255,255,255,.12)", borderColor: "rgba(255,255,255,.20)" }}>
+            <Lock size={10} className="text-[#cfd8ff]" />
+            <span className="text-[9.5px] font-bold text-[#eef0ff] tracking-[0.5px] uppercase">
               Security Required
             </span>
           </div>
 
-          <h2 className="relative z-[2] m-0 mb-1 text-[18px] font-extrabold text-white tracking-[-0.2px]"
-            style={{ fontFamily: "'Sora', sans-serif" }}>
+          <h2 className="relative z-[2] m-0 mb-1 text-[18px] font-extrabold text-white tracking-[-0.2px]">
             Set a New Password
           </h2>
-          <p className="relative z-[2] m-0 text-[12px] text-white/[0.70] leading-[1.55] max-w-[320px]">
+          <p className="relative z-[2] m-0 text-[12px] text-white/[0.75] leading-[1.55] max-w-[320px]">
             This is a first-time login. Please create a new password to continue.
           </p>
         </div>
 
         {/* User chip */}
-        <div className={[
-          "mt-[18px] mx-6 px-3.5 py-2.5 rounded-xl border flex items-center gap-2.5",
-          isDark ? "bg-white/[0.04]" : "bg-black/[0.02]",
-          dividerBorder,
-        ].join(" ")}>
-          <div className={[
-            "w-8 h-8 rounded-[10px] flex-shrink-0 flex items-center justify-center",
-            "text-[13px] font-bold border",
-            isDark
-              ? "bg-[rgba(99,102,241,0.18)] border-[rgba(99,102,241,0.30)] text-[#a5b4fc]"
-              : "bg-[#eef2ff] border-[#c7d2fe] text-[#4f46e5]",
-          ].join(" ")}>
+        <div className="mt-[18px] mx-6 px-3.5 py-2.5 rounded-xl border flex items-center gap-2.5"
+          style={{ background: K.chipBg, borderColor: K.hairline }}>
+          <div className="w-8 h-8 rounded-[10px] flex-shrink-0 flex items-center justify-center text-[13px] font-bold border"
+            style={{
+              background: `${APPLE.blue}1c`,
+              borderColor: `${APPLE.blue}33`,
+              color: APPLE.blue,
+            }}>
             {(tempResult.user?.DisplayName || userCode).charAt(0).toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">
-            <p className={`m-0 mb-px text-xs font-semibold truncate ${headingText}`}>
+            <p className="m-0 mb-px text-xs font-semibold truncate" style={{ color: K.ink }}>
               {tempResult.user?.DisplayName || userCode}
             </p>
-            <p className={`m-0 text-[10px] ${subText}`}>
+            <p className="m-0 text-[10px]" style={{ color: K.muted }}>
               ID: {tempResult.user?.User_ID}
             </p>
           </div>
-          <span className={[
-            "text-[9px] font-bold tracking-[0.4px] uppercase px-2 py-1 rounded-full border",
-            isDark
-              ? "text-[#34d399] bg-[rgba(52,211,153,0.12)] border-[rgba(52,211,153,0.20)]"
-              : "text-[#059669] bg-[#ecfdf5] border-[#a7f3d0]",
-          ].join(" ")}>
+          <span className="text-[9px] font-bold tracking-[0.4px] uppercase px-2 py-1 rounded-full border"
+            style={{
+              color: APPLE.green,
+              background: `${APPLE.green}14`,
+              borderColor: `${APPLE.green}33`,
+            }}>
             First Login
           </span>
         </div>
@@ -638,12 +617,12 @@ function PasswordChangeModal({
         {/* Body / form */}
         <div className="px-6 pt-4 pb-6 flex flex-col gap-3">
           {pwdError && (
-            <div className={[
-              "flex items-center gap-2 px-3 py-2.5 rounded-[10px] text-xs border",
-              isDark
-                ? "bg-[rgba(239,68,68,0.10)] border-[rgba(239,68,68,0.30)] text-[#fca5a5]"
-                : "bg-[#fef2f2] border-[#fecaca] text-[#b91c1c]",
-            ].join(" ")}>
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-[10px] text-xs border"
+              style={{
+                background: `${APPLE.red}14`,
+                borderColor: `${APPLE.red}33`,
+                color: APPLE.red,
+              }}>
               <AlertCircle size={12} className="flex-shrink-0" />
               {pwdError}
             </div>
@@ -659,7 +638,8 @@ function PasswordChangeModal({
                 right={
                   <button
                     type="button" onClick={() => setShowNewPwd(!showNewPwd)}
-                    className={`bg-transparent border-0 cursor-pointer p-1 ${isDark ? "text-white/[0.28]" : "text-[#94a3b8]"}`}
+                    className="bg-transparent border-0 cursor-pointer p-1"
+                    style={{ color: K.faint }}
                   >
                     {showNewPwd ? <EyeOff size={13} /> : <Eye size={13} />}
                   </button>
@@ -677,7 +657,8 @@ function PasswordChangeModal({
                 right={
                   <button
                     type="button" onClick={() => setShowConfirmPwd(!showConfirmPwd)}
-                    className={`bg-transparent border-0 cursor-pointer p-1 ${isDark ? "text-white/[0.28]" : "text-[#94a3b8]"}`}
+                    className="bg-transparent border-0 cursor-pointer p-1"
+                    style={{ color: K.faint }}
                   >
                     {showConfirmPwd ? <EyeOff size={13} /> : <Eye size={13} />}
                   </button>
@@ -687,13 +668,13 @@ function PasswordChangeModal({
                 <div className="flex items-center gap-1.5 mt-1.5">
                   {newPwd === confirmPwd ? (
                     <>
-                      <CheckCircle size={11} className="text-[#10b981]" />
-                      <span className="text-[11px] font-medium text-[#10b981]">Passwords match</span>
+                      <CheckCircle size={11} style={{ color: APPLE.green }} />
+                      <span className="text-[11px] font-medium" style={{ color: APPLE.green }}>Passwords match</span>
                     </>
                   ) : (
                     <>
-                      <X size={11} className="text-[#ef4444]" />
-                      <span className="text-[11px] font-medium text-[#ef4444]">Passwords don't match</span>
+                      <X size={11} style={{ color: APPLE.red }} />
+                      <span className="text-[11px] font-medium" style={{ color: APPLE.red }}>Passwords don't match</span>
                     </>
                   )}
                 </div>
@@ -701,23 +682,18 @@ function PasswordChangeModal({
             </div>
 
             {/* Requirements checklist */}
-            <div className={[
-              "px-3 py-2.5 rounded-[10px] border flex flex-col gap-2",
-              isDark ? "bg-white/[0.03]" : "bg-black/[0.02]",
-              dividerBorder,
-            ].join(" ")}>
+            <div className="px-3 py-2.5 rounded-[10px] border flex flex-col gap-2"
+              style={{ background: K.chipBg, borderColor: K.hairline }}>
               {[
                 { ok: newPwd.length >= 6,                           label: "At least 6 characters" },
                 { ok: newPwd === confirmPwd && newPwd.length > 0,   label: "Passwords match" },
               ].map(({ ok, label }) => (
                 <div key={label} className="flex items-center gap-2">
-                  <div className={[
-                    "w-3.5 h-3.5 rounded-full flex-shrink-0 flex items-center justify-center transition-colors duration-200",
-                    ok ? "bg-[#10b981]" : isDark ? "bg-[#1e293b]" : "bg-[#e2e8f0]",
-                  ].join(" ")}>
+                  <div className="w-3.5 h-3.5 rounded-full flex-shrink-0 flex items-center justify-center transition-colors duration-200"
+                    style={{ background: ok ? APPLE.green : (isDark ? "rgba(255,255,255,0.08)" : "#e2e8f0") }}>
                     {ok && <CheckCircle size={9} className="text-white" />}
                   </div>
-                  <span className={`text-[11px] ${ok ? "font-medium text-[#10b981]" : `font-normal ${subText}`}`}>
+                  <span className="text-[11px]" style={{ color: ok ? APPLE.green : K.muted, fontWeight: ok ? 500 : 400 }}>
                     {label}
                   </span>
                 </div>
@@ -730,26 +706,29 @@ function PasswordChangeModal({
                 type="button"
                 disabled={changing}
                 onClick={onClose}
-                className={[
-                  "flex-1 h-11 rounded-xl bg-transparent border-[1.5px] text-[12.5px] font-semibold",
-                  changing ? "cursor-not-allowed opacity-40" : "cursor-pointer",
-                  isDark ? "border-white/10 text-white/[0.48]" : "border-[#e2e8f0] text-[#64748b]",
-                ].join(" ")}
+                className="flex-1 h-11 rounded-[12px] bg-transparent text-[12.5px] font-semibold transition-all"
+                style={{
+                  border: `1px solid ${K.hairline}`,
+                  color: K.muted,
+                  cursor: changing ? "not-allowed" : "pointer",
+                  opacity: changing ? 0.4 : 1,
+                }}
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={changing}
-                className={[
-                  "flex-1 h-11 rounded-xl border-0 text-white text-[12.5px] font-semibold",
-                  "flex items-center justify-center gap-1.5",
-                  "bg-[linear-gradient(135deg,#2563eb,#6366f1)] shadow-[0_6px_18px_rgba(59,130,246,0.28)]",
-                  changing ? "cursor-not-allowed opacity-70" : "cursor-pointer",
-                ].join(" ")}
+                className="flex-1 h-11 rounded-[12px] border-0 text-white text-[12.5px] font-semibold flex items-center justify-center gap-1.5 transition-all"
+                style={{
+                  background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
+                  boxShadow: changing ? "none" : `0 4px 16px -6px ${APPLE.blue}88`,
+                  cursor: changing ? "not-allowed" : "pointer",
+                  opacity: changing ? 0.7 : 1,
+                }}
               >
                 {changing
-                  ? <><Loader2 size={13} className="animate-[spinSlow_.8s_linear_infinite]" />Saving…</>
+                  ? <><Loader2 size={13} style={{ animation: "spinSlow .8s linear infinite" }} />Saving…</>
                   : "Update Password"
                 }
               </button>
@@ -766,6 +745,8 @@ export default function Login() {
   const { theme, updateTheme } = useTheme();
   const isDark  = theme === "dark";
   const navigate = useNavigate();
+
+  const K = dashTokens(isDark);
 
   const [userCode,   setUserCode]   = useState("");
   const [password,   setPassword]   = useState("");
@@ -797,7 +778,7 @@ export default function Login() {
     const lastTheme = localStorage.getItem("lastActiveTheme") || localStorage.getItem("userTheme");
     if (lastTheme && lastTheme !== theme) updateTheme(lastTheme);
     return () => clearTimeout(t);
-  }, []);
+  }, []); // eslint-disable-line
 
   const handleThemeToggle = async () => {
     const newTheme = isDark ? "light" : "dark";
@@ -901,74 +882,67 @@ export default function Login() {
     }
   };
 
-  /* ── Derived tokens ── */
-  const cardBg     = isDark ? "rgba(13,20,40,.97)"    : "rgba(255,255,255,.98)";
-  const heading    = isDark ? "#f1f5f9"               : "#0f172a";
-  const subtext    = isDark ? "rgba(255,255,255,.36)" : "#94a3b8";
-
   return (
     <>
       <style>{GLOBAL_STYLES}</style>
       <TransitionOverlay visible={transitioning} displayName={authedName} />
 
       {/* Page */}
-      <div className={`min-h-screen flex items-center justify-center relative transition-colors duration-300 ${isDark ? "bg-[#0a0f1e]" : "bg-[#f0f4f8]"}`}
-        style={{ fontFamily: "'DM Sans', sans-serif" }}>
+      <div className="auth-page min-h-screen flex items-center justify-center relative transition-colors duration-300"
+        style={{ background: K.bg }}>
 
-        {/* Page glow */}
-        <div className="fixed pointer-events-none z-0"
+        {/* Aurora wash */}
+        <div className="fixed inset-0 pointer-events-none z-0"
           style={{
-            top: "30%", left: "50%", transform: "translateX(-50%)",
-            width: "600px", height: "400px",
-            background: "radial-gradient(ellipse, rgba(59,130,246,.06) 0%, transparent 70%)",
-            filter: "blur(40px)",
+            backgroundImage: `
+              radial-gradient(700px circle at 8% 0%, ${APPLE.blue}${isDark ? "26" : "30"}, transparent 55%),
+              radial-gradient(650px circle at 92% 10%, ${APPLE.purple}${isDark ? "1a" : "20"}, transparent 55%),
+              radial-gradient(900px circle at 50% 100%, ${APPLE.blue}${isDark ? "14" : "1a"}, transparent 60%)
+            `,
           }} />
 
         {/* Theme toggle */}
         <div className="fixed top-4 right-4 z-[100] flex items-center gap-2">
           {themeSaveStatus.saving && (
-            <span className="text-[#3b82f6] text-[11px] flex items-center gap-1">
+            <span className="text-[11px] flex items-center gap-1" style={{ color: APPLE.blue }}>
               <Loader2 size={11} style={{ animation: "spinSlow .8s linear infinite" }} /> Saving…
             </span>
           )}
           {themeSaveStatus.saved && (
-            <span className="text-[#10b981] text-[11px] flex items-center gap-1">
+            <span className="text-[11px] flex items-center gap-1" style={{ color: APPLE.green }}>
               <CheckCircle size={11} /> Saved
             </span>
           )}
           {themeSaveStatus.error && (
-            <span className="text-[#ef4444] text-[11px] flex items-center gap-1">
+            <span className="text-[11px] flex items-center gap-1" style={{ color: APPLE.red }}>
               <X size={11} /> Error
             </span>
           )}
           <button
             onClick={handleThemeToggle}
             title={isDark ? "Switch to Light" : "Switch to Dark"}
-            className={[
-              "w-9 h-9 rounded-xl flex items-center justify-center cursor-pointer",
-              "border-[1.5px] transition-all duration-200",
-              "shadow-[0_2px_12px_rgba(0,0,0,.10)]",
-              isDark
-                ? "border-white/10 bg-[rgba(15,23,42,.90)]"
-                : "border-black/10 bg-[rgba(255,255,255,.90)]",
-            ].join(" ")}
-            style={{ backdropFilter: "blur(8px)" }}>
+            className="auth-glass w-9 h-9 rounded-[12px] flex items-center justify-center cursor-pointer transition-all duration-200"
+            style={{
+              border: `1px solid ${K.hairline}`,
+              background: K.glass,
+              boxShadow: K.shadow,
+              color: K.muted,
+            }}>
             {isDark
-              ? <Sun  size={14} color="#fbbf24" />
-              : <Moon size={14} color="#64748b" />
+              ? <Sun  size={14} color={APPLE.orange} />
+              : <Moon size={14} color={K.muted} />
             }
           </button>
         </div>
 
         {/* ══ SPLIT CARD ══ */}
         <div
-          className="relative z-10 flex rounded-[20px] overflow-hidden transition-all duration-[550ms]"
+          className="auth-glass relative z-10 flex rounded-[22px] overflow-hidden transition-all duration-[550ms]"
           style={{
             width: "min(880px, calc(100vw - 32px))",
             minHeight: "520px",
-            boxShadow: isDark
-              ? "0 32px 80px rgba(0,0,0,.75), 0 0 0 1px rgba(255,255,255,.06)"
-              : "0 20px 60px rgba(0,0,0,.14), 0 0 0 1px rgba(0,0,0,.06)",
+            border: `1px solid ${K.hairline}`,
+            boxShadow: K.shadow,
             opacity:   mounted ? 1 : 0,
             transform: mounted ? "translateY(0) scale(1)" : "translateY(22px) scale(.98)",
           }}>
@@ -979,31 +953,35 @@ export default function Login() {
           </div>
 
           {/* RIGHT: login form */}
-          <div className="flex-1 flex flex-col relative overflow-hidden"
-            style={{ background: cardBg, padding: "48px 44px" }}>
+          <div className="flex-1 flex flex-col relative overflow-hidden auth-scroll"
+            style={{ background: K.panel, padding: "48px 44px" }}>
 
             {/* Top accent line */}
             <div className="absolute top-0 left-0 right-0 h-px pointer-events-none"
-              style={{ background: "linear-gradient(90deg, transparent, rgba(59,130,246,.30), transparent)" }} />
+              style={{ background: `linear-gradient(90deg, transparent, ${APPLE.blue}55, transparent)` }} />
 
             {/* Mobile logo row */}
             <div className="mobile-logo-row hidden items-center gap-3 mb-6">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 border ${isDark ? "bg-[rgba(59,130,246,.14)] border-[rgba(59,130,246,.24)]" : "bg-[#eff6ff] border-[#bfdbfe]"}`}>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 border"
+                style={{
+                  background: `${APPLE.blue}14`,
+                  borderColor: `${APPLE.blue}33`,
+                }}>
                 <img src={Rebate} alt="Logo" className="w-6 h-6 object-contain" />
               </div>
               <div>
-                <div className="text-xs font-bold leading-tight" style={{ color: heading }}>
+                <div className="text-xs font-bold leading-tight" style={{ color: K.ink }}>
                   Rebate Management System
                 </div>
                 <div className="flex items-center gap-[5px] mt-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] inline-block"
-                    style={{ animation: "pulse2 2s ease-in-out infinite" }} />
-                  <span className="text-[10px]" style={{ color: subtext }}>Secure portal · v1.0</span>
+                  <span className="w-1.5 h-1.5 rounded-full inline-block"
+                    style={{ background: APPLE.green, animation: "pulse2 2s ease-in-out infinite" }} />
+                  <span className="text-[10px]" style={{ color: K.muted }}>Secure portal · v1.0</span>
                 </div>
               </div>
             </div>
 
-            {/* Scrollable main content */}
+            {/* Main content */}
             <div className="flex-1 flex flex-col justify-center">
 
               {/* Header */}
@@ -1011,25 +989,29 @@ export default function Login() {
                 <h1 className="m-0 mb-1.5 font-bold tracking-[-0.4px] leading-tight relative z-[5]"
                   style={{
                     fontSize: "26px",
-                    color: isDark ? "#f1f5f9" : "#0f172a",
-                    fontFamily: "'Sora', sans-serif",
+                    color: K.ink,
                   }}>
                   Welcome!
                 </h1>
                 <p className="m-0 text-[13px] font-normal relative z-[5]"
-                  style={{ color: isDark ? "rgba(255,255,255,.45)" : "#64748b" }}>
+                  style={{ color: K.muted }}>
                   Sign in to your RMS account to continue
                 </p>
               </div>
 
               {/* Error banner */}
               {error && (
-                <div className={`flex items-start gap-2.5 px-3.5 py-2.5 rounded-xl mb-[18px] border text-xs ${isDark ? "bg-[rgba(239,68,68,.10)] border-[rgba(239,68,68,.28)] text-[#fca5a5]" : "bg-[#fef2f2] border-[#fecaca] text-[#b91c1c]"}`}
-                  style={{ animation: "slideIn .25s ease" }}>
+                <div className="flex items-start gap-2.5 px-3.5 py-2.5 rounded-xl mb-[18px] border text-xs"
+                  style={{
+                    background: `${APPLE.red}14`,
+                    borderColor: `${APPLE.red}33`,
+                    color: APPLE.red,
+                    animation: "slideIn .25s ease",
+                  }}>
                   <AlertCircle size={13} className="flex-shrink-0 mt-px" />
                   <p className="m-0 flex-1 leading-[1.5]">{error}</p>
                   <button onClick={() => setError("")}
-                    className="bg-transparent border-none cursor-pointer p-0 opacity-60"
+                    className="bg-transparent border-none cursor-pointer p-0 opacity-70"
                     style={{ color: "inherit" }}>
                     <X size={12} />
                   </button>
@@ -1051,7 +1033,7 @@ export default function Login() {
                   right={
                     <button type="button" onClick={() => setShowPwd(!showPwd)}
                       className="bg-transparent border-none cursor-pointer p-1 rounded-md"
-                      style={{ color: isDark ? "rgba(255,255,255,.28)" : "#94a3b8" }}>
+                      style={{ color: K.faint }}>
                       {showPwd ? <EyeOff size={13} /> : <Eye size={13} />}
                     </button>
                   }
@@ -1060,27 +1042,26 @@ export default function Login() {
                 {/* Remember me */}
                 <label className="flex items-center gap-2 cursor-pointer select-none -mt-0.5">
                   <button type="button" onClick={() => setRememberMe(!rememberMe)}
-                    className="flex items-center justify-center flex-shrink-0 rounded cursor-pointer transition-all duration-150 p-0 border-0"
+                    className="flex items-center justify-center flex-shrink-0 cursor-pointer transition-all duration-150 p-0 border-0"
                     style={{
                       width: "16px", height: "16px", borderRadius: "4px",
-                      border: `1.5px solid ${rememberMe ? "#3b82f6" : isDark ? "rgba(255,255,255,.18)" : "#cbd5e1"}`,
-                      background: rememberMe ? "#3b82f6" : "transparent",
+                      border: `1.5px solid ${rememberMe ? APPLE.blue : K.hairline}`,
+                      background: rememberMe ? APPLE.blue : "transparent",
                     }}>
                     {rememberMe && <CheckCircle size={9} color="#fff" />}
                   </button>
-                  <span className="text-xs" style={{ color: subtext }}>Remember me</span>
+                  <span className="text-xs" style={{ color: K.muted }}>Remember me</span>
                 </label>
 
                 {/* Sign In button */}
                 <button type="submit" disabled={signingIn}
-                  className="h-[52px] rounded-xl border-none text-white text-sm font-semibold tracking-[0.2px] flex items-center justify-center gap-2 transition-all duration-200 mt-1"
+                  className="h-[52px] rounded-[12px] border-none text-white text-sm font-semibold tracking-[0.2px] flex items-center justify-center gap-2 transition-all duration-200 mt-1"
                   style={{
                     background: signingIn
-                      ? "#2563eb"
-                      : "linear-gradient(135deg, #2563eb 0%, #6366f1 100%)",
-                    fontFamily: "'DM Sans', sans-serif",
+                      ? APPLE.blue
+                      : `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
                     cursor: signingIn ? "not-allowed" : "pointer",
-                    boxShadow: signingIn ? "none" : "0 8px 24px rgba(59,130,246,.35)",
+                    boxShadow: signingIn ? "none" : `0 8px 24px -8px ${APPLE.blue}88`,
                     opacity: signingIn ? 0.80 : 1,
                   }}>
                   {signingIn
@@ -1091,32 +1072,14 @@ export default function Login() {
               </form>
             </div>
 
-            {/* Footer: version + help tooltip */}
-            <div className="mt-5 pt-3.5 relative flex justify-center items-center">
+            {/* Footer */}
+            <div className="mt-5 pt-3.5 flex justify-center items-center">
               <span className="text-[10px] font-medium tracking-[0.3px] flex items-center gap-[5px]"
-                style={{ fontFamily: "'DM Sans', sans-serif", color: isDark ? "rgba(255,255,255,.28)" : "#94a3b8" }}>
+                style={{ color: K.faint }}>
                 <Shield size={10} className="opacity-55" />
                 RMS v0.0.1
               </span>
-
-              {/* Help tooltip */}
-           {/*   <div className="tooltip-hover absolute right-0" style={{ lineHeight: 0 }}>
-                <HelpCircle
-                  size={17} strokeWidth={1.6}
-                  style={{ color: isDark ? "rgba(255,255,255,.30)" : "#94a3b8", transition: "color .15s" }}
-                />
-                <div className="tooltip-text">
-                  <strong style={{ display: "block", marginBottom: "6px", fontSize: "12px", color: "#f1f5f9" }}>
-                    Need help?
-                  </strong>
-                  <span style={{ opacity: 0.75 }}>• No account yet?</span> Contact your system administrator.
-                  <br />
-                  <span style={{ opacity: 0.75 }}>• Forgot password?</span> Reach out to support or reset via admin.
-                  <br />
-                  <span style={{ opacity: 0.75 }}>• First-time login?</span> Use your temporary password.
-                </div>
-              </div>*/}
-            </div> 
+            </div>
           </div>
         </div>
 

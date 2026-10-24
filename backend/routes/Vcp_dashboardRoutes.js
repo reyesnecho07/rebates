@@ -1,9 +1,15 @@
-
 import express from 'express';
 import sql from 'mssql';
 import { getPool } from '../services/databaseService.js';
 
 const router = express.Router();
+
+const round2 = (n) => {
+  const v = parseFloat(n) || 0;
+  if (v === 0) return 0;
+  const sign = v < 0 ? -1 : 1;
+  return sign * Number(Math.round(Number(Math.abs(v) + 'e2')) + 'e-2');
+};
 
 // In ALL routes, add better error handling for database pool
 const getDatabasePool = (databaseName) => {
@@ -1473,7 +1479,7 @@ router.get('/customer/:customerCode/transactions', async (req, res) => {
 
     // Get rebate program period FIRST
     const rebatePeriodQuery = `
-      SELECT DateFrom, DateTo, IsActive, Frequency 
+      SELECT DateFrom, DateTo, IsActive, Frequency, QuotaType
       FROM RebateProgram
       WHERE RebateCode = @rebateCode
     `;
@@ -1486,6 +1492,7 @@ router.get('/customer/:customerCode/transactions', async (req, res) => {
     let rebateDateTo = '';
     let isActive = false;
     let frequency = 'Quarterly';
+    let programQuotaType = 'N/A';
     
 if (rebatePeriodResult.recordset.length > 0) {
   rebateDateFrom = rebatePeriodResult.recordset[0].DateFrom ? 
@@ -1494,7 +1501,8 @@ if (rebatePeriodResult.recordset.length > 0) {
     new Date(rebatePeriodResult.recordset[0].DateTo).toISOString().split('T')[0] : '';
   isActive = rebatePeriodResult.recordset[0].IsActive === 1;
   frequency = rebatePeriodResult.recordset[0].Frequency || 'Quarterly';  // ADD THIS LINE - get frequency from database
-  
+  programQuotaType = rebatePeriodResult.recordset[0].QuotaType || 'N/A';
+
   console.log('📅 Rebate period from database:', { 
     rebateDateFrom, 
     rebateDateTo,
@@ -1670,6 +1678,7 @@ if (rebatePeriodResult.recordset.length > 0) {
       dateFrom: firstRecord.DateFrom ? new Date(firstRecord.DateFrom).toISOString().split('T')[0] : '',
       dateTo: firstRecord.DateTo ? new Date(firstRecord.DateTo).toISOString().split('T')[0] : '',
       isActive: firstRecord.IsActive,
+      quotaType: programQuotaType,
       customer: {
         code: firstRecord.CardCode,
         name: firstRecord.CardName
@@ -1690,35 +1699,66 @@ if (rebatePeriodResult.recordset.length > 0) {
       }
     });
 
-    // Store ranges for incremental
-    let customerRanges = [];
-    if (rebateType === 'Incremental') {
-      const customerRangeSet = new Set();
-      rebateResult.recordset.forEach(row => {
-        if (row.RangeNo && !customerRangeSet.has(JSON.stringify({ 
-          rangeNo: row.RangeNo, 
-          minQty: row.MinQty, 
-          maxQty: row.MaxQty, 
-          rebatePerBag: row.CustomerRebatePerBag 
-        }))) {
-          customerRanges.push({
-            rangeNo: row.RangeNo,
-            minQty: row.MinQty || 0,
-            maxQty: row.MaxQty || 0,
-            rebatePerBag: row.CustomerRebatePerBag || 0
-          });
-          customerRangeSet.add(JSON.stringify({ 
-            rangeNo: row.RangeNo, 
-            minQty: row.MinQty, 
-            maxQty: row.MaxQty, 
-            rebatePerBag: row.CustomerRebatePerBag 
-          }));
-        }
+let customerRanges = [];
+const itemRangesMap = new Map();    // ✅ NEW
+
+if (rebateType === 'Incremental') {
+  const customerRangeSet = new Set();
+  rebateResult.recordset.forEach(row => {
+    if (row.RangeNo && !customerRangeSet.has(`${row.RangeNo}|${row.MinQty}|${row.MaxQty}`)) {
+      customerRanges.push({
+        rangeNo: row.RangeNo,
+        minQty: row.MinQty || 0,
+        maxQty: row.MaxQty || 0,
+        rebatePerBag: row.CustomerRebatePerBag || 0
       });
-      
-      customerRanges.sort((a, b) => a.rangeNo - b.rangeNo);
-      rebateDetails.ranges = customerRanges;
-    } else if (rebateType === 'Fixed' || rebateType === 'Percentage') {
+      customerRangeSet.add(`${row.RangeNo}|${row.MinQty}|${row.MaxQty}`);
+    }
+  });
+  customerRanges.sort((a, b) => a.rangeNo - b.rangeNo);
+
+  // ✅ NEW: fetch item-level ranges from IncItemRange
+  try {
+    const itemRangesResult = await ownPool.request()
+      .input('rebateCode', sql.NVarChar(50), rebateCode)
+      .query(`
+        SELECT T3.ItemCode, T4.RangeNo, T4.MinQty, T4.MaxQty, T4.RebatePerBag
+        FROM IncItemRebate T3
+        INNER JOIN IncItemRange T4 ON T3.Id = T4.ItemRebateId
+        WHERE T3.RebateCode = @rebateCode
+        ORDER BY T3.ItemCode, T4.RangeNo
+      `);
+
+    itemRangesResult.recordset.forEach(r => {
+      if (!r.ItemCode || !r.RangeNo) return;
+      if (!itemRangesMap.has(r.ItemCode)) itemRangesMap.set(r.ItemCode, []);
+      itemRangesMap.get(r.ItemCode).push({
+        rangeNo: r.RangeNo,
+        minQty: r.MinQty || 0,
+        maxQty: r.MaxQty || 0,
+        rebatePerBag: r.RebatePerBag || 0
+      });
+    });
+  } catch (e) {
+    console.warn('⚠️ Could not fetch IncItemRange fallback:', e.message);
+  }
+
+  // ✅ Seed customerRanges from item ranges if customer has none
+  if (customerRanges.length === 0 && itemRangesMap.size > 0) {
+    const firstItem = itemRangesMap.values().next().value || [];
+    firstItem.forEach(r => {
+      customerRanges.push({
+        rangeNo: r.rangeNo,
+        minQty: r.minQty,
+        maxQty: r.maxQty,
+        rebatePerBag: r.rebatePerBag
+      });
+    });
+    customerRanges.sort((a, b) => a.rangeNo - b.rangeNo);
+  }
+
+  rebateDetails.ranges = customerRanges;
+} else if (rebateType === 'Fixed' || rebateType === 'Percentage') {
       // Store quotas as an object with month-target pairs
       const quotas = {};
       rebateResult.recordset.forEach(row => {
@@ -1808,59 +1848,51 @@ res.json({
     const sapResult = await request.query(sapQuery);
     console.log('📄 SAP transactions found:', sapResult.recordset.length);
 
-    // Process transactions based on rebate type
-// In the /customer/:customerCode/transactions endpoint, after getting SAP transactions
-// Add this code after you have the sapResult:
+    // ────────────────────────────────────────────────────────────────────
+    // STEP 1 — AR Invoices (OINV) stay exactly as posted.
+    //          ARCM (ORIN) come in as separate negative rows.
+    // ────────────────────────────────────────────────────────────────────
+    const invoiceRows = sapResult.recordset.map(trans => ({
+      TransType: 'AR Invoice',
+      IsReturn: false,
+      Date: trans.Date,
+      Item: trans.Item,
+      ItemCode: trans.ItemCode,
+      ActualSales: trans.ActualSales || 0,
+      InvoiceNumber: trans.InvoiceNumber,
+      CustomerReference: trans.CustomerReference,
+      PriceAfVAT: trans.PriceAfVAT,
+      Treetype: trans.Treetype,
+      Gtotal: trans.Gtotal || 0
+    }));
 
-// Check for ARCM documents and adjust transactions
-let adjustedTransactions = sapResult.recordset.map(trans => ({
-  Date: trans.Date,
-  Item: trans.Item,
-  ItemCode: trans.ItemCode,
-  ActualSales: trans.ActualSales || 0,
-  InvoiceNumber: trans.InvoiceNumber,
-  CustomerReference: trans.CustomerReference,
-  PriceAfVAT: trans.PriceAfVAT,
-  Treetype: trans.Treetype,
-  Gtotal: trans.Gtotal || 0 
-}));
+    let creditMemoRows = [];
+    try {
+      creditMemoRows = await fetchARCMRows(sapPool, customerCode, rebateItemCodes, startDate, endDate);
+      console.log(`📝 ARCM rows added: ${creditMemoRows.length}`);
+    } catch (arcmError) {
+      console.error('⚠️ ARCM fetch failed, showing invoices only:', arcmError.message);
+    }
 
-try {
-  // Get ARCM adjustments
-  adjustedTransactions = await adjustForARCM(
-    sapPool, 
-    customerCode, 
-    adjustedTransactions, 
-    startDate, 
-    endDate
-  );
-  console.log(`📊 After ARCM adjustment: ${adjustedTransactions.length} transactions`);
-} catch (arcmError) {
-  console.error('⚠️ ARCM adjustment failed, using original transactions:', arcmError.message);
-  // Continue with original transactions if adjustment fails
-  adjustedTransactions = sapResult.recordset;
-}
+    const adjustedTransactions = [...invoiceRows, ...creditMemoRows];
 
-let transactions = [];
-let totalQuota = 0;
+    let transactions = [];
+    let totalQuota = 0;
 
-// Make sure Treetype is preserved in the adjusted transactions
-if (rebateType === 'Fixed') {
-  totalQuota = Object.values(rebateDetails.quotas || {}).reduce((sum, quota) => sum + quota, 0);
-  transactions = processFixedTransactions(adjustedTransactions, rebateItemMap, totalQuota, rebateDetails, frequency);
-} else if (rebateType === 'Incremental') {
-  transactions = processIncrementalTransactions(adjustedTransactions, rebateItemMap, customerRanges, rebateDetails, frequency);
-} else if (rebateType === 'Percentage') {
-  totalQuota = Object.values(rebateDetails.quotas || {}).reduce((sum, quota) => sum + quota, 0);
-  transactions = processPercentageTransactions(adjustedTransactions, rebateItemMap, rebateDetails, frequency);
-}
+    if (rebateType === 'Fixed') {
+      totalQuota = Object.values(rebateDetails.quotas || {}).reduce((sum, quota) => sum + quota, 0);
+      transactions = processFixedTransactions(adjustedTransactions, rebateItemMap, totalQuota, rebateDetails, frequency);
+    } else if (rebateType === 'Incremental') {
+      transactions = processIncrementalTransactions(adjustedTransactions, rebateItemMap, customerRanges, rebateDetails, frequency, itemRangesMap);
+    } else if (rebateType === 'Percentage') {
+      totalQuota = Object.values(rebateDetails.quotas || {}).reduce((sum, quota) => sum + quota, 0);
+      transactions = processPercentageTransactions(adjustedTransactions, rebateItemMap, rebateDetails, frequency);
+    }
 
-
-
-transactions = transactions.map(trans => ({
-  ...trans,
-  Treetype: trans.Treetype || 'I' // Make sure this is set appropriately
-}));
+    transactions = transactions.map(trans => ({
+      ...trans,
+      Treetype: trans.Treetype || 'I' // Make sure this is set appropriately
+    }));
 
     // Sort by date descending for display
     transactions.sort((a, b) => new Date(b.Date) - new Date(a.Date));
@@ -1932,57 +1964,58 @@ transactions = transactions.map(trans => ({
   }
 });
 
-// Update the processFixedTransactions function to handle returns
+// ────────────────────────────────────────────────────────────────────────
+// STEP 3 — Replaced processFixedTransactions (ARCM rows now flow through
+// the same pipeline as invoices with negative qty — no mutation of OINV).
+// ────────────────────────────────────────────────────────────────────────
 const processFixedTransactions = (sapTransactions, rebateItemMap, totalQuota, rebateDetails, frequency = 'Quarterly') => {
   const transactions = [];
   const itemCumulativeMap = new Map();
 
-  // Filter out return transactions for cumulative calculation
-  const positiveTransactions = sapTransactions.filter(t => !t.IsReturn);
-  const returnTransactions = sapTransactions.filter(t => t.IsReturn);
-
-  const sortedSapTransactions = [...positiveTransactions].sort((a, b) => 
+  // Array.sort is stable: on the same date, invoices stay before ARCM rows.
+  const sortedSapTransactions = [...sapTransactions].sort((a, b) =>
     new Date(a.Date) - new Date(b.Date)
   );
 
-  // Process positive transactions for cumulative calculation
   sortedSapTransactions.forEach(sapTrans => {
-    const actualSales = sapTrans.ActualSales || 0;
+    const actualSales = sapTrans.ActualSales || 0;   // negative for ARCM
     const itemCode = sapTrans.ItemCode;
     const itemName = sapTrans.Item;
-      const treetype = sapTrans.Treetype; 
-    
+    const treetype = sapTrans.Treetype;
+    const isReturn = !!sapTrans.IsReturn;
+
     const rebateItem = rebateItemMap.get(itemCode);
-    
     if (!rebateItem) return;
-    
+
     let qtyForReb = actualSales;
-    let unitPerQty = rebateItem.unitPerQty || 1;
-    let rebatePerBag = rebateItem.rebatePerBag || 0;
-    
-    // For ALL items, check if 25kg
+    const unitPerQty = rebateItem.unitPerQty || 1;
+    const rebatePerBag = rebateItem.rebatePerBag || 0;
+
+    // 25kg items: convert to bags (works for negative qty too)
     if (itemName && itemName.toLowerCase().includes('25kg')) {
       qtyForReb = unitPerQty > 1 ? actualSales / unitPerQty : actualSales;
     }
-    
+
     if (!itemCumulativeMap.has(itemCode)) {
       itemCumulativeMap.set(itemCode, 0);
     }
-    
+
     const currentCumulative = itemCumulativeMap.get(itemCode) + qtyForReb;
     itemCumulativeMap.set(itemCode, currentCumulative);
-    
+
     const qtyBal = currentCumulative;
     const progress = totalQuota > 0 ? (currentCumulative / totalQuota) * 100 : 0;
-    
+
     let eligibilityStatus = 'Not Eligible';
     if (currentCumulative >= totalQuota) {
       eligibilityStatus = 'Eligible';
     } else if (currentCumulative >= (totalQuota * 0.7)) {
       eligibilityStatus = 'Partially Eligible';
     }
-    
+
     transactions.push({
+      TransType: sapTrans.TransType || 'AR Invoice',
+      IsReturn: isReturn,
       Date: sapTrans.Date,
       Item: itemName,
       ItemCode: itemCode,
@@ -1991,11 +2024,14 @@ const processFixedTransactions = (sapTransactions, rebateItemMap, totalQuota, re
       Progress: progress.toFixed(1),
       QtyBal: qtyBal,
       Gtotal: sapTrans.Gtotal || 0,
+      PriceAfVAT: sapTrans.PriceAfVAT,
       EligibilityStatus: eligibilityStatus,
+      QuotaMetThisMonth: eligibilityStatus === 'Eligible',
       CumulativeQtyForReb: currentCumulative,
       ItemCumulativeQty: currentCumulative,
       InvoiceNumber: sapTrans.InvoiceNumber,
       CustomerReference: sapTrans.CustomerReference,
+      OriginalInvoiceNumber: sapTrans.OriginalInvoiceNumber,
       RebateItemCode: rebateItem.itemCode,
       RebateItemName: rebateItem.itemName,
       IsEmptyData: false,
@@ -2007,234 +2043,328 @@ const processFixedTransactions = (sapTransactions, rebateItemMap, totalQuota, re
       TotalQtyForReb: qtyForReb,
       RebateType: 'Fixed',
       Is25kgItem: itemName && itemName.toLowerCase().includes('25kg'),
-      Treetype: treetype, 
-      CalculationNote: itemName && itemName.toLowerCase().includes('25kg') && unitPerQty > 1 ? 
-        `${actualSales} ÷ ${unitPerQty} = ${qtyForReb.toFixed(2)}` : null,
-      IsAdjustedForReturns: sapTrans.IsAdjustedForReturns || false,
-      OriginalQuantity: sapTrans.OriginalQuantity,
-      ReturnQuantity: sapTrans.ReturnQuantity,
-      AdjustmentNotes: sapTrans.AdjustmentNotes
-    });
-  });
-
-  // Add return transactions as separate entries (they don't affect cumulative)
-  returnTransactions.forEach(returnTrans => {
-    transactions.push({
-      Date: returnTrans.Date,
-      Item: returnTrans.Item,
-      ItemCode: returnTrans.ItemCode,
-      ActualSales: returnTrans.ActualSales, // Negative value
-      QtyForReb: 0,
-      Progress: '0.0',
-      QtyBal: 0,
-      EligibilityStatus: 'Return',
-      CumulativeQtyForReb: 0,
-      InvoiceNumber: returnTrans.InvoiceNumber,
-      CustomerReference: returnTrans.CustomerReference,
-      IsReturn: true,
-      ReturnDate: returnTrans.ReturnDate,
-      OriginalInvoiceNumber: returnTrans.OriginalInvoiceNumber,
-      IsAdjustedForReturns: true,
-      AdjustmentNotes: returnTrans.AdjustmentNotes,
-      RebateType: 'Fixed',
-      Gtotal: sapTrans.Gtotal || 0,
+      Treetype: treetype,
+      AdjustmentNotes: sapTrans.AdjustmentNotes,
+      CalculationNote: isReturn
+        ? `ARCM ${sapTrans.InvoiceNumber}: ${qtyForReb.toFixed(2)} × ₱${rebatePerBag.toFixed(2)} = ₱${(qtyForReb * rebatePerBag).toFixed(2)}`
+        : itemName && itemName.toLowerCase().includes('25kg') && unitPerQty > 1
+          ? `${actualSales} ÷ ${unitPerQty} = ${qtyForReb.toFixed(2)}`
+          : `${qtyForReb.toFixed(2)} × ₱${rebatePerBag.toFixed(2)} = ₱${(qtyForReb * rebatePerBag).toFixed(2)}`
     });
   });
 
   return transactions;
 };
 
-const processIncrementalTransactions = (sapTransactions, rebateItemMap, customerRanges, rebateDetails) => {
+const processIncrementalTransactions = (
+  sapTransactions,
+  rebateItemMap,
+  customerRanges,
+  rebateDetails,
+  frequency = 'Quarterly',
+  itemRangesMap = new Map()
+) => {
   const transactions = [];
-  
-  // Use customer ranges if available
-  const sortedRanges = customerRanges && customerRanges.length > 0 ? 
-    [...customerRanges].sort((a, b) => a.minQty - b.minQty) : [];
-  
-  // Continuous cumulative tracking (not monthly reset)
-  let cumulativeQty = 0;
-  let currentRange = null;
-  let rebatePerBag = 0;
-  
-  const sortedSapTransactions = [...sapTransactions].sort((a, b) => 
-    new Date(a.Date) - new Date(b.Date)
+
+  const isMonthly = String(frequency || '').toLowerCase() === 'monthly';
+
+  const sortedRanges = customerRanges && customerRanges.length > 0
+    ? [...customerRanges].sort((a, b) => a.minQty - b.minQty)
+    : [];
+
+  const sortedSapTransactions = [...sapTransactions].sort(
+    (a, b) => new Date(a.Date) - new Date(b.Date)
   );
-  
-  sortedSapTransactions.forEach((sapTrans, index) => {
-    const actualSales = sapTrans.ActualSales || 0;
-    const itemCode = sapTrans.ItemCode;
-    const itemName = sapTrans.Item;
-    
-    const rebateItem = rebateItemMap.get(itemCode);
+
+  // ─────────────────────────────────────────────────────────────────
+  // PASS 1 — build raw rows with running cumulative per period
+  // ─────────────────────────────────────────────────────────────────
+  let cumulativeQty = 0;
+  let lastMonthKey  = null;
+
+  const rawRows = [];
+
+  sortedSapTransactions.forEach(sapTrans => {
+    const rebateItem = rebateItemMap.get(sapTrans.ItemCode);
     if (!rebateItem) return;
-    
-    // Calculate QtyForReb
+
+    const actualSales = sapTrans.ActualSales || 0;
+    const itemName    = sapTrans.Item || '';
+    const unitPerQty  = rebateItem.unitPerQty || 1;
+
     let qtyForReb = actualSales;
-    let unitPerQty = rebateItem.unitPerQty || 1;
-    
-    // For ALL items, check if 25kg
-    if (itemName && itemName.toLowerCase().includes('25kg')) {
+    if (itemName.toLowerCase().includes('25kg')) {
       qtyForReb = unitPerQty > 1 ? actualSales / unitPerQty : actualSales;
     }
-    
-    // Update cumulative qty
+
+    const d = new Date(sapTrans.Date);
+    const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+
+    // Reset cumulative at each month boundary when Monthly
+    if (isMonthly && lastMonthKey !== null && monthKey !== lastMonthKey) {
+      cumulativeQty = 0;
+    }
+    lastMonthKey = monthKey;
+
     cumulativeQty += qtyForReb;
-    
-    // Find applicable range based on cumulative qty
-    let newRange = null;
-    let newRebatePerBag = 0;
-    
+
+    rawRows.push({
+      sapTrans,
+      rebateItem,
+      itemName,
+      itemCode:    sapTrans.ItemCode,
+      actualSales,
+      qtyForReb,
+      unitPerQty,
+      monthKey,
+      monthName:   d.toLocaleDateString('en-US', { month: 'long' }),
+      cumulativeQty,
+      periodKey:   isMonthly ? monthKey : 'period',   // one bucket per period
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // PASS 2 — for each period, find the FINAL tier it reaches, and
+  //          lock that single rate for the whole period (retroactive)
+  // ─────────────────────────────────────────────────────────────────
+  const periodFinalQty = new Map();
+  rawRows.forEach(r => {
+    // Last row in this period holds the final cumulative
+    periodFinalQty.set(r.periodKey, r.cumulativeQty);
+  });
+
+  const periodRate = new Map();   // periodKey → number
+
+  rawRows.forEach(r => {
+    if (periodRate.has(r.periodKey)) return;
+
+    const finalQty = periodFinalQty.get(r.periodKey) || 0;
+
+    // (a) customer-level ranges
+    let bestRange = null;
     for (const range of sortedRanges) {
-      if (cumulativeQty >= range.minQty && 
-          (cumulativeQty <= range.maxQty || !range.maxQty || range.maxQty === 0)) {
-        newRange = range;
-        newRebatePerBag = range.rebatePerBag || 0;
+      if (finalQty >= range.minQty &&
+         (finalQty <= range.maxQty || !range.maxQty || range.maxQty === 0)) {
+        bestRange = range;
         break;
       }
     }
-    
-    // Update current range if changed
-    if (!currentRange || (newRange && newRange.rangeNo !== currentRange?.rangeNo)) {
-      currentRange = newRange;
-      rebatePerBag = newRebatePerBag;
+    // Beyond all customer ranges → use the last one
+    if (!bestRange && sortedRanges.length > 0) {
+      const last = sortedRanges[sortedRanges.length - 1];
+      if (finalQty >= (last.minQty || 0)) bestRange = last;
     }
-    
-    // Calculate progress
-    let progress = 0;
-    if (currentRange) {
-      const rangeMin = currentRange.minQty || 0;
-      const rangeMax = currentRange.maxQty || cumulativeQty * 2;
-      const rangeSpan = Math.max(rangeMax - rangeMin, 1);
-      progress = Math.min(((cumulativeQty - rangeMin) / rangeSpan) * 100, 100);
-    } else if (sortedRanges.length > 0) {
-      const firstRange = sortedRanges[0];
-      progress = Math.min((cumulativeQty / (firstRange.minQty || 1)) * 100, 100);
-    }
-    
-    // Determine eligibility
-    let eligibilityStatus = 'Not Eligible';
-    let statusMessage = 'Not Eligible';
-    
-    if (currentRange) {
-      eligibilityStatus = 'Eligible';
-      statusMessage = `Eligible for ₱${rebatePerBag.toFixed(2)}`;
-    } else if (cumulativeQty > 0) {
-      eligibilityStatus = 'Progressing';
-      const nextRange = sortedRanges.find(r => r.minQty > cumulativeQty);
-      if (nextRange) {
-        const remaining = nextRange.minQty - cumulativeQty;
-        statusMessage = `Need ${remaining.toFixed(0)} more for Range ${nextRange.rangeNo}`;
+
+    // (b) item-level ranges fallback
+    if (!bestRange && itemRangesMap.has(r.itemCode)) {
+      const itemRanges = [...itemRangesMap.get(r.itemCode)]
+        .sort((a, b) => a.minQty - b.minQty);
+
+      for (const range of itemRanges) {
+        if (finalQty >= range.minQty &&
+           (finalQty <= range.maxQty || !range.maxQty || range.maxQty === 0)) {
+          bestRange = range;
+          break;
+        }
+      }
+      if (!bestRange && itemRanges.length > 0) {
+        const last = itemRanges[itemRanges.length - 1];
+        if (finalQty >= (last.minQty || 0)) bestRange = last;
       }
     }
-    
-    // Calculate rebate amount for this transaction
-    const rebateAmount = currentRange ? (qtyForReb * rebatePerBag) : 0;
-    
-    const monthKey = `${new Date(sapTrans.Date).getFullYear()}-${String(new Date(sapTrans.Date).getMonth() + 1).padStart(2, '0')}`;
-    const monthName = new Date(sapTrans.Date).toLocaleDateString('en-US', { month: 'long' });
-    
+
+    // (c) item's own configured rate as a last resort
+    const fallbackRate =
+      r.rebateItem.rebatePerBag ||
+      r.rebateItem.customerRebatePerBag ||
+      0;
+
+    const rate = bestRange?.rebatePerBag || fallbackRate || 0;
+    periodRate.set(r.periodKey, rate);
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // PASS 3 — emit rows, applying the period-wide rate to every row
+  // ─────────────────────────────────────────────────────────────────
+  rawRows.forEach((r, index) => {
+    const rate = periodRate.get(r.periodKey) || 0;
+    const rebateAmount = rate > 0 ? round2(r.qtyForReb * rate) : 0; // ✅ Added round2
+
+    // Progress bar = how far the running total got toward the first tier
+    let progress = 0;
+    if (sortedRanges.length > 0) {
+      const firstMin = sortedRanges[0].minQty || 1;
+      progress = Math.min((r.cumulativeQty / firstMin) * 100, 100);
+    }
+
+    let eligibilityStatus = 'Not Eligible';
+    let statusMessage     = 'Not Eligible';
+
+    if (rate > 0) {
+      eligibilityStatus = 'Eligible';
+      statusMessage     = `Rate ₱${rate.toFixed(2)} (retroactive)`;
+    } else if (r.cumulativeQty > 0) {
+      eligibilityStatus = 'Progressing';
+      statusMessage     = 'Working toward first range';
+    }
+
     transactions.push({
-      Date: sapTrans.Date,
-      Item: itemName,
-      ItemCode: itemCode,
-      ActualSales: actualSales,
-      QtyForReb: parseFloat(qtyForReb.toFixed(2)),
+      Date: r.sapTrans.Date,
+      Item: r.itemName,
+      ItemCode: r.itemCode,
+      TransType: r.sapTrans.TransType || 'AR Invoice',
+      IsReturn: !!r.sapTrans.IsReturn,
+      PriceAfVAT: r.sapTrans.PriceAfVAT,
+      ActualSales: r.actualSales,
+      QtyForReb: parseFloat(r.qtyForReb.toFixed(2)),
       Progress: parseFloat(progress.toFixed(1)),
-      QtyBal: parseFloat(cumulativeQty.toFixed(2)),
+      QtyBal: parseFloat(r.cumulativeQty.toFixed(2)),
       EligibilityStatus: eligibilityStatus,
+      QuotaMetThisMonth: rate > 0,
       StatusMessage: statusMessage,
-      CumulativeQtyForReb: parseFloat(cumulativeQty.toFixed(2)),
-      InvoiceNumber: sapTrans.InvoiceNumber,
-      CustomerReference: sapTrans.CustomerReference,
-      RebateItemCode: rebateItem.itemCode,
-      RebateItemName: rebateItem.itemName,
+      CumulativeQtyForReb: parseFloat(r.cumulativeQty.toFixed(2)),
+      InvoiceNumber: r.sapTrans.InvoiceNumber,
+      CustomerReference: r.sapTrans.CustomerReference,
+      RebateItemCode: r.rebateItem.itemCode,
+      RebateItemName: r.rebateItem.itemName,
       RebateType: 'Incremental',
-      MonthKey: monthKey,
-      Gtotal: sapTrans.Gtotal || 0,
-      MonthName: monthName,
-      CurrentRange: currentRange?.rangeNo || null,
-      RebatePerBag: rebatePerBag,
-      RebateAmount: parseFloat(rebateAmount.toFixed(2)),
-      RangeMin: currentRange?.minQty || 0,
-      RangeMax: currentRange?.maxQty || 0,
-      IsNewMonth: index === 0 || 
-        new Date(sapTrans.Date).getMonth() !== new Date(sortedSapTransactions[index - 1].Date).getMonth(),
-      CalculationNote: currentRange ? 
-        `In Range ${currentRange.rangeNo} (${currentRange.minQty}-${currentRange.maxQty || '∞'})` : 
-        (itemName && itemName.toLowerCase().includes('25kg') && unitPerQty > 1 ? 
-          `${actualSales} ÷ ${unitPerQty} = ${qtyForReb.toFixed(2)}` : 
-          'Not in any range'),
-      UnitPerQty: unitPerQty,
-      Is25kgItem: itemName && itemName.toLowerCase().includes('25kg')
+      MonthKey: r.monthKey,
+      Gtotal: r.sapTrans.Gtotal || 0,
+      MonthName: r.monthName,
+      RebatePerBag: rate,                                     // ✅ same for every row in the period
+      RebateAmount: rebateAmount,
+      IsNewMonth:
+        index === 0 || r.monthKey !== rawRows[index - 1].monthKey,
+      CalculationNote: rate > 0
+        ? `Retroactive rate ₱${rate.toFixed(2)} applied to all contributing rows`
+        : 'Not in any range',
+      UnitPerQty: r.unitPerQty,
+      Is25kgItem: r.itemName && r.itemName.toLowerCase().includes('25kg'),
     });
   });
-  
+
   return transactions;
 };
 
 const processPercentageTransactions = (sapTransactions, rebateItemMap, rebateDetails, frequency) => {
   const transactions = [];
-  const itemCumulativeMap = new Map();
+  const monthNames = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
+  const monthlyQuotas = rebateDetails.quotas || {};
 
   const sortedSapTransactions = [...sapTransactions].sort((a, b) => 
     new Date(a.Date) - new Date(b.Date)
   );
 
-  // Get total quota from rebate details
-  const totalQuota = Object.values(rebateDetails.quotas || {}).reduce((sum, quota) => sum + quota, 0);
-  const monthlyQuota = totalQuota / (Object.keys(rebateDetails.quotas || {}).length || 3);
+  // ══════════════════════════════════════════════════════════════════════
+  // PASS 1 — sum adjusted qty per month (respects the 25kg ÷ 2 rule)
+  // ══════════════════════════════════════════════════════════════════════
+  const monthTotals = new Map();   // "YYYY-MM" → { qty, monthName }
+
+  sortedSapTransactions.forEach(sapTrans => {
+    const rebateItem = rebateItemMap.get(sapTrans.ItemCode);
+    if (!rebateItem) return;
+
+    const itemName   = sapTrans.Item || '';
+    const unitPerQty = rebateItem.unitPerQty || 1;
+    let qtyForReb    = sapTrans.ActualSales || 0;
+
+    if (itemName.toLowerCase().includes('25kg')) {
+      qtyForReb = unitPerQty > 1 ? qtyForReb / unitPerQty : qtyForReb;
+    }
+
+    const d = new Date(sapTrans.Date);
+    const monthKey  = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const monthName = monthNames[d.getMonth()];
+
+    if (!monthTotals.has(monthKey)) {
+      monthTotals.set(monthKey, { qty: 0, monthName });
+    }
+    monthTotals.get(monthKey).qty += qtyForReb;
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Determine each month's FINAL verdict (met quota or not)
+  // ══════════════════════════════════════════════════════════════════════
+  const monthVerdict = new Map();  // monthKey → { met, target, achieved, monthName }
+
+  monthTotals.forEach((data, monthKey) => {
+    const target   = parseFloat(monthlyQuotas[data.monthName]) || 0;
+    const achieved = data.qty;
+    // No quota configured for this month → treat as always eligible
+    const met      = target > 0 ? achieved >= target : true;
+
+    monthVerdict.set(monthKey, {
+      met,
+      target,
+      achieved,
+      monthName: data.monthName,
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // PASS 2 — build rows, applying the month's verdict to every row
+  // ══════════════════════════════════════════════════════════════════════
+  const runningByMonth = new Map(); // for progressive display only
 
   sortedSapTransactions.forEach(sapTrans => {
     const actualSales = sapTrans.ActualSales || 0;
-    const priceAfVAT = sapTrans.PriceAfVAT || 0; 
-    const itemCode = sapTrans.ItemCode;
-    const itemName = sapTrans.Item;
-    const treetype = sapTrans.Treetype;
-    
-    const rebateItem = rebateItemMap.get(itemCode);
-    
+    const priceAfVAT  = sapTrans.PriceAfVAT  || 0;
+    const itemName    = sapTrans.Item        || '';
+    const treetype    = sapTrans.Treetype;
+
+    const rebateItem = rebateItemMap.get(sapTrans.ItemCode);
     if (!rebateItem) return;
-    
-    // Calculate QtyForReb
+
+    const unitPerQty = rebateItem.unitPerQty      || 1;
+    const percentage = rebateItem.percentagePerBag || 0;
+
     let qtyForReb = actualSales;
-    let unitPerQty = rebateItem.unitPerQty || 1;
-    let percentage = rebateItem.percentagePerBag || 0;
-    
-    // For ALL items, check if 25kg
-    if (itemName && itemName.toLowerCase().includes('25kg')) {
+    if (itemName.toLowerCase().includes('25kg')) {
       qtyForReb = unitPerQty > 1 ? actualSales / unitPerQty : actualSales;
     }
-    
-    if (!itemCumulativeMap.has(itemCode)) {
-      itemCumulativeMap.set(itemCode, 0);
-    }
-    
-    const currentCumulative = itemCumulativeMap.get(itemCode) + qtyForReb;
-    itemCumulativeMap.set(itemCode, currentCumulative);
-    
-    const qtyBal = currentCumulative;
-    const progress = totalQuota > 0 ? (currentCumulative / totalQuota) * 100 : 0;
-    
-    const rebateAmount = (actualSales * priceAfVAT * percentage) / 100;
-    
-    let eligibilityStatus = 'Not Eligible';
-    if (currentCumulative >= totalQuota) {
+
+    const d = new Date(sapTrans.Date);
+    const monthKey  = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const monthName = monthNames[d.getMonth()];
+
+    // Running total for progress display
+    if (!runningByMonth.has(monthKey)) runningByMonth.set(monthKey, 0);
+    runningByMonth.set(monthKey, runningByMonth.get(monthKey) + qtyForReb);
+    const running = runningByMonth.get(monthKey);
+
+    const verdict = monthVerdict.get(monthKey) || { met: true, target: 0, achieved: 0, monthName };
+
+    // Raw amount for this line (what WOULD be earned)
+    const gtotal          = sapTrans.Gtotal || 0;
+    const rawRebateAmount = round2((gtotal * percentage) / 100); // ✅ Added round2
+
+    // Quota gate: only credit rebate if the MONTH met its quota
+    const finalRebateAmount = verdict.met ? rawRebateAmount : 0;
+
+    // Status label — reflects the whole month, not the row
+    let eligibilityStatus;
+    if (!verdict.met) {
+      eligibilityStatus = 'Not Eligible';
+    } else {
       eligibilityStatus = 'Eligible';
-    } else if (currentCumulative >= (totalQuota * 0.7)) {
-      eligibilityStatus = 'Partially Eligible';
     }
-    
+
     transactions.push({
       Date: sapTrans.Date,
       Item: itemName,
-      ItemCode: itemCode,
+      ItemCode: sapTrans.ItemCode,
+      TransType: sapTrans.TransType || 'AR Invoice',
+      IsReturn: !!sapTrans.IsReturn,
       ActualSales: actualSales,
       QtyForReb: qtyForReb,
-      Progress: progress.toFixed(1),
-      QtyBal: qtyBal,
+      Progress: verdict.target > 0
+        ? Math.min((running / verdict.target) * 100, 100).toFixed(1)
+        : '0.0',
+      QtyBal: running,
       EligibilityStatus: eligibilityStatus,
-      CumulativeQtyForReb: currentCumulative,
-      ItemCumulativeQty: currentCumulative,
+      CumulativeQtyForReb: running,
+      ItemCumulativeQty: running,
       InvoiceNumber: sapTrans.InvoiceNumber,
       CustomerReference: sapTrans.CustomerReference,
       RebateItemCode: rebateItem.itemCode,
@@ -2242,20 +2372,27 @@ const processPercentageTransactions = (sapTransactions, rebateItemMap, rebateDet
       IsEmptyData: false,
       IsMatchingItem: true,
       Gtotal: sapTrans.Gtotal || 0,
-      MonthQuota: monthlyQuota,
-      CumulativeQtyForRebDisplay: currentCumulative,
+      MonthQuota: verdict.target,
+      MonthKey: monthKey,
+      MonthName: monthName,
+      MonthTotalQty: verdict.achieved,       // ⬅️ full month's achieved qty
       UnitPerQty: unitPerQty,
       Percentage: percentage,
       TotalQtyForReb: qtyForReb,
-      RebateAmount: rebateAmount,
+      RebateAmount: finalRebateAmount,        // ⬅️ 0 when month failed quota
+      RawRebateAmount: rawRebateAmount,       // ⬅️ keep original for tooltip
       PriceAfVAT: priceAfVAT,
       RebateType: 'Percentage',
-      Is25kgItem: itemName && itemName.toLowerCase().includes('25kg'),
-      Treetype: treetype, // ADD THIS LINE - pass Treetype to frontend
+      Is25kgItem: itemName.toLowerCase().includes('25kg'),
+      Treetype: treetype,
       IsInvoiceType: treetype === 'I',
-      CalculationNote: itemName && itemName.toLowerCase().includes('25kg') && unitPerQty > 1 ? 
-        `${actualSales} ÷ ${unitPerQty} = ${qtyForReb.toFixed(2)}` : 
-        `${actualSales} × ${priceAfVAT.toFixed(2)} × ${percentage}% = ${rebateAmount.toFixed(2)}`
+      QuotaMetThisMonth: verdict.met,         // ⬅️ frontend flag
+      CalculationNote:
+        itemName.toLowerCase().includes('25kg') && unitPerQty > 1
+          ? `${actualSales} ÷ ${unitPerQty} = ${qtyForReb.toFixed(2)}`
+          : `${actualSales} × ${priceAfVAT.toFixed(2)} × ${percentage}% = ${rawRebateAmount.toFixed(2)}${
+              verdict.met ? '' : ' — quota not met, ₱0 credited'
+            }`,
     });
   });
 
@@ -3388,6 +3525,7 @@ router.get('/rebates-summary', async (req, res) => {
         T0.DateTo,
         T0.IsActive,
         T0.Frequency,
+        T0.QuotaType,
         T1.CardCode,
         T1.CardName,
         T1.QtrRebate,
@@ -3420,6 +3558,7 @@ router.get('/rebates-summary', async (req, res) => {
         T0.DateTo,
         T0.IsActive,
         T0.Frequency,
+        T0.QuotaType,
         T1.CardCode,
         T1.CardName,
         T1.QtrRebate,
@@ -3453,6 +3592,7 @@ router.get('/rebates-summary', async (req, res) => {
         T0.DateTo,
         T0.IsActive,
         T0.Frequency,
+        T0.QuotaType,
         T1.CardCode,
         T1.CardName,
         T1.QtrRebate,
@@ -3544,6 +3684,7 @@ router.get('/rebates-summary', async (req, res) => {
           dateTo: row.DateTo,
           isActive: row.IsActive === '1' || row.IsActive === 1 || row.IsActive === true,
           frequency: row.Frequency || 'Quarterly',
+          quotaType: row.QuotaType || 'N/A',
           qtrRebate: row.QtrRebate || 0,
           // ADDED: Store the created date for sorting
           createdDate: createdDate,
@@ -3838,6 +3979,7 @@ if (hasPayoutHistory) {
         dateFrom: customer.dateFrom ? new Date(customer.dateFrom).toISOString().split('T')[0] : '',
         dateTo: customer.dateTo ? new Date(customer.dateTo).toISOString().split('T')[0] : '',
         frequency: customer.frequency || 'Quarterly',
+        quotaType: customer.quotaType || 'N/A',
         isActive: customer.isActive,
         // PROGRESS CALCULATIONS (restored)
         progress: Math.round(progress),
@@ -4010,11 +4152,11 @@ router.get('/metrics', async (req, res) => {
   let pool;
   try {
     const { db } = req.query;
-    
+
     const databaseToUse = db || 'VCP';
-    
+
     pool = await getPoolWithFallback(databaseToUse);
-    
+
     if (!pool) {
       return res.status(500).json({
         success: false,
@@ -4031,47 +4173,77 @@ router.get('/metrics', async (req, res) => {
       WHERE TABLE_NAME = 'PayoutHistory' AND TABLE_SCHEMA = 'dbo'
     `;
 
-    let totalRebatePaid = 0;
-    let totalUnpaidRebate = 0;
-    
+    let totalRebatePaid     = 0;
+    let totalUnpaidRebate   = 0;   // SUM(BaseAmount - AmountReleased) across PayoutHistory
+    let totalOutstanding    = 0;   // sum of positive customer balances only
+    let totalOverReleased   = 0;   // sum of negative customer balances only (≤ 0)
+    let totalNetBalance     = 0;   // true net (outstanding + over-released) — for reference
+
     try {
       const tableCheckResult = await pool.request().query(tableCheckQuery);
-      
+
       if (tableCheckResult.recordset[0]?.tableCount > 0) {
         console.log('PayoutHistory table exists, fetching metrics...');
-        
-        // Table exists, get data using YOUR SQL queries
+
+        // ── 1. Total Rebate Paid + Total Unpaid Rebate ────────────────────
+        //    Total Unpaid = SUM(BaseAmount - AmountReleased) over the whole
+        //    PayoutHistory table (per-line outstanding, not per-customer
+        //    latest balance).
         const totalRebatePaidQuery = `
           SELECT 
-            SUM(ISNULL(AmountReleased, 0)) AS [Total Rebate Paid]
+            SUM(ISNULL(AmountReleased, 0))                        AS [Total Rebate Paid],
+            SUM(ISNULL(BaseAmount, 0) - ISNULL(AmountReleased, 0)) AS [Total Unpaid Rebate]
           FROM PayoutHistory
         `;
 
-        const totalUnpaidRebateQuery = `
-          SELECT SUM(ISNULL(RebateBalance, 0)) AS [Total Unpaid Rebate]
-          FROM PayoutHistory p1
-          WHERE CreatedDate = (
-              SELECT MAX(CreatedDate)
-              FROM PayoutHistory p2
-              WHERE p2.CardCode = p1.CardCode
-          )
-          AND CardCode IS NOT NULL
+        // ── 2. Balance breakdown — take each customer's LATEST RebateBalance
+        //       (the same row your original query used: MAX(CreatedDate) per
+        //       CardCode), then classify each customer's balance as
+        //       outstanding or over-released.
+        //
+        //       Balance  > 0  →  outstanding (customer still owed)
+        //       Balance  < 0  →  over-released (customer was over-paid)
+        //       Balance == 0  →  settled (ignored in both buckets)
+        const balanceBreakdownQuery = `
+          SELECT
+            SUM(CASE WHEN CustomerBalance > 0 THEN CustomerBalance ELSE 0 END)  AS [Total Outstanding],
+            SUM(CASE WHEN CustomerBalance < 0 THEN CustomerBalance ELSE 0 END)  AS [Total OverReleased],
+            SUM(CustomerBalance)                                                AS [Total Net Balance]
+          FROM (
+            SELECT
+              p1.CardCode,
+              ISNULL(p1.RebateBalance, 0) AS CustomerBalance
+            FROM PayoutHistory p1
+            WHERE p1.CreatedDate = (
+                SELECT MAX(p2.CreatedDate)
+                FROM PayoutHistory p2
+                WHERE p2.CardCode = p1.CardCode
+            )
+            AND p1.CardCode IS NOT NULL
+          ) AS CustomerBalances
         `;
 
-        console.log('🔍 Executing SQL for Total Rebate Paid...');
+        console.log('🔍 Executing SQL for Total Rebate Paid / Unpaid...');
         const paidResult = await pool.request().query(totalRebatePaidQuery);
-        
-        console.log('🔍 Executing SQL for Total Unpaid Rebate...');
-        const unpaidResult = await pool.request().query(totalUnpaidRebateQuery);
 
-        totalRebatePaid = paidResult.recordset[0]?.['Total Rebate Paid'] || 0;
-        totalUnpaidRebate = unpaidResult.recordset[0]?.['Total Unpaid Rebate'] || 0;
+        console.log('🔍 Executing SQL for Balance breakdown...');
+        const balanceResult = await pool.request().query(balanceBreakdownQuery);
+
+        totalRebatePaid   = Number(paidResult.recordset[0]?.['Total Rebate Paid'])   || 0;
+        totalUnpaidRebate = Number(paidResult.recordset[0]?.['Total Unpaid Rebate']) || 0;
+
+        totalOutstanding  = Number(balanceResult.recordset[0]?.['Total Outstanding'])  || 0;
+        totalOverReleased = Number(balanceResult.recordset[0]?.['Total OverReleased']) || 0;
+        totalNetBalance   = Number(balanceResult.recordset[0]?.['Total Net Balance'])  || 0;
 
         console.log('📊 PayoutHistory results:', {
           totalRebatePaid,
           totalUnpaidRebate,
-          paidResultColumns: paidResult.recordset[0] ? Object.keys(paidResult.recordset[0]) : [],
-          unpaidResultColumns: unpaidResult.recordset[0] ? Object.keys(unpaidResult.recordset[0]) : []
+          totalOutstanding,
+          totalOverReleased,
+          totalNetBalance,
+          paidColumns:    paidResult.recordset[0]    ? Object.keys(paidResult.recordset[0])    : [],
+          balanceColumns: balanceResult.recordset[0] ? Object.keys(balanceResult.recordset[0]) : [],
         });
       } else {
         console.log('⚠️ PayoutHistory table does not exist, using defaults');
@@ -4109,7 +4281,7 @@ router.get('/metrics', async (req, res) => {
       const currentDate = new Date();
       const currentMonth = currentDate.getMonth() + 1;
       const currentYear = currentDate.getFullYear();
-      
+
       const newCustomersQuery = `
         SELECT COUNT(DISTINCT CardCode) as newCustomersThisMonth
         FROM (
@@ -4127,25 +4299,43 @@ router.get('/metrics', async (req, res) => {
         .input('currentMonth', sql.Int, currentMonth)
         .input('currentYear', sql.Int, currentYear)
         .query(newCustomersQuery);
-      
+
       newCustomersThisMonth = newResult.recordset[0]?.newCustomersThisMonth || 0;
       console.log(`New customers this month: ${newCustomersThisMonth}`);
     } catch (newError) {
       console.log('New customers query failed:', newError.message);
     }
 
-    // Format currency values
-    const formatCurrency = (amount) => {
-      return parseFloat(amount).toFixed(2);
-    };
+    // ── Snap sub-cent floating-point noise to zero so a balanced book
+    //    never renders as red parentheses on the dashboard.
+    const EPS = 0.005;
+    const snap = (n) => (Math.abs(n) < EPS ? 0 : n);
 
     const formattedMetrics = {
-      totalRebatePaid: totalRebatePaid,
-      totalUnpaidRebate: totalUnpaidRebate,
-      activeCustomers: activeCustomers,
-      newCustomersThisMonth: newCustomersThisMonth,
-      totalRebatePaidValue: parseFloat(totalRebatePaid),
-      totalUnpaidRebateValue: parseFloat(totalUnpaidRebate)
+      // ── Headline figures ──────────────────────────────────────────────
+      totalRebatePaid:          snap(totalRebatePaid),
+
+      // "Total Unpaid Rebate" = SUM(BaseAmount - AmountReleased) from
+      // PayoutHistory (per-line outstanding).
+      totalUnpaidRebate:        snap(totalUnpaidRebate),
+
+      // ── Split buckets — kept as separate, independent figures ─────────
+      totalOutstandingRebate:   snap(totalOutstanding),    // ≥ 0
+      totalOverReleasedRebate:  snap(totalOverReleased),   // ≤ 0
+
+      // Reference only — not surfaced as a card. Equals
+      // totalOutstandingRebate + totalOverReleasedRebate.
+      totalNetBalance:          snap(totalNetBalance),
+
+      activeCustomers,
+      newCustomersThisMonth,
+
+      // ── Pre-parsed numeric mirrors (some clients consume these) ───────
+      totalRebatePaidValue:         parseFloat(snap(totalRebatePaid).toFixed(2)),
+      totalUnpaidRebateValue:       parseFloat(snap(totalUnpaidRebate).toFixed(2)),
+      totalOutstandingRebateValue:  parseFloat(snap(totalOutstanding).toFixed(2)),
+      totalOverReleasedRebateValue: parseFloat(snap(totalOverReleased).toFixed(2)),
+      totalNetBalanceValue:         parseFloat(snap(totalNetBalance).toFixed(2)),
     };
 
     console.log('📊 Final dashboard metrics:', formattedMetrics);
@@ -4428,37 +4618,30 @@ router.get('/customer/:customerCode/details', async (req, res) => {
         CustomerInfo.name,
         CustomerInfo.status,
         CustomerInfo.enrollmentDate,
-        RP.Frequency  -- ADD THIS LINE to get frequency
+        CustomerInfo.RebateCode,        -- ← expose it so we can log/verify
+        RP.Frequency,
+        RP.QuotaType 
       FROM (
-        SELECT 
-          CardCode as code,
-          CardName as name,
-          'Active' as status,
-          GETDATE() as enrollmentDate,
-          RebateCode
+        SELECT CardCode as code, CardName as name, 'Active' as status,
+              GETDATE() as enrollmentDate, RebateCode
         FROM FixCustRebate WHERE CardCode = @customerCode
         UNION
-        SELECT 
-          CardCode as code,
-          CardName as name,
-          'Active' as status,
-          GETDATE() as enrollmentDate,
-          RebateCode
+        SELECT CardCode as code, CardName as name, 'Active' as status,
+              GETDATE() as enrollmentDate, RebateCode
         FROM IncCustRebate WHERE CardCode = @customerCode
         UNION
-        SELECT 
-          CardCode as code,
-          CardName as name,
-          'Active' as status,
-          GETDATE() as enrollmentDate,
-          RebateCode
+        SELECT CardCode as code, CardName as name, 'Active' as status,
+              GETDATE() as enrollmentDate, RebateCode
         FROM PerCustRebate WHERE CardCode = @customerCode
       ) AS CustomerInfo
       LEFT JOIN RebateProgram RP ON CustomerInfo.RebateCode = RP.RebateCode
+      -- ← THE FIX: only the rebate the user actually opened
+      WHERE (@rebateCode IS NULL OR CustomerInfo.RebateCode = @rebateCode)
     `;
 
     const customerResult = await ownPool.request()
       .input('customerCode', sql.NVarChar(50), customerCode)
+      .input('rebateCode',  sql.NVarChar(50), rebateCode || null)   // ← NEW
       .query(customerQuery);
 
     if (customerResult.recordset.length === 0) {
@@ -4477,21 +4660,22 @@ router.get('/customer/:customerCode/details', async (req, res) => {
 });
 
     // Get rebate programs for this customer WITH FREQUENCY
-    const rebatesQuery = `
-      SELECT DISTINCT
-        T0.RebateCode,
-        T0.RebateType,
-        T0.SlpName as agent,
-        T0.DateFrom,
-        T0.DateTo,
-        T0.IsActive,
-        T0.Frequency  -- ADD THIS LINE
-      FROM RebateProgram T0
-      LEFT JOIN FixCustRebate T1 ON T0.RebateCode = T1.RebateCode
-      LEFT JOIN IncCustRebate T2 ON T0.RebateCode = T2.RebateCode
-      LEFT JOIN PerCustRebate T3 ON T0.RebateCode = T3.RebateCode
-      WHERE T1.CardCode = @customerCode OR T2.CardCode = @customerCode OR T3.CardCode = @customerCode
-    `;
+  const rebatesQuery = `
+    SELECT DISTINCT
+      T0.RebateCode,
+      T0.RebateType,
+      T0.SlpName as agent,
+      T0.DateFrom,
+      T0.DateTo,
+      T0.IsActive,
+      T0.Frequency,
+      T0.QuotaType                    -- ← so fallback actually works
+    FROM RebateProgram T0
+    LEFT JOIN FixCustRebate T1 ON T0.RebateCode = T1.RebateCode
+    LEFT JOIN IncCustRebate T2 ON T0.RebateCode = T2.RebateCode
+    LEFT JOIN PerCustRebate T3 ON T0.RebateCode = T3.RebateCode
+    WHERE T1.CardCode = @customerCode OR T2.CardCode = @customerCode OR T3.CardCode = @customerCode
+  `;
 
     const rebatesResult = await ownPool.request()
       .input('customerCode', sql.NVarChar(50), customerCode)
@@ -4557,21 +4741,33 @@ router.get('/customer/:customerCode/details', async (req, res) => {
       }
     }
 
-    res.json({
-      success: true,
-      data: {
-        ...customerInfo,
-        ...detailedData,
-        rebates: rebates,
-        agent: rebates.length > 0 ? rebates[0].agent : 'Not Assigned',
-        rebateType: rebates.length > 0 ? rebates[0].RebateType : 'Not Assigned',
-        rebateCode: rebates.length > 0 ? rebates[0].RebateCode : 'Not Assigned',
-        frequency: customerInfo.Frequency || (rebates.length > 0 ? rebates[0].Frequency : 'Quarterly'),
-        rebateDateFrom: rebates.length > 0 ? (rebates[0].DateFrom ? new Date(rebates[0].DateFrom).toISOString().split('T')[0] : '') : '',
-        rebateDateTo: rebates.length > 0 ? (rebates[0].DateTo ? new Date(rebates[0].DateTo).toISOString().split('T')[0] : '') : '',
-        dateRange: dateRangeInfo
-      }
-    });
+// Pick the exact rebate the user opened, not just the first row
+const targetRebate =
+  rebates.find(r => r.RebateCode === rebateCode) || rebates[0] || null;
+
+res.json({
+  success: true,
+  data: {
+    ...customerInfo,
+    ...detailedData,
+    rebates: rebates,
+    agent:      targetRebate ? targetRebate.agent      : 'Not Assigned',
+    rebateType: targetRebate ? targetRebate.RebateType : 'Not Assigned',
+    rebateCode: targetRebate ? targetRebate.RebateCode : 'Not Assigned',
+    frequency:  customerInfo.Frequency  || (targetRebate ? targetRebate.Frequency  : 'Quarterly'),
+
+    // THE FIX — prefer the exact match, then fall back to customerInfo
+    quotaType:  customerInfo.QuotaType
+             || (targetRebate ? targetRebate.QuotaType : null)
+             || 'N/A',
+
+    rebateDateFrom: targetRebate && targetRebate.DateFrom
+      ? new Date(targetRebate.DateFrom).toISOString().split('T')[0] : '',
+    rebateDateTo:   targetRebate && targetRebate.DateTo
+      ? new Date(targetRebate.DateTo).toISOString().split('T')[0]   : '',
+    dateRange: dateRangeInfo
+  }
+});
 
   } catch (error) {
     console.error('❌ Error fetching customer details:', error);
@@ -4779,113 +4975,61 @@ router.get('/debug/databases', async (req, res) => {
   }
 });
 
-const adjustForARCM = async (sapPool, customerCode, originalTransactions, startDate, endDate) => {
-  try {
-    const originalMap = new Map();
-    originalTransactions.forEach(trans => {
-      if (trans.InvoiceNumber) {
-        const key = `${trans.InvoiceNumber}_${trans.ItemCode}`;
-        originalMap.set(key, trans);
-      }
-    });
+// ────────────────────────────────────────────────────────────────────────
+// STEP 2 — fetchARCMRows: emits ORIN credit memos as SEPARATE negative
+// rows (never mutates the OINV invoice rows above).
+// ────────────────────────────────────────────────────────────────────────
+const fetchARCMRows = async (sapPool, customerCode, itemCodes, startDate, endDate) => {
+  // Only the rebate's own items matter
+  if (!itemCodes || itemCodes.length === 0) return [];
 
-    // Extend window forward to catch credit memos posted after the period closes
-    // (same fix as fetchSAPJournalEntries in payoutRoutes.js)
-    const today = new Date();
-    const periodEnd = new Date(endDate);
-    const effectiveEndDate = today > periodEnd ? today : periodEnd;
+  const paramNames = itemCodes.map((_, i) => `@arcmItem${i}`).join(', ');
 
-    // Match EITHER:
-    //  (a) properly linked credit memos (SAP "Copy From" → BaseRef + BaseType = 13), OR
-    //  (b) standalone credit memos where the user manually typed the invoice
-    //      DocNum into the U_Ar_Inv_No UDF instead of linking via Copy From
-    const arcmQuery = `
-      SELECT
-        T0.DocNum as CreditMemoNumber,
-        COALESCE(
-          NULLIF(NULLIF(LTRIM(RTRIM(CAST(T0.BaseRef AS NVARCHAR(50)))), ''), '0'),
-          NULLIF(LTRIM(RTRIM(T0.U_Ar_Inv_No)), '')
-        ) as OriginalDocNum,
-        T0.ItemCode,
-        T0.Dscription as Item,
-        ABS(T0.Quantity) as ReturnQuantity,
-        T0.BaseType,
-        CASE
-          WHEN T0.BaseRef IS NOT NULL AND T0.BaseRef != 0 THEN 'Linked'
-          ELSE 'Standalone (UDF)'
-        END as MatchSource
-      FROM
-        ORIN T0
-      WHERE
-        T0.CardCode = @customerCode
-        AND T0.DocDate >= @startDate
-        AND T0.DocDate <= @endDate
-        AND (
-              (T0.BaseRef IS NOT NULL AND T0.BaseRef != 0 AND T0.BaseType = 13)
-              OR
-              ((T0.BaseRef IS NULL OR T0.BaseRef = 0) AND T0.U_Ar_Inv_No IS NOT NULL AND LTRIM(RTRIM(T0.U_Ar_Inv_No)) != '')
-            )
-    `;
+  const request = sapPool.request()
+    .input('customerCode', sql.NVarChar(50), customerCode)
+    .input('startDate', sql.Date, startDate)
+    .input('endDate', sql.Date, endDate);
 
-    const arcmResult = await sapPool.request()
-      .input('customerCode', sql.NVarChar(50), customerCode)
-      .input('startDate', sql.Date, startDate)
-      .input('endDate', sql.Date, effectiveEndDate)
-      .query(arcmQuery);
+  itemCodes.forEach((code, i) => {
+    request.input(`arcmItem${i}`, sql.NVarChar(50), code);
+  });
 
-    if (arcmResult.recordset.length === 0) {
-      return originalTransactions;
-    }
+  const result = await request.query(`
+    SELECT
+      CONVERT(VARCHAR(10), T0.DocDate, 120) AS Date,
+      T0.DocNum                              AS CreditMemoNumber,
+      T0.ItemCode,
+      T0.Dscription                          AS Item,
+      ABS(T0.Quantity)                       AS ReturnQuantity,
+      ABS(T0.GTotal)                         AS GTotal,
+      T0.PriceAfVAT,
+      COALESCE(
+        NULLIF(NULLIF(LTRIM(RTRIM(CAST(T0.BaseRef AS NVARCHAR(50)))), ''), '0'),
+        NULLIF(LTRIM(RTRIM(T0.U_Ar_Inv_No)), '')
+      )                                      AS OriginalDocNum
+    FROM ORIN T0
+    WHERE T0.CardCode = @customerCode
+      AND T0.DocDate >= @startDate
+      AND T0.DocDate <= @endDate
+      AND T0.ItemCode IN (${paramNames})
+    ORDER BY T0.DocDate ASC, T0.DocNum ASC
+  `);
 
-    console.log(`📝 Found ${arcmResult.recordset.length} ARCM documents for customer ${customerCode}`);
-    arcmResult.recordset.forEach(r =>
-      console.log(`   CM ${r.CreditMemoNumber} → Invoice ${r.OriginalDocNum} (${r.MatchSource}), Item ${r.ItemCode}, Qty ${r.ReturnQuantity}`)
-    );
-
-    const adjustments = new Map();
-    arcmResult.recordset.forEach(arcm => {
-      if (arcm.OriginalDocNum) {
-        const key = `${arcm.OriginalDocNum}_${arcm.ItemCode}`;
-        if (!adjustments.has(key)) {
-          adjustments.set(key, { originalDocNum: arcm.OriginalDocNum, itemCode: arcm.ItemCode, totalReturnQty: 0 });
-        }
-        adjustments.get(key).totalReturnQty += arcm.ReturnQuantity || 0;
-      }
-    });
-
-    console.log(`📊 Applying adjustments to ${adjustments.size} original invoice items`);
-
-    const adjustedTransactions = originalTransactions.map(trans => {
-      const key = `${trans.InvoiceNumber}_${trans.ItemCode}`;
-      const adjustment = adjustments.get(key);
-
-      if (adjustment && adjustment.totalReturnQty > 0) {
-        const originalQty = trans.ActualSales || 0;
-        const adjustedQty = Math.max(0, originalQty - adjustment.totalReturnQty);
-
-        console.log(`✏️ Adjusting: Invoice ${trans.InvoiceNumber}, Item ${trans.ItemCode}`);
-        console.log(`   Original: ${originalQty}, Returns: ${adjustment.totalReturnQty}, Final: ${adjustedQty}`);
-
-        return {
-          ...trans,
-          ActualSales: adjustedQty,
-          QtyForReb: adjustedQty,
-          OriginalQuantity: originalQty,
-          ReturnQuantity: adjustment.totalReturnQty,
-          IsAdjustedForReturns: true,
-          AdjustmentNote: `Auto-adjusted for ${adjustment.totalReturnQty} returns`,
-          Treetype: trans.Treetype
-        };
-      }
-      return trans;
-    });
-
-    console.log(`✅ ARCM adjustment complete: ${adjustments.size} items adjusted`);
-    return adjustedTransactions;
-  } catch (error) {
-    console.error('❌ Error adjusting for ARCM documents:', error);
-    return originalTransactions;
-  }
+  return result.recordset.map(r => ({
+    TransType:             'ARCM',
+    IsReturn:              true,
+    Date:                  r.Date,
+    Item:                  r.Item,
+    ItemCode:              r.ItemCode,
+    ActualSales:           -Math.abs(r.ReturnQuantity || 0),   // negative qty
+    Gtotal:                -Math.abs(r.GTotal || 0),           // negative peso value
+    PriceAfVAT:            r.PriceAfVAT || 0,
+    InvoiceNumber:         r.CreditMemoNumber,
+    CustomerReference:     null,
+    Treetype:              'R',
+    OriginalInvoiceNumber: r.OriginalDocNum || null,
+    AdjustmentNotes:       `A/R Credit Memo ${r.CreditMemoNumber}`,
+  }));
 };
 
 

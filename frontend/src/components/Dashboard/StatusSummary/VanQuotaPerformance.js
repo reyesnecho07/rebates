@@ -1,6 +1,6 @@
 // src/components/Dashboard/VanQuotaPerformance.js
 import React, { useState, useEffect, useMemo } from 'react';
-import { RefreshCw, TrendingUp, Calendar,  BarChart2, } from 'lucide-react';
+import { RefreshCw, TrendingUp, Calendar, BarChart2, Lock } from 'lucide-react';
 import {
   AreaChart,
   Area,
@@ -22,14 +22,18 @@ const VanQuotaPerformance = ({
   setPeriodFrom,
   setPeriodTo,
   loadDetailedTransactionsData,
+  access,
 }) => {
-  const isDark = theme === 'dark';
+  const isDark  = theme === 'dark';
+  const canView = !!access?.canView;
+
   const [dailyData, setDailyData]   = useState([]);
   const [loading, setLoading]       = useState(false);
   const [summary, setSummary]       = useState(null);
 
   // ── Auto-load dates ──────────────────────────────────────────────────────
   useEffect(() => {
+    if (!canView) return;
     if (modalCustomer && (!periodFrom || !periodTo)) {
       const dateFrom =
         modalCustomer.details?.rebateDetails?.dateFrom ||
@@ -53,16 +57,18 @@ const VanQuotaPerformance = ({
         setPeriodTo(to.toISOString().split('T')[0]);
       }
     }
-  }, [modalCustomer, periodFrom, periodTo]);
+  }, [modalCustomer, periodFrom, periodTo, canView]);
 
   // ── Fetch daily transactions ──────────────────────────────────────────────
   useEffect(() => {
+    if (!canView) return;
     if (customerModalTab === 'quota' && modalCustomer?.code && modalCustomer?.rebateCode) {
       fetchDailyTransactions();
     }
-  }, [customerModalTab, modalCustomer]);
+  }, [customerModalTab, modalCustomer, canView]);
 
   const fetchDailyTransactions = async () => {
+    if (!canView) return;
     if (!modalCustomer?.code || !modalCustomer?.rebateCode) return;
     setLoading(true);
     try {
@@ -174,6 +180,25 @@ const VanQuotaPerformance = ({
     grid:    isDark ? '#334155'               : '#E2E8F0',
     axis:    isDark ? '#475569'               : '#CBD5E1',
   };
+
+  // ── Access denied state ────────────────────────────────────────────────────
+  if (!canView) {
+    return (
+      <div className={`h-full flex items-center justify-center ${T.bg}`}>
+        <div className="text-center max-w-xs px-6">
+          <div className={`w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-4 ${
+            isDark ? 'bg-red-900/20 border border-red-700/30' : 'bg-red-50 border border-red-200'
+          }`}>
+            <Lock size={22} className={isDark ? 'text-red-400' : 'text-red-600'} />
+          </div>
+          <h3 className={`text-sm font-bold mb-1 ${T.tp}`}>Access Restricted</h3>
+          <p className={`text-xs leading-relaxed ${T.ts}`}>
+            You don't have permission to view quota performance data.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // ── Tooltip ────────────────────────────────────────────────────────────────
   const CustomTooltip = ({ active, payload, label }) => {

@@ -1,14 +1,44 @@
+// src/components/Header.jsx
 import React, { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Sun, Moon, Loader2, CheckCircle, X } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import axios from 'axios';
 
+/* ─── Apple system colour language ───────────────────────────────────────── */
+const APPLE = {
+  blue:   "#0A84FF",
+  purple: "#BF5AF2",
+  red:    "#FF453A",
+  orange: "#FF9F0A",
+  green:  "#32D74B",
+  gray:   "#8E8E93",
+};
+
+const tokens = (isDark) => ({
+  ink:       isDark ? "#F2F2F7" : "#1C1C1E",
+  muted:     isDark ? "#98989F" : "#6E6E73",
+  faint:     isDark ? "#68686D" : "#AEAEB2",
+  glass:     isDark ? "rgba(30,30,36,0.6)"   : "rgba(255,255,255,0.65)",
+  glassDeep: isDark ? "rgba(24,24,28,0.9)"   : "rgba(255,255,255,0.95)",
+  hairline:  isDark ? "rgba(255,255,255,0.08)" : "rgba(60,60,67,0.12)",
+  rim:       isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.8)",
+  chipBg:    isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
+  hover:     isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
+  shadow:    isDark ? "0 20px 50px -14px rgba(0,0,0,0.65)" : "0 20px 50px -18px rgba(30,41,79,0.18)",
+  bg:        isDark ? "#000000" : "#EEF1F7",
+});
+
+const FONT = `
+  .hd-page, .hd-page * { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif; }
+  .hd-glass { -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%); }
+  @keyframes hd-pop { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+  .hd-pop { animation: hd-pop 0.2s cubic-bezier(0.16,1,0.3,1); }
+  @keyframes hd-fade { from { opacity: 0; } to { opacity: 1; } }
+  .hd-fade { animation: hd-fade 0.2s ease-out; }
+`;
+
 // ── Shared profile-sync constants ────────────────────────────────────────
-// These MUST match the ones used in Settings.jsx so both components read
-// and write the exact same localStorage key and react to the exact same
-// custom event. This is what keeps the navbar avatar and the Settings page
-// avatar in sync, in the same tab, instantly.
 const PROFILE_UPDATED_EVENT = 'app:profile-updated';
 const getProfileImageKey = (userCode) => `userProfileImage_${userCode}`;
 
@@ -18,9 +48,9 @@ const Header = ({
   userCode = '',
   initials = '',
   logo,
-  darkModeLogo, // Dark mode logo (with white text)
+  darkModeLogo,
   theme = 'light',
-  profileImage: profileImageProp, // optional controlled value from a parent (e.g. Settings)
+  profileImage: profileImageProp,
 }) => {
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -35,32 +65,28 @@ const Header = ({
 
   const { theme: currentTheme, updateTheme } = useTheme();
   const isDark = currentTheme === 'dark';
+  const K = tokens(isDark);
+
   const fileInputRef = useRef(null);
   const profileDropdownRef = useRef(null);
   const profileButtonRef = useRef(null);
   const API_BASE = 'http://192.168.100.193:3009/api';
   const DB_NAME = 'USER';
 
-  // If a parent (like Settings) passes profileImage as a prop, prefer that
-  // as the source of truth so both places never disagree.
   useEffect(() => {
     if (profileImageProp !== undefined) {
       setProfileImage(profileImageProp);
     }
   }, [profileImageProp]);
 
-  // Load profile image from localStorage on component mount (and whenever
-  // userCode changes, e.g. after login).
   useEffect(() => {
-    if (profileImageProp !== undefined) return; // parent is controlling it
+    if (profileImageProp !== undefined) return;
     const savedImage = localStorage.getItem(getProfileImageKey(userCode));
     setProfileImage(savedImage || null);
   }, [userCode, profileImageProp]);
 
-  // Click outside handler to close dropdown
   useEffect(() => {
     const handleClickOutside = (event) => {
-      // If dropdown is open AND click is outside both the dropdown and the profile button
       if (showProfileDropdown &&
           profileDropdownRef.current &&
           !profileDropdownRef.current.contains(event.target) &&
@@ -69,10 +95,7 @@ const Header = ({
         setShowProfileDropdown(false);
       }
     };
-    // Add event listener
     document.addEventListener('mousedown', handleClickOutside);
-
-    // Cleanup
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
@@ -86,14 +109,11 @@ const Header = ({
       message: "Saving theme..."
     });
     try {
-      // Update theme in context
       updateTheme(newTheme);
-      // Get user ID from localStorage
       const storedUser = JSON.parse(localStorage.getItem("currentUser")) || {};
       const userId = storedUser.UserID || storedUser.User_ID;
       if (userId) {
         try {
-          // Save to database
           const response = await axios.post(`${API_BASE}/user/preferences/save?db=${DB_NAME}`, {
             userId: userId,
             preferenceKey: 'theme',
@@ -118,7 +138,6 @@ const Header = ({
           });
         }
       } else {
-        // No user logged in, save locally only
         localStorage.setItem('userTheme', newTheme);
         setThemeSaveStatus({
           saving: false,
@@ -127,14 +146,8 @@ const Header = ({
           message: "Theme saved locally"
         });
       }
-      // Reset status after 3 seconds
       setTimeout(() => {
-        setThemeSaveStatus({
-          saving: false,
-          saved: false,
-          error: false,
-          message: ""
-        });
+        setThemeSaveStatus({ saving: false, saved: false, error: false, message: "" });
       }, 3000);
     } catch (error) {
       console.error('Error toggling theme:', error);
@@ -145,12 +158,7 @@ const Header = ({
         message: "Error saving theme"
       });
       setTimeout(() => {
-        setThemeSaveStatus({
-          saving: false,
-          saved: false,
-          error: false,
-          message: ""
-        });
+        setThemeSaveStatus({ saving: false, saved: false, error: false, message: "" });
       }, 3000);
     }
   };
@@ -158,12 +166,10 @@ const Header = ({
   const handleProfileImageUpload = (event) => {
     const file = event.target.files[0];
     if (!file) return;
-    // Check file size (5MB max)
     if (file.size > 5 * 1024 * 1024) {
       alert('File size must be less than 5MB');
       return;
     }
-    // Check file type
     if (!file.type.match('image/(jpeg|png|gif|jpg|webp)')) {
       alert('Only JPG, PNG, GIF, and WebP files are allowed');
       return;
@@ -175,9 +181,6 @@ const Header = ({
     reader.readAsDataURL(file);
   };
 
-  // Broadcasts the current profile image so every part of the app that
-  // displays it (Header here, Settings page, etc.) updates instantly,
-  // without waiting for a page reload or remount.
   const broadcastProfileUpdate = (image) => {
     try {
       window.dispatchEvent(new CustomEvent(PROFILE_UPDATED_EVENT, {
@@ -188,68 +191,39 @@ const Header = ({
 
   const saveProfileImage = () => {
     let imageToSave = uploadPreview || profileImage;
-
     if (imageToSave) {
-      // Save to localStorage (same key Settings.jsx uses)
       localStorage.setItem(getProfileImageKey(userCode), imageToSave);
-
-      // Update state
-      if (uploadPreview) {
-        setProfileImage(uploadPreview);
-      }
-
-      // Optional: Sync with parent component or global state
-      if (window.updateUserProfileImage) {
-        window.updateUserProfileImage(imageToSave);
-      }
-
-      // Sync every other mounted component (Settings page, etc.) immediately
+      if (uploadPreview) setProfileImage(uploadPreview);
+      if (window.updateUserProfileImage) window.updateUserProfileImage(imageToSave);
       broadcastProfileUpdate(imageToSave);
-
       console.log('Profile image saved:', imageToSave);
     }
-
     setShowUploadModal(false);
     setUploadPreview(null);
   };
 
   const removeProfileImage = () => {
-    // Remove from localStorage
     localStorage.removeItem(getProfileImageKey(userCode));
-
-    // Update state
     setProfileImage(null);
     setUploadPreview(null);
-
-    // Optional: Sync with parent component or global state
-    if (window.updateUserProfileImage) {
-      window.updateUserProfileImage(null);
-    }
-
-    // Sync every other mounted component (Settings page, etc.) immediately
+    if (window.updateUserProfileImage) window.updateUserProfileImage(null);
     broadcastProfileUpdate(null);
-
     console.log('Profile image removed');
   };
 
-  // Listen for same-tab updates coming from any other component (e.g. the
-  // Settings page) and cross-tab updates via the native 'storage' event.
   useEffect(() => {
     const handleProfileUpdated = (e) => {
       if (!e.detail) return;
       if (e.detail.userCode !== userCode) return;
       setProfileImage(e.detail.profileImage || null);
     };
-
     const handleStorageChange = (e) => {
       if (e.key === getProfileImageKey(userCode)) {
         setProfileImage(e.newValue || null);
       }
     };
-
     window.addEventListener(PROFILE_UPDATED_EVENT, handleProfileUpdated);
     window.addEventListener('storage', handleStorageChange);
-
     return () => {
       window.removeEventListener(PROFILE_UPDATED_EVENT, handleProfileUpdated);
       window.removeEventListener('storage', handleStorageChange);
@@ -262,7 +236,6 @@ const Header = ({
     }
   };
 
-  // SVG Icons as components
   const XIcon = ({ className }) => (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -282,129 +255,121 @@ const Header = ({
 
   return (
     <>
+      <style>{FONT}</style>
       <header
-        className={`fixed top-0 right-0 h-16 flex items-center px-8 backdrop-blur-lg border-b z-40 transition-all duration-500 shadow-sm ${
-          isDark
-            ? 'bg-gray-900/80 border-gray-700/50'
-            : 'bg-white/80 border-slate-200/50'
-        }`}
+        className="hd-page hd-glass fixed top-0 right-0 h-16 flex items-center px-8 border-b z-40 transition-all duration-500"
         style={{
           left: collapsed ? '80px' : '256px',
-          width: collapsed ? 'calc(100% - 80px)' : 'calc(100% - 256px)'
+          width: collapsed ? 'calc(100% - 80px)' : 'calc(100% - 256px)',
+          background: K.glass,
+          borderColor: K.hairline,
+          boxShadow: isDark ? "0 4px 24px -8px rgba(0,0,0,0.4)" : "0 4px 24px -8px rgba(30,41,79,0.08)",
         }}
       >
         <div className="absolute left-1/2 transform -translate-x-1/2">
-        <div className="relative" style={{ height: "90px" }}>
-            {/* Original logo (visible in light mode) */}
+          <div className="relative" style={{ height: "90px" }}>
             <img
-            src={logo}
-            alt=""
-            style={{ height: "90px", width: "auto" }}
-            className={`object-contain ${isDark ? 'opacity-0' : 'opacity-100'}`}
+              src={logo}
+              alt=""
+              style={{ height: "90px", width: "auto" }}
+              className={`object-contain ${isDark ? 'opacity-0' : 'opacity-100'}`}
             />
-
-            {/* Dark mode version - only black parts become white */}
             <div
-            className={`absolute inset-0 ${isDark ? 'opacity-100' : 'opacity-0'}`}
-            style={{
+              className={`absolute inset-0 ${isDark ? 'opacity-100' : 'opacity-0'}`}
+              style={{
                 maskImage: `url(${logo})`,
                 maskSize: 'contain',
                 maskRepeat: 'no-repeat',
-                backgroundColor: 'white', // Only black parts will show this white
+                backgroundColor: 'white',
                 WebkitMaskImage: `url(${logo})`,
                 WebkitMaskSize: 'contain',
                 WebkitMaskRepeat: 'no-repeat',
-            }}
+              }}
             />
+          </div>
         </div>
-        </div>
+
         {/* User Profile Section */}
         <div className="flex items-center gap-3 ml-auto">
           <div className="relative">
             <button
               ref={profileButtonRef}
               onClick={() => setShowProfileDropdown(!showProfileDropdown)}
-              className={`flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors ${
-                isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-50'
-              }`}
+              className="flex items-center gap-2 px-2 py-1.5 rounded-xl transition-colors"
+              style={{ background: showProfileDropdown ? K.chipBg : "transparent" }}
+              onMouseEnter={(e) => { if (!showProfileDropdown) e.currentTarget.style.background = K.chipBg; }}
+              onMouseLeave={(e) => { if (!showProfileDropdown) e.currentTarget.style.background = "transparent"; }}
             >
-<div
-  className="relative w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium uppercase overflow-hidden group cursor-pointer"
-  onClick={(e) => {
-    e.stopPropagation();
-    if (showProfileDropdown) {
-      handleProfileClick();
-    }
-  }}
->
-  {/* Profile Image or Initials */}
-  {profileImage ? (
-    <img
-      src={profileImage}
-      alt="Profile"
-      className="w-full h-full object-cover"
-      onError={(e) => {
-        // If image fails to load, show initials
-        e.target.style.display = 'none';
-        e.target.parentElement.querySelector('.profile-initials').style.display = 'flex';
-      }}
-    />
-  ) : null}
+              <div
+                className="relative w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium uppercase overflow-hidden group cursor-pointer"
+                style={{ boxShadow: `0 0 0 2px ${APPLE.blue}33` }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (showProfileDropdown) {
+                    handleProfileClick();
+                  }
+                }}
+              >
+                {profileImage ? (
+                  <img
+                    src={profileImage}
+                    alt="Profile"
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                      e.target.parentElement.querySelector('.profile-initials').style.display = 'flex';
+                    }}
+                  />
+                ) : null}
 
-  {/* Initials fallback */}
-  <div className={`w-full h-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center profile-initials ${
-    profileImage ? 'hidden' : ''
-  }`}>
-    {initials}
-  </div>
+                <div
+                  className={`w-full h-full flex items-center justify-center profile-initials ${profileImage ? 'hidden' : ''}`}
+                  style={{
+                    background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
+                  }}
+                >
+                  {initials}
+                </div>
 
-  {/* Hover Overlay for Edit Indicator - ONLY when dropdown is open */}
-  {showProfileDropdown && (
-    <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity duration-200">
-      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-      </svg>
-    </div>
-  )}
-</div>
+                {showProfileDropdown && (
+                  <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity duration-200">
+                    <CameraIcon className="w-4 h-4 text-white" />
+                  </div>
+                )}
+              </div>
 
               <div className="hidden md:block text-left">
-                <p className={`text-sm font-medium leading-tight ${
-                  isDark ? 'text-gray-100' : 'text-gray-800'
-                }`}>{userName}</p>
-                <p className={`text-xs ${
-                  isDark ? 'text-gray-400' : 'text-gray-500'
-                }`}>{userCode}</p>
+                <p className="text-sm font-medium leading-tight" style={{ color: K.ink }}>{userName}</p>
+                <p className="text-xs" style={{ color: K.muted }}>{userCode}</p>
               </div>
 
               <svg
-                className={`w-4 h-4 transition-transform ${showProfileDropdown ? 'rotate-180' : ''} ${
-                  isDark ? 'text-gray-400' : 'text-gray-500'
-                }`}
+                className={`w-4 h-4 transition-transform ${showProfileDropdown ? 'rotate-180' : ''}`}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
+                style={{ color: K.muted }}
               >
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
             </button>
+
             {showProfileDropdown && (
               <div
                 ref={profileDropdownRef}
-                className={`absolute right-0 top-full mt-2 w-56 rounded-lg shadow-lg z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 ${
-                  isDark
-                    ? 'bg-gray-800 border-gray-700'
-                    : 'bg-white border-gray-200'
-                } border`}
+                className="hd-glass hd-pop absolute right-0 top-full mt-2 w-64 rounded-2xl overflow-hidden z-50"
+                style={{
+                  background: K.glassDeep,
+                  border: `1px solid ${K.rim}`,
+                  boxShadow: K.shadow,
+                }}
               >
                 {/* Profile Summary */}
-                <div className={`px-4 py-3 border-b ${
-                  isDark ? 'border-gray-700' : 'border-gray-100'
-                }`}>
+                <div className="px-4 py-3 border-b" style={{ borderColor: K.hairline }}>
                   <div className="flex items-center gap-3">
                     <div
                       className="relative w-10 h-10 rounded-full overflow-hidden group cursor-pointer"
+                      style={{ boxShadow: `0 0 0 2px ${APPLE.blue}33` }}
                       onClick={() => {
                         setShowProfileDropdown(false);
                         setShowUploadModal(true);
@@ -422,9 +387,10 @@ const Header = ({
                         />
                       ) : null}
 
-                      <div className={`w-full h-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white font-medium uppercase dropdown-initials ${
-                        profileImage ? 'hidden' : ''
-                      }`}>
+                      <div
+                        className={`w-full h-full flex items-center justify-center text-white font-medium uppercase dropdown-initials ${profileImage ? 'hidden' : ''}`}
+                        style={{ background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)` }}
+                      >
                         {initials}
                       </div>
 
@@ -434,44 +400,34 @@ const Header = ({
                         </svg>
                       </div>
                     </div>
-                    <div>
-                      <p className={`font-medium ${
-                        isDark ? 'text-gray-100' : 'text-gray-900'
-                      }`}>{userName}</p>
-                      <p className={`text-sm ${
-                        isDark ? 'text-gray-400' : 'text-gray-500'
-                      }`}>{userCode}</p>
+                    <div className="min-w-0">
+                      <p className="font-medium truncate" style={{ color: K.ink }}>{userName}</p>
+                      <p className="text-sm truncate" style={{ color: K.muted }}>{userCode}</p>
                     </div>
                   </div>
                 </div>
+
                 {/* Menu Items */}
                 <div className="py-1">
-                  {/* Theme Toggle Section */}
-                  <div className={`px-4 py-2.5 border-b ${
-                    isDark ? 'border-gray-700' : 'border-gray-100'
-                  }`}>
+                  {/* Theme Toggle */}
+                  <div className="px-4 py-2.5 border-b" style={{ borderColor: K.hairline }}>
                     <div className="flex items-center justify-between mb-2">
-                      <span className={`text-sm font-medium ${
-                        isDark ? 'text-gray-300' : 'text-gray-700'
-                      }`}>
-                        Theme
-                      </span>
+                      <span className="text-sm font-medium" style={{ color: K.ink }}>Theme</span>
 
-                      {/* Status indicator */}
                       {themeSaveStatus.saving && (
-                        <div className="flex items-center gap-1 text-xs text-blue-500">
+                        <div className="flex items-center gap-1 text-xs" style={{ color: APPLE.blue }}>
                           <Loader2 className="w-3 h-3 animate-spin" />
-                          <span>Saving...</span>
+                          <span>Saving…</span>
                         </div>
                       )}
                       {themeSaveStatus.saved && !themeSaveStatus.error && (
-                        <div className="flex items-center gap-1 text-xs text-green-500">
+                        <div className="flex items-center gap-1 text-xs" style={{ color: APPLE.green }}>
                           <CheckCircle className="w-3 h-3" />
                           <span>Saved</span>
                         </div>
                       )}
                       {themeSaveStatus.error && (
-                        <div className="flex items-center gap-1 text-xs text-red-500">
+                        <div className="flex items-center gap-1 text-xs" style={{ color: APPLE.red }}>
                           <X className="w-3 h-3" />
                           <span>Error</span>
                         </div>
@@ -481,11 +437,25 @@ const Header = ({
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleThemeToggle('light')}
-                        className={`flex-1 flex items-center justify-center gap-2 py-2 px-2 rounded-lg border transition-all duration-300 text-sm ${
-                          currentTheme === 'light'
-                            ? (isDark ? 'bg-blue-900/30 border-blue-700 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-700')
-                            : (isDark ? 'bg-gray-700 border-gray-600 text-gray-400 hover:bg-gray-600 hover:text-gray-300' : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100')
-                        }`}
+                        className="flex-1 flex items-center justify-center gap-2 py-2 px-2 rounded-xl border transition-all duration-200 text-sm"
+                        style={{
+                          background: currentTheme === 'light' ? `${APPLE.blue}18` : K.chipBg,
+                          borderColor: currentTheme === 'light' ? `${APPLE.blue}55` : K.hairline,
+                          color: currentTheme === 'light' ? APPLE.blue : K.muted,
+                          fontWeight: currentTheme === 'light' ? 600 : 500,
+                        }}
+                        onMouseEnter={(e) => {
+                          if (currentTheme !== 'light') {
+                            e.currentTarget.style.background = K.hover;
+                            e.currentTarget.style.color = K.ink;
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (currentTheme !== 'light') {
+                            e.currentTarget.style.background = K.chipBg;
+                            e.currentTarget.style.color = K.muted;
+                          }
+                        }}
                       >
                         <Sun className="w-4 h-4" />
                         <span>Light</span>
@@ -493,48 +463,62 @@ const Header = ({
 
                       <button
                         onClick={() => handleThemeToggle('dark')}
-                        className={`flex-1 flex items-center justify-center gap-2 py-2 px-2 rounded-lg border transition-all duration-300 text-sm ${
-                          currentTheme === 'dark'
-                            ? (isDark ? 'bg-blue-900/30 border-blue-700 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-700')
-                            : (isDark ? 'bg-gray-700 border-gray-600 text-gray-400 hover:bg-gray-600 hover:text-gray-300' : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100')
-                        }`}
+                        className="flex-1 flex items-center justify-center gap-2 py-2 px-2 rounded-xl border transition-all duration-200 text-sm"
+                        style={{
+                          background: currentTheme === 'dark' ? `${APPLE.blue}18` : K.chipBg,
+                          borderColor: currentTheme === 'dark' ? `${APPLE.blue}55` : K.hairline,
+                          color: currentTheme === 'dark' ? APPLE.blue : K.muted,
+                          fontWeight: currentTheme === 'dark' ? 600 : 500,
+                        }}
+                        onMouseEnter={(e) => {
+                          if (currentTheme !== 'dark') {
+                            e.currentTarget.style.background = K.hover;
+                            e.currentTarget.style.color = K.ink;
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (currentTheme !== 'dark') {
+                            e.currentTarget.style.background = K.chipBg;
+                            e.currentTarget.style.color = K.muted;
+                          }
+                        }}
                       >
                         <Moon className="w-4 h-4" />
                         <span>Dark</span>
                       </button>
                     </div>
                   </div>
-                  {/* User Preference Link */}
+
+                  {/* User Preference */}
                   <Link
                     to="/settings"
                     onClick={() => setShowProfileDropdown(false)}
-                    className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
-                      isDark
-                        ? 'text-gray-300 hover:bg-gray-700'
-                        : 'text-gray-700 hover:bg-gray-50'
-                    }`}
+                    className="flex items-center gap-3 px-4 py-2.5 text-sm transition-colors"
+                    style={{ color: K.muted }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = K.chipBg; e.currentTarget.style.color = K.ink; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = K.muted; }}
                   >
-                    <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
                     <span>User Preference</span>
                   </Link>
+
+                  {/* Logout */}
                   <Link
                     to="/login"
                     onClick={(e) => {
                       e.preventDefault();
                       setShowProfileDropdown(false);
-                      // Clear profile image on logout
                       localStorage.removeItem(getProfileImageKey(userCode));
                       localStorage.clear();
                       window.location.href = "/login";
                     }}
-                    className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors border-t ${
-                      isDark
-                        ? 'text-red-400 hover:bg-gray-700 border-gray-700'
-                        : 'text-red-600 hover:bg-gray-50 border-gray-100'
-                    }`}
+                    className="flex items-center gap-3 px-4 py-2.5 text-sm transition-colors border-t"
+                    style={{ color: APPLE.red, borderColor: K.hairline }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = `${APPLE.red}14`; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
@@ -547,17 +531,28 @@ const Header = ({
           </div>
         </div>
       </header>
+
       {/* Profile Picture Upload Modal */}
       {showUploadModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className={`rounded-2xl shadow-2xl w-full max-w-md overflow-hidden ${
-            isDark ? 'bg-gray-800' : 'bg-white'
-          }`}>
+        <div
+          className="hd-page fixed inset-0 flex items-center justify-center z-50 p-4 hd-fade"
+          style={{
+            backgroundColor: isDark ? "rgba(10,10,14,0.55)" : "rgba(0,0,0,0.35)",
+            backdropFilter: "blur(16px)",
+            WebkitBackdropFilter: "blur(16px)",
+          }}
+        >
+          <div
+            className="hd-glass hd-pop rounded-[28px] w-full max-w-md overflow-hidden"
+            style={{
+              background: K.glassDeep,
+              border: `1px solid ${K.rim}`,
+              boxShadow: K.shadow,
+            }}
+          >
             <div className="p-6">
               <div className="flex items-center justify-between mb-6">
-                <h3 className={`text-lg font-semibold ${
-                  isDark ? 'text-gray-200' : 'text-gray-800'
-                }`}>
+                <h3 className="text-lg font-semibold" style={{ color: K.ink }}>
                   Update Profile Picture
                 </h3>
                 <button
@@ -565,63 +560,57 @@ const Header = ({
                     setShowUploadModal(false);
                     setUploadPreview(null);
                   }}
-                  className={`p-1 rounded-lg transition-colors ${
-                    isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-100'
-                  }`}
+                  className="w-8 h-8 rounded-full flex items-center justify-center transition-colors"
+                  style={{ background: K.chipBg, color: K.muted }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hairline; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = K.chipBg; }}
                 >
-                  <XIcon className={`w-5 h-5 ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
+                  <XIcon className="w-5 h-5" />
                 </button>
               </div>
+
               <div className="mb-6">
                 <div className="flex justify-center mb-4">
-                  <div className={`w-32 h-32 rounded-full overflow-hidden border-4 shadow-lg ${
-                    isDark ? 'border-gray-700' : 'border-white'
-                  }`}>
+                  <div
+                    className="w-32 h-32 rounded-full overflow-hidden"
+                    style={{
+                      border: `3px solid ${K.rim}`,
+                      boxShadow: K.shadow,
+                    }}
+                  >
                     {uploadPreview ? (
-                      <img
-                        src={uploadPreview}
-                        alt="Preview"
-                        className="w-full h-full object-cover"
-                      />
+                      <img src={uploadPreview} alt="Preview" className="w-full h-full object-cover" />
                     ) : profileImage ? (
-                      <img
-                        src={profileImage}
-                        alt="Profile"
-                        className="w-full h-full object-cover"
-                      />
+                      <img src={profileImage} alt="Profile" className="w-full h-full object-cover" />
                     ) : (
-                      <div className="w-full h-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+                      <div
+                        className="w-full h-full flex items-center justify-center"
+                        style={{ background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)` }}
+                      >
                         <span className="text-3xl font-bold text-white">{initials}</span>
                       </div>
                     )}
                   </div>
                 </div>
+
                 <div className="text-center mb-6">
-                  <p className={`text-sm ${
-                    isDark ? 'text-gray-300' : 'text-gray-600'
-                  }`}>
+                  <p className="text-sm" style={{ color: K.muted }}>
                     Upload a new profile picture. Supported formats: JPG, PNG, GIF, WebP
                   </p>
-                  <p className={`text-xs mt-1 ${
-                    isDark ? 'text-gray-400' : 'text-gray-500'
-                  }`}>
+                  <p className="text-xs mt-1" style={{ color: K.faint }}>
                     Max file size: 5MB
                   </p>
                 </div>
+
                 <div className="grid grid-cols-2 gap-3">
-                  <label className={`flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${
-                    isDark
-                      ? 'border-gray-600 hover:border-blue-400'
-                      : 'border-gray-300 hover:border-blue-500'
-                  }`}>
-                    <UploadIcon className={`w-6 h-6 mb-2 ${
-                      isDark ? 'text-gray-400' : 'text-gray-500'
-                    }`} />
-                    <span className={`text-sm font-medium ${
-                      isDark ? 'text-gray-300' : 'text-gray-700'
-                    }`}>
-                      Upload New
-                    </span>
+                  <label
+                    className="flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-xl cursor-pointer transition-colors"
+                    style={{ borderColor: K.hairline }}
+                    onMouseEnter={(e) => e.currentTarget.style.borderColor = `${APPLE.blue}88`}
+                    onMouseLeave={(e) => e.currentTarget.style.borderColor = K.hairline}
+                  >
+                    <UploadIcon className="w-6 h-6 mb-2" style={{ color: K.muted }} />
+                    <span className="text-sm font-medium" style={{ color: K.ink }}>Upload New</span>
                     <input
                       ref={fileInputRef}
                       type="file"
@@ -630,48 +619,54 @@ const Header = ({
                       className="hidden"
                     />
                   </label>
+
                   <button
-                    onClick={() => {
-                      alert("Camera functionality would open here in a real app");
-                    }}
-                    className={`flex flex-col items-center justify-center p-4 border-2 rounded-xl cursor-pointer transition-colors ${
-                      isDark
-                        ? 'border-gray-600 hover:border-blue-400'
-                        : 'border-gray-300 hover:border-blue-500'
-                    }`}
+                    onClick={() => alert("Camera functionality would open here in a real app")}
+                    className="flex flex-col items-center justify-center p-4 border-2 rounded-xl cursor-pointer transition-colors"
+                    style={{ borderColor: K.hairline }}
+                    onMouseEnter={(e) => e.currentTarget.style.borderColor = `${APPLE.blue}88`}
+                    onMouseLeave={(e) => e.currentTarget.style.borderColor = K.hairline}
                   >
-                    <CameraIcon className={`w-6 h-6 mb-2 ${
-                      isDark ? 'text-gray-400' : 'text-gray-500'
-                    }`} />
-                    <span className={`text-sm font-medium ${
-                      isDark ? 'text-gray-300' : 'text-gray-700'
-                    }`}>
-                      Take Photo
-                    </span>
+                    <CameraIcon className="w-6 h-6 mb-2" style={{ color: K.muted }} />
+                    <span className="text-sm font-medium" style={{ color: K.ink }}>Take Photo</span>
                   </button>
                 </div>
               </div>
+
               <div className="flex gap-3">
                 <button
                   onClick={removeProfileImage}
-                  className={`flex-1 py-2.5 px-4 font-medium rounded-lg transition-colors ${
-                    isDark
-                      ? 'bg-red-900/20 text-red-400 hover:bg-red-900/30'
-                      : 'bg-red-50 text-red-600 hover:bg-red-100'
-                  }`}
+                  className="flex-1 py-2.5 px-4 font-medium rounded-xl transition-colors"
+                  style={{
+                    background: `${APPLE.red}18`,
+                    color: APPLE.red,
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = `${APPLE.red}28`}
+                  onMouseLeave={(e) => e.currentTarget.style.background = `${APPLE.red}18`}
                 >
                   Remove
                 </button>
                 <button
                   onClick={saveProfileImage}
                   disabled={!uploadPreview && !profileImage}
-                  className={`flex-1 py-2.5 px-4 font-medium rounded-lg transition-colors ${
-                    uploadPreview || profileImage
-                      ? 'bg-blue-600 text-white hover:bg-blue-700'
-                      : isDark
-                      ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                      : 'bg-gray-200 text-gray-500 cursor-not-allowed'
-                  }`}
+                  className="flex-1 py-2.5 px-4 font-medium rounded-xl transition-colors text-white"
+                  style={{
+                    background: (uploadPreview || profileImage)
+                      ? `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`
+                      : K.chipBg,
+                    color: (uploadPreview || profileImage) ? "#FFFFFF" : K.faint,
+                    cursor: (uploadPreview || profileImage) ? "pointer" : "not-allowed",
+                    opacity: (uploadPreview || profileImage) ? 1 : 0.6,
+                    boxShadow: (uploadPreview || profileImage)
+                      ? `0 4px 16px -6px ${APPLE.blue}66`
+                      : "none",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (uploadPreview || profileImage) e.currentTarget.style.opacity = "0.9";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (uploadPreview || profileImage) e.currentTarget.style.opacity = "1";
+                  }}
                 >
                   Save Changes
                 </button>

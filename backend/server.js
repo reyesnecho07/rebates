@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 
+import { startAutoRefresh } from './jobs/autoRefreshPayouts.js';
+
 // Import routes
 import authRoutes from './routes/authRoutes.js';
 import nexchemRoutes from './routes/nexchemRoutes.js';
@@ -182,6 +184,12 @@ app.get('/api/health', async (req, res) => {
       error: error.message,
     });
   }
+});
+
+
+app.listen(3009, () => {
+  console.log('Server running on 3009');
+  startAutoRefresh();
 });
 
 // 5. Error handling (must be last)

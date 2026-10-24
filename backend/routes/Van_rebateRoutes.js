@@ -7,25 +7,34 @@ const router = express.Router();
 // Apply database middleware to all rebate routes
 router.use(dbMiddleware);
 
-// Validation middleware for required fields
+// Validation middleware for required fields (SlpCode / SlpName removed)
+// — Dates required only when scope is Global (or unspecified)
 const validateRebateProgram = (req, res, next) => {
-  const { RebateType, SlpCode, SlpName, DateFrom, DateTo } = req.body;
-  
-  if (!RebateType || !SlpCode || !SlpName || !DateFrom || !DateTo) {
+  const { RebateType, DateFrom, DateTo, DateRangeScope } = req.body;
+
+  if (!RebateType) {
     return res.status(400).json({
       success: false,
-      error: 'Missing required fields: RebateType, SlpCode, SlpName, DateFrom, DateTo'
+      error: 'Missing required field: RebateType',
     });
   }
-  
+
+  // Per Customer scope stores dates per customer row, so header dates may be empty
+  if (DateRangeScope !== 'Per Customer' && (!DateFrom || !DateTo)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Missing required fields: DateFrom, DateTo (required for Global scope)',
+    });
+  }
+
   next();
 };
 
-// SIMPLIFIED - Get highest rebate code
+// ─── Highest rebate code ───────────────────────────────────────────────────
 router.get('/highest-code', async (req, res) => {
   try {
     console.log(`🔍 Fetching highest rebate code from database: ${req.database}`);
-    
+
     const query = `
       SELECT 
         MAX(RebateCode) as HighestCode,
@@ -36,41 +45,43 @@ router.get('/highest-code', async (req, res) => {
       FROM RebateProgram 
       WHERE RebateCode LIKE 'REB-%'
     `;
-    
+
     const result = await req.db.request().query(query);
-    
+
     const highestCode = result.recordset[0].HighestCode;
     const nextCode = result.recordset[0].NextCode;
-    
+
     console.log(`🏆 Highest rebate code: "${highestCode}"`);
     console.log(`🎯 Next rebate code: "${nextCode}"`);
-    
-    res.json({ 
+
+    res.json({
       success: true,
-      highestCode: highestCode || "REB-00000",
+      highestCode: highestCode || 'REB-00000',
       nextCode: nextCode,
-      database: req.database
+      database: req.database,
     });
-    
   } catch (error) {
     console.error('❌ Error fetching highest rebate code:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      database: req.database 
-    });
+    res.status(500).json({ success: false, error: error.message, database: req.database });
   }
 });
 
-// SIMPLIFIED - Create rebate program
+// ─── Create rebate program ─────────────────────────────────────────────────
 router.post('/rebate-program', validateRebateProgram, async (req, res) => {
   try {
-    const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, Name, CreatedBy } = req.body;
+    const {
+      RebateType, DateFrom, DateTo, Frequency, QuotaType,
+      Name, RedemptionPeriod, CreatedBy, DateRangeScope
+    } = req.body;
     const createdBy = CreatedBy || 'Unknown';
-    
-    console.log(`💾 Saving rebate program to database: ${req.database}`);
 
-    // Get the next rebate code using SQL logic
+    // Per Customer: header dates stored as NULL; dates live on each customer row
+    const scope = DateRangeScope || 'Global';
+    const headerDateFrom = scope === 'Per Customer' ? null : DateFrom;
+    const headerDateTo   = scope === 'Per Customer' ? null : DateTo;
+
+    console.log(`💾 Saving rebate program to database: ${req.database} | scope=${scope}`);
+
     const getNextCodeQuery = `
       SELECT 
         CASE 
@@ -80,70 +91,66 @@ router.post('/rebate-program', validateRebateProgram, async (req, res) => {
       FROM RebateProgram 
       WHERE RebateCode LIKE 'REB-%'
     `;
-    
+
     const nextCodeResult = await req.db.request().query(getNextCodeQuery);
     const nextRebateCode = nextCodeResult.recordset[0].NextCode;
 
     console.log(`🔢 Generated next rebate code: ${nextRebateCode}`);
 
-    // Insert with the generated rebate code and CreatedDate
     const query = `
-      INSERT INTO RebateProgram (RebateCode, RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, Name, CreatedBy, UpdatedBy, CreatedDate)
-      VALUES (@RebateCode, @RebateType, @SlpCode, @SlpName, @DateFrom, @DateTo, @Frequency, @QuotaType, @Name, @CreatedBy, @UpdatedBy, GETDATE())
+      INSERT INTO RebateProgram 
+        (RebateCode, RebateType, DateFrom, DateTo, Frequency, QuotaType,
+         Name, RedemptionPeriod, DateRangeScope, CreatedBy, UpdatedBy, CreatedDate)
+      VALUES 
+        (@RebateCode, @RebateType, @DateFrom, @DateTo, @Frequency, @QuotaType,
+         @Name, @RedemptionPeriod, @DateRangeScope, @CreatedBy, @UpdatedBy, GETDATE())
     `;
-    
+
     await req.db.request()
-      .input('RebateCode', sql.NVarChar, nextRebateCode)
-      .input('RebateType', sql.NVarChar, RebateType)
-      .input('SlpCode', sql.Int, SlpCode)
-      .input('SlpName', sql.NVarChar, SlpName)
-      .input('DateFrom', sql.Date, DateFrom)
-      .input('DateTo', sql.Date, DateTo)
-      .input('Frequency', sql.NVarChar, Frequency || 'Quarterly')
-      .input('QuotaType', sql.NVarChar, QuotaType || 'With Quota')
-      .input('Name', sql.NVarChar, Name || '')
-      .input('CreatedBy', sql.NVarChar, createdBy)
-      .input('UpdatedBy', sql.NVarChar, createdBy)
+      .input('RebateCode',       sql.NVarChar,     nextRebateCode)
+      .input('RebateType',       sql.NVarChar,     RebateType)
+      .input('DateFrom',         sql.Date,         headerDateFrom)
+      .input('DateTo',           sql.Date,         headerDateTo)
+      .input('Frequency',        sql.NVarChar,     Frequency || 'Quarterly')
+      .input('QuotaType',        sql.NVarChar,     QuotaType || 'With Quota')
+      .input('Name',             sql.NVarChar,     Name || '')
+      .input('RedemptionPeriod', sql.NVarChar,     RedemptionPeriod || '')
+      .input('DateRangeScope',   sql.NVarChar(20), scope)
+      .input('CreatedBy',        sql.NVarChar,     createdBy)
+      .input('UpdatedBy',        sql.NVarChar,     createdBy)
       .query(query);
-    
-    console.log(`✅ Rebate program saved successfully. RebateCode: ${nextRebateCode}`);
-    
-    res.json({ 
-      success: true, 
-      rebateCode: nextRebateCode,
-      database: req.database
-    });
+
+    console.log(`✅ Rebate program saved successfully. RebateCode: ${nextRebateCode} | scope=${scope}`);
+
+    res.json({ success: true, rebateCode: nextRebateCode, dateRangeScope: scope, database: req.database });
   } catch (error) {
     console.error('❌ Error saving rebate program:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      database: req.database 
-    });
+    res.status(500).json({ success: false, error: error.message, database: req.database });
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+//   Schema-agnostic helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
 const getNextId = async (db, tableName) => {
   try {
-    // Try to get the next identity value
     const result = await db.request().query(`
       SELECT IDENT_CURRENT('${tableName}') as CurrentId, 
              IDENT_INCR('${tableName}') as IncrementValue
     `);
-    
+
     const currentId = result.recordset[0].CurrentId;
     const increment = result.recordset[0].IncrementValue;
-    
+
     if (currentId === null) {
-      // Table might not have identity property, get max Id
       const maxResult = await db.request().query(`SELECT ISNULL(MAX(Id), 0) as MaxId FROM ${tableName}`);
       return maxResult.recordset[0].MaxId + 1;
     }
-    
+
     return currentId + increment;
   } catch (error) {
     console.error(`Error getting next ID for ${tableName}:`, error);
-    // Fallback: get max Id
     try {
       const maxResult = await db.request().query(`SELECT ISNULL(MAX(Id), 0) as MaxId FROM ${tableName}`);
       return maxResult.recordset[0].MaxId + 1;
@@ -154,917 +161,536 @@ const getNextId = async (db, tableName) => {
   }
 };
 
-  // ─── FixCustRebate ───────────────────────────────────────────────────────────
-  router.post('/fix-cust-rebate', async (req, res) => {
-    try {
-      const { RebateCode, CardCode, CardName, QtrRebate, CreatedDate } = req.body;
-      const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
-      const qtrRebateValue = QtrRebate !== undefined && QtrRebate !== null && QtrRebate !== '' ? parseFloat(QtrRebate) : 0;
-      const nextId = await getNextId(req.db, 'FixCustRebate');
+/* Cached per (dbName, table, column) */
+const identityCache = new Map();
 
-      const query = `
-        INSERT INTO FixCustRebate (Id, RebateCode, CardCode, CardName, QtrRebate, CreatedDate, UpdatedDate)
-        VALUES (@Id, @RebateCode, @CardCode, @CardName, @QtrRebate, @CreatedDate, GETDATE())
-      `;
-      const request = req.db.request();
-      request.input('Id', sql.Int, nextId);
-      request.input('RebateCode', sql.NVarChar(50), RebateCode);
-      request.input('CardCode', sql.NVarChar(15), CardCode);
-      request.input('CardName', sql.NVarChar(100), CardName);
-      request.input('QtrRebate', sql.Decimal(19, 6), qtrRebateValue);
-      request.input('CreatedDate', sql.DateTime, createdDateValue);
-      await request.query(query);
+const isIdentity = async (db, dbName, tableName, column = 'Id') => {
+  const key = `${dbName}::${tableName}::${column}`;
+  if (identityCache.has(key)) return identityCache.get(key);
+  try {
+    const r = await db.request()
+      .input('t', sql.NVarChar, tableName)
+      .input('c', sql.NVarChar, column)
+      .query(`SELECT COLUMNPROPERTY(OBJECT_ID(@t), @c, 'IsIdentity') AS IsIdentity`);
+    const val = r.recordset[0]?.IsIdentity === 1;
+    identityCache.set(key, val);
+    return val;
+  } catch {
+    identityCache.set(key, false);
+    return false;
+  }
+};
 
-      res.json({ success: true, id: nextId, database: req.database });
-    } catch (error) {
-      res.status(500).json({ success: false, error: `Database error: ${error.message}`, database: req.database });
+/* Cached per (dbName, table, column) */
+const columnExistsCache = new Map();
+
+const columnExists = async (db, dbName, tableName, column) => {
+  const key = `${dbName}::${tableName}::${column}`;
+  if (columnExistsCache.has(key)) return columnExistsCache.get(key);
+  try {
+    const r = await db.request()
+      .input('t', sql.NVarChar, tableName)
+      .input('c', sql.NVarChar, column)
+      .query(`SELECT COLUMNPROPERTY(OBJECT_ID(@t), @c, 'ColumnId') AS ColumnId`);
+    const exists = r.recordset[0]?.ColumnId != null;
+    columnExistsCache.set(key, exists);
+    return exists;
+  } catch {
+    columnExistsCache.set(key, false);
+    return false;
+  }
+};
+
+const insertRow = async (db, dbName, tableName, columns, raw = {}) => {
+  const idIsIdentity = await isIdentity(db, dbName, tableName);
+
+  const req = db.request();
+  const names = [];
+  const params = [];
+  let assignedId = null;
+
+  if (!idIsIdentity) {
+    assignedId = await getNextId(db, tableName);
+    req.input('Id', sql.Int, assignedId);
+    names.push('Id');
+    params.push('@Id');
+  }
+
+  for (const [name, spec] of Object.entries(columns)) {
+    req.input(name, spec.type, spec.value);
+    names.push(name);
+    params.push(`@${name}`);
+  }
+  for (const [name, expr] of Object.entries(raw)) {
+    names.push(name);
+    params.push(expr);
+  }
+
+  const sqlText = `INSERT INTO ${tableName} (${names.join(', ')})
+                   VALUES (${params.join(', ')});`;
+
+  if (idIsIdentity) {
+    const result = await req.query(sqlText + ` SELECT CAST(SCOPE_IDENTITY() AS INT) AS NewId;`);
+    return result.recordset[0]?.NewId ?? null;
+  }
+
+  await req.query(sqlText);
+  return assignedId;
+};
+
+/* Normalize QtrQualified -> 1/0 (BIT) */
+const normalizeQtrQualified = (v) => {
+  if (v === undefined || v === null || v === '') return 1;
+  if (typeof v === 'boolean') return v ? 1 : 0;
+  if (typeof v === 'number') return v ? 1 : 0;
+  const s = String(v).trim().toLowerCase();
+  if (s === 'false' || s === '0' || s === 'no' || s === 'n') return 0;
+  return 1;
+};
+
+/* Normalize date value or null */
+const normalizeDateOrNull = (v) => {
+  if (v === undefined || v === null || v === '') return null;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+//   Fixed rebate inserts
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── FixCustRebate ─────────────────────────────────────────────────────────
+router.post('/fix-cust-rebate', async (req, res) => {
+  try {
+    const {
+      RebateCode, CardCode, CardName, QtrRebate, QtrQualified,
+      DateFrom, DateTo, CreatedDate
+    } = req.body;
+
+    const qtrRebateValue =
+      QtrRebate !== undefined && QtrRebate !== null && QtrRebate !== ''
+        ? parseFloat(QtrRebate) : 0;
+    const qtrQualifiedValue = normalizeQtrQualified(QtrQualified);
+    const dateFromValue = normalizeDateOrNull(DateFrom);
+    const dateToValue   = normalizeDateOrNull(DateTo);
+
+    const newId = await insertRow(
+      req.db, req.database, 'FixCustRebate',
+      {
+        RebateCode:   { type: sql.NVarChar(50),   value: RebateCode },
+        CardCode:     { type: sql.NVarChar(15),   value: CardCode },
+        CardName:     { type: sql.NVarChar(100),  value: CardName },
+        QtrRebate:    { type: sql.Decimal(19, 6), value: qtrRebateValue },
+        QtrQualified: { type: sql.Bit,            value: qtrQualifiedValue },
+        DateFrom:     { type: sql.Date,           value: dateFromValue },
+        DateTo:       { type: sql.Date,           value: dateToValue },
+        CreatedDate:  { type: sql.DateTime,       value: CreatedDate ? new Date(CreatedDate) : new Date() },
+      },
+      { UpdatedDate: 'GETDATE()' }
+    );
+
+    res.json({ success: true, id: newId, database: req.database });
+  } catch (error) {
+    console.error('❌ [fix-cust-rebate]', error.message, error.number);
+    res.status(500).json({ success: false, error: `Database error: ${error.message}`, database: req.database });
+  }
+});
+
+// ─── FixCustQuota (single) ─────────────────────────────────────────────────
+router.post('/fix-cust-quota', async (req, res) => {
+  try {
+    const { CustRebateId, Month, TargetQty, CreatedDate } = req.body;
+    if (!CustRebateId || !Month) {
+      return res.status(400).json({ success: false, error: 'CustRebateId and Month are required' });
     }
-  });
 
-  // ─── FixCustQuota (single) ───────────────────────────────────────────────────
-  router.post('/fix-cust-quota', async (req, res) => {
-    try {
-      const { CustRebateId, Month, TargetQty, CreatedDate } = req.body;
-      const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
-      const nextId = await getNextId(req.db, 'FixCustQuota');
-
-      const query = `
-        INSERT INTO FixCustQuota (Id, CustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
-        VALUES (@Id, @CustRebateId, @Month, @TargetQty, @CreatedDate, GETDATE())
-      `;
-      await req.db.request()
-        .input('Id', sql.Int, nextId)
-        .input('CustRebateId', sql.Int, CustRebateId)
-        .input('Month', sql.NVarChar, Month)
-        .input('TargetQty', sql.Decimal(18, 2), TargetQty || 0)
-        .input('CreatedDate', sql.DateTime, createdDateValue)
-        .query(query);
-
-      res.json({ success: true, id: nextId, database: req.database });
-    } catch (error) {
-      res.status(500).json({ success: false, error: error.message, database: req.database });
+    const parent = await req.db.request()
+      .input('id', sql.Int, CustRebateId)
+      .query('SELECT Id FROM FixCustRebate WHERE Id = @id');
+    if (parent.recordset.length === 0) {
+      return res.status(404).json({ success: false, error: `FixCustRebate.Id=${CustRebateId} not found` });
     }
-  });
 
-  // ─── FixCustQuota (bulk) — NEW, add this ─────────────────────────────────────
-  router.post('/fix-cust-quotas/bulk', async (req, res) => {
-    try {
-      const { CustRebateId, quotas } = req.body;
-      if (!Array.isArray(quotas) || quotas.length === 0) {
-        return res.status(400).json({ success: false, error: 'No quotas provided', database: req.database });
-      }
-      const results = [];
-      for (const q of quotas) {
-        const createdDateValue = q.CreatedDate ? new Date(q.CreatedDate) : new Date();
-        const nextId = await getNextId(req.db, 'FixCustQuota');
-        await req.db.request()
-          .input('Id', sql.Int, nextId)
-          .input('CustRebateId', sql.Int, CustRebateId)
-          .input('Month', sql.NVarChar, q.Month)
-          .input('TargetQty', sql.Decimal(18, 2), q.TargetQty || 0)
-          .input('CreatedDate', sql.DateTime, createdDateValue)
-          .query(`INSERT INTO FixCustQuota (Id, CustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
-                  VALUES (@Id, @CustRebateId, @Month, @TargetQty, @CreatedDate, GETDATE())`);
-        results.push(nextId);
-      }
-      res.json({ success: true, count: results.length, database: req.database });
-    } catch (error) {
-      res.status(500).json({ success: false, error: error.message, database: req.database });
+    const newId = await insertRow(
+      req.db, req.database, 'FixCustQuota',
+      {
+        CustRebateId: { type: sql.Int,            value: CustRebateId },
+        Month:        { type: sql.NVarChar(100),  value: Month },
+        TargetQty:    { type: sql.Decimal(18, 2), value: parseFloat(TargetQty) || 0 },
+        CreatedDate:  { type: sql.DateTime,       value: CreatedDate ? new Date(CreatedDate) : new Date() },
+      },
+      { UpdatedDate: 'GETDATE()' }
+    );
+
+    res.json({ success: true, id: newId, database: req.database });
+  } catch (error) {
+    console.error('❌ [fix-cust-quota]', error.message, error.number);
+    res.status(500).json({ success: false, error: error.message, errorNumber: error.number });
+  }
+});
+
+// ─── FixCustQuota (bulk) ───────────────────────────────────────────────────
+router.post('/fix-cust-quotas/bulk', async (req, res) => {
+  try {
+    const { CustRebateId, quotas } = req.body;
+    if (!CustRebateId || !Array.isArray(quotas) || quotas.length === 0) {
+      return res.status(400).json({ success: false, error: 'CustRebateId and quotas are required' });
     }
-  });
 
-  // ─── FixProdRebate ───────────────────────────────────────────────────────────
-  router.post('/fix-prod-rebate', async (req, res) => {
-    try {
-      const { RebateCode, ItemCode, ItemName, RebatePerBag, UnitPerQty, UnitOfMeasure, CreatedDate } = req.body;
-      const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
-      const nextId = await getNextId(req.db, 'FixProdRebate');
-
-      const query = `
-        INSERT INTO FixProdRebate (Id, RebateCode, ItemCode, ItemName, UnitPerQty, RebatePerBag, UnitOfMeasure, CreatedDate, UpdatedDate)
-        VALUES (@Id, @RebateCode, @ItemCode, @ItemName, @UnitPerQty, @RebatePerBag, @UnitOfMeasure, @CreatedDate, GETDATE())
-      `;
-      await req.db.request()
-        .input('Id', sql.Int, nextId)
-        .input('RebateCode', sql.NVarChar, RebateCode)
-        .input('ItemCode', sql.NVarChar, ItemCode)
-        .input('ItemName', sql.NVarChar, ItemName)
-        .input('UnitPerQty', sql.Decimal(18, 2), UnitPerQty || 0)
-        .input('RebatePerBag', sql.Decimal(18, 2), RebatePerBag || 0)
-        .input('UnitOfMeasure', sql.NVarChar, UnitOfMeasure || '')
-        .input('CreatedDate', sql.DateTime, createdDateValue)
-        .query(query);
-
-      res.json({ success: true, database: req.database });
-    } catch (error) {
-      res.status(500).json({ success: false, error: error.message, database: req.database });
+    const parent = await req.db.request()
+      .input('id', sql.Int, CustRebateId)
+      .query('SELECT Id FROM FixCustRebate WHERE Id = @id');
+    if (parent.recordset.length === 0) {
+      return res.status(404).json({ success: false, error: `FixCustRebate.Id=${CustRebateId} not found` });
     }
-  });
 
-  // ─── IncCustRebate ───────────────────────────────────────────────────────────
-  router.post('/inc-cust-rebate', async (req, res) => {
-    try {
-      const { RebateCode, CardCode, CardName, QtrRebate, CreatedDate } = req.body;
-      const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
-      const nextId = await getNextId(req.db, 'IncCustRebate');
-
-      const query = `
-        INSERT INTO IncCustRebate (Id, RebateCode, CardCode, CardName, QtrRebate, CreatedDate, UpdatedDate)
-        VALUES (@Id, @RebateCode, @CardCode, @CardName, @QtrRebate, @CreatedDate, GETDATE())
-      `;
-      await req.db.request()
-        .input('Id', sql.Int, nextId)
-        .input('RebateCode', sql.NVarChar, RebateCode)
-        .input('CardCode', sql.NVarChar, CardCode)
-        .input('CardName', sql.NVarChar, CardName)
-        .input('QtrRebate', sql.Int, QtrRebate || 0)
-        .input('CreatedDate', sql.DateTime, createdDateValue)
-        .query(query);
-
-      res.json({ success: true, id: nextId, database: req.database });
-    } catch (error) {
-      res.status(500).json({ success: false, error: error.message, database: req.database });
+    const inserted = [];
+    for (const q of quotas) {
+      if (!q || !q.Month) continue;
+      const newId = await insertRow(
+        req.db, req.database, 'FixCustQuota',
+        {
+          CustRebateId: { type: sql.Int,            value: CustRebateId },
+          Month:        { type: sql.NVarChar(100),  value: q.Month },
+          TargetQty:    { type: sql.Decimal(18, 2), value: parseFloat(q.TargetQty) || 0 },
+          CreatedDate:  { type: sql.DateTime,       value: new Date() },
+        },
+        { UpdatedDate: 'GETDATE()' }
+      );
+      inserted.push({ month: q.Month, id: newId });
     }
-  });
 
-  // ─── IncCustRange ────────────────────────────────────────────────────────────
-  router.post('/inc-cust-range', async (req, res) => {
-    try {
-      const { IncCustRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate } = req.body;
-      const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
-      const nextId = await getNextId(req.db, 'IncCustRange');
+    res.json({ success: true, inserted, count: inserted.length, database: req.database });
+  } catch (error) {
+    console.error('❌ [fix-cust-quotas/bulk]', error.message, error.number);
+    res.status(500).json({ success: false, error: error.message, errorNumber: error.number });
+  }
+});
 
-      const query = `
-        INSERT INTO IncCustRange (Id, IncCustRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate, UpdatedDate)
-        VALUES (@Id, @IncCustRebateId, @RangeNo, @MinQty, @MaxQty, @RebatePerBag, @CreatedDate, GETDATE())
-      `;
-      await req.db.request()
-        .input('Id', sql.Int, nextId)
-        .input('IncCustRebateId', sql.Int, IncCustRebateId)
-        .input('RangeNo', sql.Int, RangeNo)
-        .input('MinQty', sql.Int, MinQty || 0)
-        .input('MaxQty', sql.Int, MaxQty || 0)
-        .input('RebatePerBag', sql.Int, RebatePerBag || 0)
-        .input('CreatedDate', sql.DateTime, createdDateValue)
-        .query(query);
+// ─── FixProdRebate ─────────────────────────────────────────────────────────
+router.post('/fix-prod-rebate', async (req, res) => {
+  try {
+    const {
+      RebateCode, ItemCode, ItemName, RebatePerBag, UnitPerQty, UnitOfMeasure,
+      QtrRebate, QtrQualified, CreatedDate
+    } = req.body;
 
-      res.json({ success: true, database: req.database });
-    } catch (error) {
-      res.status(500).json({ success: false, error: error.message, database: req.database });
+    const qtrRebateValue    = QtrRebate !== undefined && QtrRebate !== null && QtrRebate !== ''
+                                ? parseFloat(QtrRebate) : 0;
+    const qtrQualifiedValue = normalizeQtrQualified(QtrQualified);
+
+    const newId = await insertRow(
+      req.db, req.database, 'FixProdRebate',
+      {
+        RebateCode:    { type: sql.NVarChar,      value: RebateCode },
+        ItemCode:      { type: sql.NVarChar,      value: ItemCode },
+        ItemName:      { type: sql.NVarChar,      value: ItemName },
+        UnitPerQty:    { type: sql.Decimal(18, 2),value: UnitPerQty || 0 },
+        RebatePerBag:  { type: sql.Decimal(18, 2),value: RebatePerBag || 0 },
+        QtrRebate:     { type: sql.Decimal(19, 6),value: qtrRebateValue },
+        QtrQualified:  { type: sql.Bit,           value: qtrQualifiedValue },
+        UnitOfMeasure: { type: sql.NVarChar,      value: UnitOfMeasure || '' },
+        CreatedDate:   { type: sql.DateTime,      value: CreatedDate ? new Date(CreatedDate) : new Date() },
+      },
+      { UpdatedDate: 'GETDATE()' }
+    );
+
+    res.json({ success: true, id: newId, database: req.database });
+  } catch (error) {
+    console.error('❌ [fix-prod-rebate]', error.message, error.number);
+    res.status(500).json({ success: false, error: error.message, database: req.database });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//   Incremental rebate inserts
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── IncCustRebate ─────────────────────────────────────────────────────────
+router.post('/inc-cust-rebate', async (req, res) => {
+  try {
+    const {
+      RebateCode, CardCode, CardName, QtrRebate, QtrQualified,
+      DateFrom, DateTo, CreatedDate
+    } = req.body;
+
+    const qtrRebateValue    = QtrRebate !== undefined && QtrRebate !== null && QtrRebate !== ''
+                              ? parseFloat(QtrRebate) : 0;
+    const qtrQualifiedValue = normalizeQtrQualified(QtrQualified);
+    const dateFromValue     = normalizeDateOrNull(DateFrom);
+    const dateToValue       = normalizeDateOrNull(DateTo);
+
+    const newId = await insertRow(
+      req.db, req.database, 'IncCustRebate',
+      {
+        RebateCode:   { type: sql.NVarChar,     value: RebateCode },
+        CardCode:     { type: sql.NVarChar,     value: CardCode },
+        CardName:     { type: sql.NVarChar,     value: CardName },
+        QtrRebate:    { type: sql.Decimal(19,6),value: qtrRebateValue },
+        QtrQualified: { type: sql.Bit,          value: qtrQualifiedValue },
+        DateFrom:     { type: sql.Date,         value: dateFromValue },
+        DateTo:       { type: sql.Date,         value: dateToValue },
+        CreatedDate:  { type: sql.DateTime,     value: CreatedDate ? new Date(CreatedDate) : new Date() },
+      },
+      { UpdatedDate: 'GETDATE()' }
+    );
+
+    res.json({ success: true, id: newId, database: req.database });
+  } catch (error) {
+    console.error('❌ [inc-cust-rebate]', error.message, error.number);
+    res.status(500).json({ success: false, error: error.message, database: req.database });
+  }
+});
+
+// ─── IncCustRange ──────────────────────────────────────────────────────────
+router.post('/inc-cust-range', async (req, res) => {
+  try {
+    const { IncCustRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate } = req.body;
+
+    const newId = await insertRow(
+      req.db, req.database, 'IncCustRange',
+      {
+        IncCustRebateId: { type: sql.Int,      value: IncCustRebateId },
+        RangeNo:         { type: sql.Int,      value: RangeNo },
+        MinQty:          { type: sql.Int,      value: MinQty || 0 },
+        MaxQty:          { type: sql.Int,      value: MaxQty || 0 },
+        RebatePerBag:    { type: sql.Int,      value: RebatePerBag || 0 },
+        CreatedDate:     { type: sql.DateTime, value: CreatedDate ? new Date(CreatedDate) : new Date() },
+      },
+      { UpdatedDate: 'GETDATE()' }
+    );
+
+    res.json({ success: true, id: newId, database: req.database });
+  } catch (error) {
+    console.error('❌ [inc-cust-range]', error.message, error.number);
+    res.status(500).json({ success: false, error: error.message, database: req.database });
+  }
+});
+
+// ─── IncItemRebate ─────────────────────────────────────────────────────────
+router.post('/inc-item-rebate', async (req, res) => {
+  try {
+    const {
+      RebateCode, ItemCode, ItemName, UnitPerQty, UnitOfMeasure,
+      RebatePerBag, QtrRebate, QtrQualified, CreatedDate
+    } = req.body;
+
+    const qtrRebateValue    = QtrRebate !== undefined && QtrRebate !== null && QtrRebate !== ''
+                              ? parseFloat(QtrRebate) : 0;
+    const qtrQualifiedValue = normalizeQtrQualified(QtrQualified);
+
+    const columns = {
+      RebateCode:    { type: sql.NVarChar,      value: RebateCode },
+      ItemCode:      { type: sql.NVarChar,      value: ItemCode },
+      ItemName:      { type: sql.NVarChar,      value: ItemName },
+      UnitPerQty:    { type: sql.Int,           value: UnitPerQty || 0 },
+      UnitOfMeasure: { type: sql.NVarChar,      value: UnitOfMeasure || '' },
+      QtrRebate:     { type: sql.Decimal(19,6), value: qtrRebateValue },
+      QtrQualified:  { type: sql.Bit,           value: qtrQualifiedValue },
+      CreatedDate:   { type: sql.DateTime,      value: CreatedDate ? new Date(CreatedDate) : new Date() },
+    };
+
+    // Only include RebatePerBag when the column actually exists in this DB.
+    // For Incremental rebates the per-bag value is stored per-range in IncItemRange,
+    // so this column may be absent (e.g. on the VAN database).
+    if (await columnExists(req.db, req.database, 'IncItemRebate', 'RebatePerBag')) {
+      columns.RebatePerBag = { type: sql.Decimal(19,6), value: RebatePerBag || 0 };
     }
-  });
 
+    const newId = await insertRow(
+      req.db, req.database, 'IncItemRebate',
+      columns,
+      { UpdatedDate: 'GETDATE()' }
+    );
 
-  // ─── IncItemRebate ───────────────────────────────────────────────────────────
-  router.post('/inc-item-rebate', async (req, res) => {
-    try {
-      const { RebateCode, ItemCode, ItemName, UnitPerQty, UnitOfMeasure, CreatedDate } = req.body;
-      const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
-      const nextId = await getNextId(req.db, 'IncItemRebate');
+    res.json({ success: true, id: newId, database: req.database });
+  } catch (error) {
+    console.error('❌ [inc-item-rebate]', error.message, error.number);
+    res.status(500).json({ success: false, error: error.message, database: req.database });
+  }
+});
 
-      const query = `
-        INSERT INTO IncItemRebate (Id, RebateCode, ItemCode, ItemName, UnitPerQty, UnitOfMeasure, CreatedDate, UpdatedDate)
-        VALUES (@Id, @RebateCode, @ItemCode, @ItemName, @UnitPerQty, @UnitOfMeasure, @CreatedDate, GETDATE())
-      `;
-      await req.db.request()
-        .input('Id', sql.Int, nextId)
-        .input('RebateCode', sql.NVarChar, RebateCode)
-        .input('ItemCode', sql.NVarChar, ItemCode)
-        .input('ItemName', sql.NVarChar, ItemName)
-        .input('UnitPerQty', sql.Int, UnitPerQty || 0)
-        .input('UnitOfMeasure', sql.NVarChar, UnitOfMeasure || '')
-        .input('CreatedDate', sql.DateTime, createdDateValue)
-        .query(query);
+// ─── IncItemRange ──────────────────────────────────────────────────────────
+router.post('/inc-item-range', async (req, res) => {
+  try {
+    const { ItemRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate } = req.body;
 
-      res.json({ success: true, id: nextId, database: req.database });
-    } catch (error) {
-      res.status(500).json({ success: false, error: error.message, database: req.database });
+    const newId = await insertRow(
+      req.db, req.database, 'IncItemRange',
+      {
+        ItemRebateId: { type: sql.Int,      value: ItemRebateId },
+        RangeNo:      { type: sql.Int,      value: RangeNo },
+        MinQty:       { type: sql.Int,      value: MinQty || 0 },
+        MaxQty:       { type: sql.Int,      value: MaxQty || 0 },
+        RebatePerBag: { type: sql.Int,      value: RebatePerBag || 0 },
+        CreatedDate:  { type: sql.DateTime, value: CreatedDate ? new Date(CreatedDate) : new Date() },
+      },
+      { UpdatedDate: 'GETDATE()' }
+    );
+
+    res.json({ success: true, id: newId, database: req.database });
+  } catch (error) {
+    console.error('❌ [inc-item-range]', error.message, error.number);
+    res.status(500).json({ success: false, error: error.message, database: req.database });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//   Percentage rebate inserts
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── PerCustRebate ─────────────────────────────────────────────────────────
+router.post('/per-cust-rebate', async (req, res) => {
+  try {
+    const {
+      RebateCode, CardCode, CardName, QtrRebate, QtrQualified,
+      DateFrom, DateTo, CreatedDate
+    } = req.body;
+
+    const qtrRebateValue    = QtrRebate !== undefined && QtrRebate !== null && QtrRebate !== ''
+                              ? parseFloat(QtrRebate) : 0;
+    const qtrQualifiedValue = normalizeQtrQualified(QtrQualified);
+    const dateFromValue     = normalizeDateOrNull(DateFrom);
+    const dateToValue       = normalizeDateOrNull(DateTo);
+
+    const newId = await insertRow(
+      req.db, req.database, 'PerCustRebate',
+      {
+        RebateCode:   { type: sql.NVarChar,     value: RebateCode },
+        CardCode:     { type: sql.NVarChar,     value: CardCode },
+        CardName:     { type: sql.NVarChar,     value: CardName },
+        QtrRebate:    { type: sql.Decimal(19,6),value: qtrRebateValue },
+        QtrQualified: { type: sql.Bit,          value: qtrQualifiedValue },
+        DateFrom:     { type: sql.Date,         value: dateFromValue },
+        DateTo:       { type: sql.Date,         value: dateToValue },
+        CreatedDate:  { type: sql.DateTime,     value: CreatedDate ? new Date(CreatedDate) : new Date() },
+      },
+      { UpdatedDate: 'GETDATE()' }
+    );
+
+    res.json({ success: true, id: newId, database: req.database });
+  } catch (error) {
+    console.error('❌ [per-cust-rebate]', error.message, error.number);
+    res.status(500).json({ success: false, error: error.message, database: req.database });
+  }
+});
+
+// ─── PerCustQuota (single) ─────────────────────────────────────────────────
+router.post('/per-cust-quota', async (req, res) => {
+  try {
+    const { PerCustRebateId, Month, TargetQty, CreatedDate } = req.body;
+
+    const newId = await insertRow(
+      req.db, req.database, 'PerCustQuota',
+      {
+        PerCustRebateId: { type: sql.Int,            value: PerCustRebateId },
+        Month:           { type: sql.NVarChar,       value: Month },
+        TargetQty:       { type: sql.Decimal(18, 2), value: TargetQty || 0 },
+        CreatedDate:     { type: sql.DateTime,       value: CreatedDate ? new Date(CreatedDate) : new Date() },
+      },
+      { UpdatedDate: 'GETDATE()' }
+    );
+
+    res.json({ success: true, id: newId, database: req.database });
+  } catch (error) {
+    console.error('❌ [per-cust-quota]', error.message, error.number);
+    res.status(500).json({ success: false, error: error.message, database: req.database });
+  }
+});
+
+// ─── PerCustQuota (bulk) ───────────────────────────────────────────────────
+router.post('/per-cust-quotas/bulk', async (req, res) => {
+  try {
+    const { CustRebateId, quotas } = req.body;
+    if (!Array.isArray(quotas) || quotas.length === 0) {
+      return res.status(400).json({ success: false, error: 'No quotas provided', database: req.database });
     }
-  });
 
-  // ─── IncItemRange ────────────────────────────────────────────────────────────
-  router.post('/inc-item-range', async (req, res) => {
-    try {
-      const { ItemRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate } = req.body;
-      const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
-      const nextId = await getNextId(req.db, 'IncItemRange');
-
-      const query = `
-        INSERT INTO IncItemRange (Id, ItemRebateId, RangeNo, MinQty, MaxQty, RebatePerBag, CreatedDate, UpdatedDate)
-        VALUES (@Id, @ItemRebateId, @RangeNo, @MinQty, @MaxQty, @RebatePerBag, @CreatedDate, GETDATE())
-      `;
-      await req.db.request()
-        .input('Id', sql.Int, nextId)
-        .input('ItemRebateId', sql.Int, ItemRebateId)
-        .input('RangeNo', sql.Int, RangeNo)
-        .input('MinQty', sql.Int, MinQty || 0)
-        .input('MaxQty', sql.Int, MaxQty || 0)
-        .input('RebatePerBag', sql.Int, RebatePerBag || 0)
-        .input('CreatedDate', sql.DateTime, createdDateValue)
-        .query(query);
-
-      res.json({ success: true, database: req.database });
-    } catch (error) {
-      res.status(500).json({ success: false, error: error.message, database: req.database });
+    const results = [];
+    for (const q of quotas) {
+      if (!q || !q.Month) continue;
+      const newId = await insertRow(
+        req.db, req.database, 'PerCustQuota',
+        {
+          PerCustRebateId: { type: sql.Int,            value: CustRebateId },
+          Month:           { type: sql.NVarChar,       value: q.Month },
+          TargetQty:       { type: sql.Decimal(18, 2), value: q.TargetQty || 0 },
+          CreatedDate:     { type: sql.DateTime,       value: q.CreatedDate ? new Date(q.CreatedDate) : new Date() },
+        },
+        { UpdatedDate: 'GETDATE()' }
+      );
+      results.push(newId);
     }
-  });
 
-  // ─── PerCustRebate ───────────────────────────────────────────────────────────
-  router.post('/per-cust-rebate', async (req, res) => {
-    try {
-      const { RebateCode, CardCode, CardName, CreatedDate } = req.body;
-      const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
+    res.json({ success: true, count: results.length, ids: results, database: req.database });
+  } catch (error) {
+    console.error('❌ [per-cust-quotas/bulk]', error.message, error.number);
+    res.status(500).json({ success: false, error: error.message, database: req.database });
+  }
+});
 
-      const query = `
-        INSERT INTO PerCustRebate (RebateCode, CardCode, CardName, CreatedDate, UpdatedDate)
-        VALUES (@RebateCode, @CardCode, @CardName, @CreatedDate, GETDATE());
-        SELECT SCOPE_IDENTITY() as NewId;
-      `;
-      const result = await req.db.request()
-        .input('RebateCode', sql.NVarChar, RebateCode)
-        .input('CardCode', sql.NVarChar, CardCode)
-        .input('CardName', sql.NVarChar, CardName)
-        .input('CreatedDate', sql.DateTime, createdDateValue)
-        .query(query);
+// ─── PerProdRebate ─────────────────────────────────────────────────────────
+router.post('/per-prod-rebate', async (req, res) => {
+  try {
+    const {
+      RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag,
+      QtrRebate, QtrQualified, UnitOfMeasure, CreatedDate
+    } = req.body;
 
-      res.json({ success: true, id: result.recordset[0].NewId, database: req.database });
-    } catch (error) {
-      res.status(500).json({ success: false, error: error.message, database: req.database });
-    }
-  });
+    const qtrRebateValue    = QtrRebate !== undefined && QtrRebate !== null && QtrRebate !== ''
+                              ? parseFloat(QtrRebate) : 0;
+    const qtrQualifiedValue = normalizeQtrQualified(QtrQualified);
 
-  // ─── PerCustQuota (single) ───────────────────────────────────────────────────
-  router.post('/per-cust-quota', async (req, res) => {
-    try {
-      const { PerCustRebateId, Month, TargetQty, CreatedDate } = req.body;
-      const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
+    const newId = await insertRow(
+      req.db, req.database, 'PerProdRebate',
+      {
+        RebateCode:       { type: sql.NVarChar, value: RebateCode },
+        ItemCode:         { type: sql.NVarChar, value: ItemCode },
+        ItemName:         { type: sql.NVarChar, value: ItemName },
+        UnitPerQty:       { type: sql.Int,      value: UnitPerQty || 0 },
+        PercentagePerBag: { type: sql.Decimal(18,2), value: PercentagePerBag || 0 },
+        QtrRebate:        { type: sql.Decimal(19,6), value: qtrRebateValue },
+        QtrQualified:     { type: sql.Bit, value: qtrQualifiedValue },
+        UnitOfMeasure:    { type: sql.NVarChar, value: UnitOfMeasure || '' },
+        CreatedDate:      { type: sql.DateTime, value: CreatedDate ? new Date(CreatedDate) : new Date() },
+      },
+      { UpdatedDate: 'GETDATE()' }
+    );
 
-      const query = `
-        INSERT INTO PerCustQuota (PerCustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
-        VALUES (@PerCustRebateId, @Month, @TargetQty, @CreatedDate, GETDATE());
-        SELECT SCOPE_IDENTITY() as NewId;
-      `;
-      const result = await req.db.request()
-        .input('PerCustRebateId', sql.Int, PerCustRebateId)
-        .input('Month', sql.NVarChar, Month)
-        .input('TargetQty', sql.Decimal(18, 2), TargetQty || 0)
-        .input('CreatedDate', sql.DateTime, createdDateValue)
-        .query(query);
+    res.json({ success: true, id: newId, database: req.database });
+  } catch (error) {
+    console.error('❌ [per-prod-rebate]', error.message, error.number);
+    res.status(500).json({ success: false, error: error.message, database: req.database });
+  }
+});
 
-      res.json({ success: true, id: result.recordset[0].NewId, database: req.database });
-    } catch (error) {
-      res.status(500).json({ success: false, error: error.message, database: req.database });
-    }
-  });
-
-  // ─── PerCustQuota (bulk) — NEW, add this ─────────────────────────────────────
-  router.post('/per-cust-quotas/bulk', async (req, res) => {
-    try {
-      const { CustRebateId, quotas } = req.body;
-      if (!Array.isArray(quotas) || quotas.length === 0) {
-        return res.status(400).json({ success: false, error: 'No quotas provided', database: req.database });
-      }
-      const results = [];
-      for (const q of quotas) {
-        const createdDateValue = q.CreatedDate ? new Date(q.CreatedDate) : new Date();
-        const result = await req.db.request()
-          .input('PerCustRebateId', sql.Int, CustRebateId)
-          .input('Month', sql.NVarChar, q.Month)
-          .input('TargetQty', sql.Decimal(18, 2), q.TargetQty || 0)
-          .input('CreatedDate', sql.DateTime, createdDateValue)
-          .query(`INSERT INTO PerCustQuota (PerCustRebateId, Month, TargetQty, CreatedDate, UpdatedDate)
-                  VALUES (@PerCustRebateId, @Month, @TargetQty, @CreatedDate, GETDATE());
-                  SELECT SCOPE_IDENTITY() as NewId;`);
-        results.push(result.recordset[0].NewId);
-      }
-      res.json({ success: true, count: results.length, database: req.database });
-    } catch (error) {
-      res.status(500).json({ success: false, error: error.message, database: req.database });
-    }
-  });
-
-  // ─── PerProdRebate ───────────────────────────────────────────────────────────
-  router.post('/per-prod-rebate', async (req, res) => {
-    try {
-      const { RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag, UnitOfMeasure, CreatedDate } = req.body;
-      const createdDateValue = CreatedDate ? new Date(CreatedDate) : new Date();
-
-      const query = `
-        INSERT INTO PerProdRebate (RebateCode, ItemCode, ItemName, UnitPerQty, PercentagePerBag, UnitOfMeasure, CreatedDate, UpdatedDate)
-        VALUES (@RebateCode, @ItemCode, @ItemName, @UnitPerQty, @PercentagePerBag, @UnitOfMeasure, @CreatedDate, GETDATE());
-        SELECT SCOPE_IDENTITY() as NewId;
-      `;
-      const result = await req.db.request()
-        .input('RebateCode', sql.NVarChar, RebateCode)
-        .input('ItemCode', sql.NVarChar, ItemCode)
-        .input('ItemName', sql.NVarChar, ItemName)
-        .input('UnitPerQty', sql.Int, UnitPerQty || 0)
-        .input('PercentagePerBag', sql.Int, PercentagePerBag || 0)
-        .input('UnitOfMeasure', sql.NVarChar, UnitOfMeasure || '')
-        .input('CreatedDate', sql.DateTime, createdDateValue)
-        .query(query);
-
-      res.json({ success: true, id: result.recordset[0].NewId, database: req.database });
-    } catch (error) {
-      res.status(500).json({ success: false, error: error.message, database: req.database });
-    }
-  });
+// ─────────────────────────────────────────────────────────────────────────────
+//   Read routes
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Get all rebate programs
 router.get('/rebate-programs', async (req, res) => {
   try {
     const query = `SELECT * FROM RebateProgram ORDER BY CreatedDate DESC, RebateCode DESC`;
-    
+
     const result = await req.db.request().query(query);
-    
+
     res.json({
       success: true,
       data: result.recordset,
       database: req.database,
-      count: result.recordset.length
+      count: result.recordset.length,
     });
   } catch (error) {
     console.error('❌ Error fetching rebate programs:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      database: req.database 
-    });
+    res.status(500).json({ success: false, error: error.message, database: req.database });
   }
 });
 
-
-/*===========================================*/
-/*              RESTRICTIONS                 */
-/*===========================================*/
-
-
-// Backend route for detailed duplicate check
-router.post('/check-duplicate-detailed', async (req, res) => {
-  try {
-    const { RebateType, SlpCode, DateFrom, DateTo, Frequency, CardCode, ItemCode } = req.body;
-    
-    console.log(`🔍 Checking for detailed duplicate rebate program...`);
-    console.log(`   Customer: ${CardCode}, Item: ${ItemCode}`);
-    
-    // First, check if the RebateProgram table exists and has the data
-    try {
-      // Check if the tables exist
-      const tableCheckQuery = `
-        SELECT COUNT(*) as Count 
-        FROM INFORMATION_SCHEMA.TABLES 
-        WHERE TABLE_NAME = 'RebateProgram'
-      `;
-      
-      const tableCheck = await req.db.request().query(tableCheckQuery);
-      
-      if (tableCheck.recordset[0].Count === 0) {
-        console.log('RebateProgram table does not exist yet');
-        return res.json({
-          success: true,
-          exists: false,
-          message: 'RebateProgram table not found'
-        });
-      }
-    } catch (tableError) {
-      console.log('Error checking tables:', tableError.message);
-      // Continue with the query - it will fail gracefully
-    }
-    
-    let query = '';
-    
-    // Build detailed query based on rebate type
-    if (RebateType === "Fixed") {
-      query = `
-        SELECT 
-          rp.RebateCode,
-          rp.DateFrom,
-          rp.DateTo,
-          rp.Frequency,
-          rp.SlpName,
-          fcr.CardCode,
-          fcr.CardName,
-          fpr.ItemCode,
-          fpr.ItemName
-        FROM RebateProgram rp
-        INNER JOIN FixCustRebate fcr ON rp.RebateCode = fcr.RebateCode
-        INNER JOIN FixProdRebate fpr ON rp.RebateCode = fpr.RebateCode
-        WHERE rp.RebateType = @RebateType
-          AND rp.SlpCode = @SlpCode
-          AND rp.DateFrom = @DateFrom
-          AND rp.DateTo = @DateTo
-          AND rp.Frequency = @Frequency
-          AND fcr.CardCode = @CardCode
-          AND fpr.ItemCode = @ItemCode
-      `;
-    } else if (RebateType === "Percentage") {
-      query = `
-        SELECT 
-          rp.RebateCode,
-          rp.DateFrom,
-          rp.DateTo,
-          rp.Frequency,
-          rp.SlpName,
-          pcr.CardCode,
-          pcr.CardName,
-          ppr.ItemCode,
-          ppr.ItemName
-        FROM RebateProgram rp
-        INNER JOIN PerCustRebate pcr ON rp.RebateCode = pcr.RebateCode
-        INNER JOIN PerProdRebate ppr ON rp.RebateCode = ppr.RebateCode
-        WHERE rp.RebateType = @RebateType
-          AND rp.SlpCode = @SlpCode
-          AND rp.DateFrom = @DateFrom
-          AND rp.DateTo = @DateTo
-          AND rp.Frequency = @Frequency
-          AND pcr.CardCode = @CardCode
-          AND ppr.ItemCode = @ItemCode
-      `;
-    } else if (RebateType === "Incremental") {
-      query = `
-        SELECT 
-          rp.RebateCode,
-          rp.DateFrom,
-          rp.DateTo,
-          rp.Frequency,
-          rp.SlpName,
-          icr.CardCode,
-          icr.CardName,
-          iir.ItemCode,
-          iir.ItemName
-        FROM RebateProgram rp
-        INNER JOIN IncCustRebate icr ON rp.RebateCode = icr.RebateCode
-        INNER JOIN IncItemRebate iir ON rp.RebateCode = iir.RebateCode
-        WHERE rp.RebateType = @RebateType
-          AND rp.SlpCode = @SlpCode
-          AND rp.DateFrom = @DateFrom
-          AND rp.DateTo = @DateTo
-          AND rp.Frequency = @Frequency
-          AND icr.CardCode = @CardCode
-          AND iir.ItemCode = @ItemCode
-      `;
-    } else {
-      return res.json({
-        success: true,
-        exists: false,
-        message: 'Invalid rebate type'
-      });
-    }
-    
-    const result = await req.db.request()
-      .input('RebateType', sql.NVarChar, RebateType)
-      .input('SlpCode', sql.Int, SlpCode)
-      .input('DateFrom', sql.Date, DateFrom)
-      .input('DateTo', sql.Date, DateTo)
-      .input('Frequency', sql.NVarChar, Frequency)
-      .input('CardCode', sql.NVarChar, CardCode)
-      .input('ItemCode', sql.NVarChar, ItemCode)
-      .query(query);
-    
-    const exists = result.recordset.length > 0;
-    
-    if (exists) {
-      const duplicate = result.recordset[0];
-      console.log(`📊 Duplicate found:`);
-      console.log(`   - Rebate Code: ${duplicate.RebateCode}`);
-      console.log(`   - Customer: ${duplicate.CardName} (${duplicate.CardCode})`);
-      console.log(`   - Item: ${duplicate.ItemName} (${duplicate.ItemCode})`);
-      console.log(`   - Period: ${duplicate.DateFrom} to ${duplicate.DateTo}`);
-      console.log(`   - Frequency: ${duplicate.Frequency}`);
-      console.log(`   - Sales Employee: ${duplicate.SlpName}`);
-      
-      res.json({
-        success: true,
-        exists: true,
-        existingRebateCode: duplicate.RebateCode,
-        existingDateFrom: duplicate.DateFrom,
-        existingDateTo: duplicate.DateTo,
-        existingFrequency: duplicate.Frequency,
-        existingSlpName: duplicate.SlpName,
-        existingCardCode: duplicate.CardCode,
-        existingCardName: duplicate.CardName,
-        existingItemCode: duplicate.ItemCode,
-        existingItemName: duplicate.ItemName
-      });
-    } else {
-      console.log(`✅ No duplicate found for Customer: ${CardCode}, Item: ${ItemCode}`);
-      res.json({
-        success: true,
-        exists: false
-      });
-    }
-    
-  } catch (error) {
-    console.error('❌ Error checking for duplicates:', error);
-    res.status(200).json({  // Return 200 with error info instead of 500
-      success: false,
-      exists: false,
-      error: error.message,
-      message: 'Error checking duplicates, but will proceed with save'
-    });
-  }
-});
-
-// Simple test endpoint to verify the route works
-router.get('/test', (req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'Rebate program API is working',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Optional: Batch duplicate check endpoint for better performance
-router.post('/check-duplicates-batch', async (req, res) => {
-  try {
-    const { RebateType, SlpCode, DateFrom, DateTo, Frequency, combinations } = req.body;
-    // combinations is an array of { CardCode, ItemCode }
-    
-    console.log(`🔍 Batch checking ${combinations.length} combinations for duplicates...`);
-    
-    const results = [];
-    
-    for (const combo of combinations) {
-      let query = '';
-      
-      if (RebateType === "Fixed") {
-        query = `
-          SELECT 
-            rp.RebateCode,
-            rp.DateFrom,
-            rp.DateTo,
-            rp.Frequency,
-            rp.SlpName,
-            fcr.CardCode,
-            fcr.CardName,
-            fpr.ItemCode,
-            fpr.ItemName
-          FROM RebateProgram rp
-          INNER JOIN FixCustRebate fcr ON rp.RebateCode = fcr.RebateCode
-          INNER JOIN FixProdRebate fpr ON rp.RebateCode = fpr.RebateCode
-          WHERE rp.RebateType = @RebateType
-            AND rp.SlpCode = @SlpCode
-            AND rp.DateFrom = @DateFrom
-            AND rp.DateTo = @DateTo
-            AND rp.Frequency = @Frequency
-            AND fcr.CardCode = @CardCode
-            AND fpr.ItemCode = @ItemCode
-        `;
-      } else if (RebateType === "Percentage") {
-        query = `
-          SELECT 
-            rp.RebateCode,
-            rp.DateFrom,
-            rp.DateTo,
-            rp.Frequency,
-            rp.SlpName,
-            pcr.CardCode,
-            pcr.CardName,
-            ppr.ItemCode,
-            ppr.ItemName
-          FROM RebateProgram rp
-          INNER JOIN PerCustRebate pcr ON rp.RebateCode = pcr.RebateCode
-          INNER JOIN PerProdRebate ppr ON rp.RebateCode = ppr.RebateCode
-          WHERE rp.RebateType = @RebateType
-            AND rp.SlpCode = @SlpCode
-            AND rp.DateFrom = @DateFrom
-            AND rp.DateTo = @DateTo
-            AND rp.Frequency = @Frequency
-            AND pcr.CardCode = @CardCode
-            AND ppr.ItemCode = @ItemCode
-        `;
-      } else if (RebateType === "Incremental") {
-        query = `
-          SELECT 
-            rp.RebateCode,
-            rp.DateFrom,
-            rp.DateTo,
-            rp.Frequency,
-            rp.SlpName,
-            icr.CardCode,
-            icr.CardName,
-            iir.ItemCode,
-            iir.ItemName
-          FROM RebateProgram rp
-          INNER JOIN IncCustRebate icr ON rp.RebateCode = icr.RebateCode
-          INNER JOIN IncItemRebate iir ON rp.RebateCode = iir.RebateCode
-          WHERE rp.RebateType = @RebateType
-            AND rp.SlpCode = @SlpCode
-            AND rp.DateFrom = @DateFrom
-            AND rp.DateTo = @DateTo
-            AND rp.Frequency = @Frequency
-            AND icr.CardCode = @CardCode
-            AND iir.ItemCode = @ItemCode
-        `;
-      }
-      
-      const result = await req.db.request()
-        .input('RebateType', sql.NVarChar, RebateType)
-        .input('SlpCode', sql.Int, SlpCode)
-        .input('DateFrom', sql.Date, DateFrom)
-        .input('DateTo', sql.Date, DateTo)
-        .input('Frequency', sql.NVarChar, Frequency)
-        .input('CardCode', sql.NVarChar, combo.CardCode)
-        .input('ItemCode', sql.NVarChar, combo.ItemCode)
-        .query(query);
-      
-      if (result.recordset.length > 0) {
-        const dup = result.recordset[0];
-        results.push({
-          customerCode: combo.CardCode,
-          itemCode: combo.ItemCode,
-          exists: true,
-          existingRebateCode: dup.RebateCode,
-          existingDateFrom: dup.DateFrom,
-          existingDateTo: dup.DateTo,
-          existingFrequency: dup.Frequency,
-          existingSlpName: dup.SlpName,
-          existingCardName: dup.CardName,
-          existingItemName: dup.ItemName
-        });
-      } else {
-        results.push({
-          customerCode: combo.CardCode,
-          itemCode: combo.ItemCode,
-          exists: false
-        });
-      }
-    }
-    
-    const duplicates = results.filter(r => r.exists);
-    
-    console.log(`📊 Batch check complete: Found ${duplicates.length} duplicates out of ${combinations.length} combinations`);
-    
-    res.json({
-      success: true,
-      duplicates: duplicates,
-      totalChecked: combinations.length,
-      duplicateCount: duplicates.length
-    });
-    
-  } catch (error) {
-    console.error('❌ Error in batch duplicate check:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Backend endpoint to check if an item exists in ANY program with the same parameters
-router.post('/check-item-conflict', async (req, res) => {
-  try {
-    const { RebateType, SlpCode, DateFrom, DateTo, Frequency, ItemCode } = req.body;
-    
-    console.log(`🔍 Checking if item ${ItemCode} exists in ANY program with same parameters...`);
-    console.log('Request body:', req.body);
-    
-    // First check if RebateProgram table exists and has data
-    try {
-      const tableCheck = await req.db.request().query(`
-        SELECT COUNT(*) as Count 
-        FROM INFORMATION_SCHEMA.TABLES 
-        WHERE TABLE_NAME = 'RebateProgram'
-      `);
-      
-      if (tableCheck.recordset[0].Count === 0) {
-        console.log('RebateProgram table does not exist yet');
-        return res.json({
-          success: true,
-          exists: false,
-          message: 'RebateProgram table not found'
-        });
-      }
-    } catch (tableError) {
-      console.log('Error checking tables:', tableError.message);
-    }
-    
-    let query = '';
-    
-    // Determine which product table to check based on rebate type
-    if (RebateType === "Fixed") {
-      query = `
-        SELECT DISTINCT
-          rp.RebateCode,
-          rp.DateFrom,
-          rp.DateTo,
-          rp.Frequency,
-          rp.SlpName,
-          rp.QuotaType,
-          fpr.ItemCode,
-          fpr.ItemName
-        FROM RebateProgram rp
-        INNER JOIN FixProdRebate fpr ON rp.RebateCode = fpr.RebateCode
-        WHERE rp.RebateType = @RebateType
-          AND rp.SlpCode = @SlpCode
-          AND rp.DateFrom = @DateFrom
-          AND rp.DateTo = @DateTo
-          AND rp.Frequency = @Frequency
-          AND fpr.ItemCode = @ItemCode
-      `;
-    } else if (RebateType === "Percentage") {
-      query = `
-        SELECT DISTINCT
-          rp.RebateCode,
-          rp.DateFrom,
-          rp.DateTo,
-          rp.Frequency,
-          rp.SlpName,
-          rp.QuotaType,
-          ppr.ItemCode,
-          ppr.ItemName
-        FROM RebateProgram rp
-        INNER JOIN PerProdRebate ppr ON rp.RebateCode = ppr.RebateCode
-        WHERE rp.RebateType = @RebateType
-          AND rp.SlpCode = @SlpCode
-          AND rp.DateFrom = @DateFrom
-          AND rp.DateTo = @DateTo
-          AND rp.Frequency = @Frequency
-          AND ppr.ItemCode = @ItemCode
-      `;
-    } else if (RebateType === "Incremental") {
-      query = `
-        SELECT DISTINCT
-          rp.RebateCode,
-          rp.DateFrom,
-          rp.DateTo,
-          rp.Frequency,
-          rp.SlpName,
-          rp.QuotaType,
-          iir.ItemCode,
-          iir.ItemName
-        FROM RebateProgram rp
-        INNER JOIN IncItemRebate iir ON rp.RebateCode = iir.RebateCode
-        WHERE rp.RebateType = @RebateType
-          AND rp.SlpCode = @SlpCode
-          AND rp.DateFrom = @DateFrom
-          AND rp.DateTo = @DateTo
-          AND rp.Frequency = @Frequency
-          AND iir.ItemCode = @ItemCode
-      `;
-    } else {
-      return res.json({
-        success: true,
-        exists: false,
-        message: 'Invalid rebate type'
-      });
-    }
-    
-    const result = await req.db.request()
-      .input('RebateType', sql.NVarChar, RebateType)
-      .input('SlpCode', sql.Int, SlpCode)
-      .input('DateFrom', sql.Date, DateFrom)
-      .input('DateTo', sql.Date, DateTo)
-      .input('Frequency', sql.NVarChar, Frequency)
-      .input('ItemCode', sql.NVarChar, ItemCode)
-      .query(query);
-    
-    const exists = result.recordset.length > 0;
-    
-    if (exists) {
-      const program = result.recordset[0];
-      console.log(`⚠️ Item conflict found for ${ItemCode} in program ${program.RebateCode}`);
-      
-      res.json({
-        success: true,
-        exists: true,
-        existingProgram: {
-          RebateCode: program.RebateCode,
-          DateFrom: program.DateFrom,
-          DateTo: program.DateTo,
-          Frequency: program.Frequency,
-          SlpName: program.SlpName,
-          QuotaType: program.QuotaType,
-          ItemCode: program.ItemCode,
-          ItemName: program.ItemName
-        }
-      });
-    } else {
-      console.log(`✅ No conflict found for item ${ItemCode}`);
-      res.json({
-        success: true,
-        exists: false
-      });
-    }
-    
-  } catch (error) {
-    console.error('❌ Error checking item conflict:', error);
-    res.status(200).json({  // Return 200 with error info instead of 500 to avoid JSON parse error
-      success: false,
-      exists: false,
-      error: error.message,
-      message: 'Error checking item conflicts'
-    });
-  }
-});
-
-
-router.post('/rebate-program/check-duplicate-program', async (req, res) => {
-  try {
-    const { RebateType, SlpCode, DateFrom, DateTo } = req.body;
-    
-    console.log(`🔍 Checking for duplicate rebate program...`);
-    console.log(`   Type: ${RebateType}, Sales Emp Code: ${SlpCode}, From: ${DateFrom}, To: ${DateTo}`);
-    
-    // Validate required fields
-    if (!RebateType || !SlpCode || !DateFrom || !DateTo) {
-      return res.status(400).json({
-        success: false,
-        exists: false,
-        error: 'Missing required fields'
-      });
-    }
-    
-    // First check if RebateProgram table exists
-    try {
-      const tableCheck = await req.db.request().query(`
-        SELECT COUNT(*) as Count 
-        FROM INFORMATION_SCHEMA.TABLES 
-        WHERE TABLE_NAME = 'RebateProgram'
-      `);
-      
-      if (tableCheck.recordset[0].Count === 0) {
-        console.log('RebateProgram table does not exist yet');
-        return res.json({
-          success: true,
-          exists: false,
-          message: 'RebateProgram table not found'
-        });
-      }
-    } catch (tableError) {
-      console.log('Error checking tables:', tableError.message);
-    }
-    
-    // Query to check for existing program with same parameters
-    const query = `
-      SELECT 
-        RebateCode,
-        RebateType,
-        SlpCode,
-        SlpName,
-        DateFrom,
-        DateTo,
-        Frequency,
-        QuotaType,
-        CreatedDate
-      FROM RebateProgram 
-      WHERE RebateType = @RebateType
-        AND SlpCode = @SlpCode
-        AND DateFrom = @DateFrom
-        AND DateTo = @DateTo
-    `;
-    
-    const result = await req.db.request()
-      .input('RebateType', sql.NVarChar, RebateType)
-      .input('SlpCode', sql.Int, SlpCode)
-      .input('DateFrom', sql.Date, DateFrom)
-      .input('DateTo', sql.Date, DateTo)
-      .query(query);
-    
-    const exists = result.recordset.length > 0;
-    
-    if (exists) {
-      const program = result.recordset[0];
-      console.log(`⚠️ Duplicate program found! Rebate Code: ${program.RebateCode}`);
-      
-      res.json({
-        success: true,
-        exists: true,
-        program: {
-          RebateCode: program.RebateCode,
-          RebateType: program.RebateType,
-          SlpName: program.SlpName,
-          DateFrom: program.DateFrom,
-          DateTo: program.DateTo,
-          Frequency: program.Frequency,
-          QuotaType: program.QuotaType,
-          CreatedDate: program.CreatedDate
-        }
-      });
-    } else {
-      console.log(`✅ No duplicate program found with these parameters`);
-      res.json({
-        success: true,
-        exists: false
-      });
-    }
-    
-  } catch (error) {
-    console.error('❌ Error checking for duplicate program:', error);
-    res.status(200).json({ 
-      success: false, 
-      exists: false,
-      error: error.message,
-      message: 'Error checking for duplicate program'
-    });
-  }
-});
-
-
-/* To edit the rebate program  */
 // GET /api/rebate-program/by-code/:code
 router.get('/rebate-program/by-code/:code', async (req, res) => {
-  const result = await req.db.request().input('c', sql.NVarChar, req.params.code)
+  const result = await req.db.request()
+    .input('c', sql.NVarChar, req.params.code)
     .query('SELECT * FROM RebateProgram WHERE RebateCode = @c');
   res.json({ success: true, program: result.recordset[0] || null });
 });
@@ -1076,12 +702,10 @@ router.get('/rebate-program/customers/:code', async (req, res) => {
     const type = req.query.type || 'Fixed';
 
     if (type === 'Fixed') {
-      // Get customers
       const custResult = await req.db.request()
         .input('c', sql.NVarChar, code)
         .query(`SELECT * FROM FixCustRebate WHERE RebateCode = @c`);
 
-      // For each customer, fetch their quotas
       const customers = [];
       for (const cust of custResult.recordset) {
         const quotaResult = await req.db.request()
@@ -1091,7 +715,6 @@ router.get('/rebate-program/customers/:code', async (req, res) => {
       }
 
       res.json({ success: true, customers });
-
     } else if (type === 'Incremental') {
       const custResult = await req.db.request()
         .input('c', sql.NVarChar, code)
@@ -1106,7 +729,6 @@ router.get('/rebate-program/customers/:code', async (req, res) => {
       }
 
       res.json({ success: true, customers });
-
     } else if (type === 'Percentage') {
       const custResult = await req.db.request()
         .input('c', sql.NVarChar, code)
@@ -1121,31 +743,26 @@ router.get('/rebate-program/customers/:code', async (req, res) => {
       }
 
       res.json({ success: true, customers });
-
     } else {
       res.json({ success: false, error: 'Invalid rebate type' });
     }
-
   } catch (err) {
     console.error('❌ Error fetching customers:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-
+// GET /api/rebate-program/items/:code?type=Fixed|Incremental|Percentage
 router.get('/rebate-program/items/:code', async (req, res) => {
   try {
     const code = req.params.code;
     const type = req.query.type || 'Fixed';
 
     if (type === 'Fixed') {
-      // FixProdRebate has no child range table based on your list
       const result = await req.db.request()
         .input('c', sql.NVarChar, code)
         .query(`SELECT * FROM FixProdRebate WHERE RebateCode = @c`);
-
       res.json({ success: true, items: result.recordset });
-
     } else if (type === 'Incremental') {
       const itemResult = await req.db.request()
         .input('c', sql.NVarChar, code)
@@ -1158,55 +775,106 @@ router.get('/rebate-program/items/:code', async (req, res) => {
           .query(`SELECT * FROM IncItemRange WHERE ItemRebateId = @id ORDER BY RangeNo ASC`);
         items.push({ ...item, ranges: rangeResult.recordset });
       }
-
       res.json({ success: true, items });
-
     } else if (type === 'Percentage') {
-      // PerProdRebate has no child table based on your list
       const result = await req.db.request()
         .input('c', sql.NVarChar, code)
         .query(`SELECT * FROM PerProdRebate WHERE RebateCode = @c`);
-
       res.json({ success: true, items: result.recordset });
-
     } else {
       res.json({ success: false, error: 'Invalid rebate type' });
     }
-
   } catch (err) {
     console.error('❌ Error fetching items:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// PUT /api/rebate-program/:code — update program header
-router.put('/rebate-program/:code', async (req, res) => {
-  const { RebateType, SlpCode, SlpName, DateFrom, DateTo, Frequency, QuotaType, Name, UpdatedBy } = req.body;
-  await req.db.request()
-    .input('c',  sql.NVarChar, req.params.code)
-    .input('rt', sql.NVarChar, RebateType)
-    .input('sc', sql.Int, SlpCode)
-    .input('sn', sql.NVarChar, SlpName)
-    .input('df', sql.Date, DateFrom)
-    .input('dt', sql.Date, DateTo)
-    .input('fr', sql.NVarChar, Frequency)
-    .input('qt', sql.NVarChar, QuotaType)
-    .input('nm', sql.NVarChar, Name || '')
-    .input('ub', sql.NVarChar, UpdatedBy || 'Unknown')
-    .query(`UPDATE RebateProgram SET RebateType=@rt, SlpCode=@sc, SlpName=@sn,
-      DateFrom=@df, DateTo=@dt, Frequency=@fr, QuotaType=@qt, Name=@nm, UpdatedBy=@ub, UpdatedDate=GETDATE()
-      WHERE RebateCode=@c`);
-  res.json({ success: true });
+// GET /api/rebate-program/all-codes  (SlpName removed)
+router.get('/rebate-program/all-codes', async (req, res) => {
+  try {
+    const result = await req.db.request()
+      .query(`SELECT RebateCode, RebateType, DateFrom, DateTo 
+              FROM RebateProgram 
+              WHERE RebateCode LIKE 'REB-%' 
+              ORDER BY RebateCode DESC`);
+    res.json({ success: true, codes: result.recordset });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
-// DELETE /api/rebate-program/:code/details?type=Fixed|Incremental|Percentage
-// Deletes all child rows so they can be re-inserted fresh
+// GET /api/rebate-program/master-items
+router.get('/rebate-program/master-items', async (req, res) => {
+  try {
+    const result = await req.db.request().query(`
+      SELECT
+        ItemCode,
+        ItemName,
+        SalUnitMsr,
+        ItmsGrpCod,
+        PurPackUn
+      FROM OITM
+      ORDER BY ItemName
+    `);
+    res.json({ success: true, data: result.recordset });
+  } catch (err) {
+    console.error('❌ Error fetching master items with SalUnitMsr:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//   Update / delete routes
+// ─────────────────────────────────────────────────────────────────────────────
+
+// PUT /api/rebate-program/:code — update program header
+// (SlpCode/SlpName removed, RedemptionPeriod + DateRangeScope added)
+router.put('/rebate-program/:code', async (req, res) => {
+  try {
+    const {
+      RebateType, DateFrom, DateTo, Frequency, QuotaType,
+      Name, RedemptionPeriod, UpdatedBy, DateRangeScope
+    } = req.body;
+
+    // Per Customer: header dates become NULL; per-row dates live on customer tables
+    const scope = DateRangeScope || 'Global';
+    const headerDateFrom = scope === 'Per Customer' ? null : DateFrom;
+    const headerDateTo   = scope === 'Per Customer' ? null : DateTo;
+
+    console.log(`💾 Updating rebate program ${req.params.code} | scope=${scope}`);
+
+    await req.db.request()
+      .input('c',  sql.NVarChar,     req.params.code)
+      .input('rt', sql.NVarChar,     RebateType)
+      .input('df', sql.Date,         headerDateFrom)
+      .input('dt', sql.Date,         headerDateTo)
+      .input('fr', sql.NVarChar,     Frequency)
+      .input('qt', sql.NVarChar,     QuotaType)
+      .input('nm', sql.NVarChar,     Name || '')
+      .input('rp', sql.NVarChar,     RedemptionPeriod || '')
+      .input('dr', sql.NVarChar(20), scope)
+      .input('ub', sql.NVarChar,     UpdatedBy || 'Unknown')
+      .query(`UPDATE RebateProgram SET 
+                RebateType=@rt, 
+                DateFrom=@df, DateTo=@dt, Frequency=@fr, QuotaType=@qt,
+                Name=@nm, RedemptionPeriod=@rp, DateRangeScope=@dr,
+                UpdatedBy=@ub, UpdatedDate=GETDATE()
+              WHERE RebateCode=@c`);
+
+    res.json({ success: true, dateRangeScope: scope });
+  } catch (error) {
+    console.error('❌ [rebate-program PUT]', error.message, error.number);
+    res.status(500).json({ success: false, error: error.message, database: req.database });
+  }
+});
+
+// DELETE /api/rebate-program/:code/details
 router.delete('/rebate-program/:code/details', async (req, res) => {
   const type = req.query.type;
   const code = req.params.code;
-  const db   = req.db;
+  const db = req.db;
   if (type === 'Fixed') {
-    // quotas cascade if FK is set; otherwise delete manually
     const custIds = await db.request().input('c', sql.NVarChar, code)
       .query('SELECT Id FROM FixCustRebate WHERE RebateCode = @c');
     for (const row of custIds.recordset)
@@ -1233,17 +901,448 @@ router.delete('/rebate-program/:code/details', async (req, res) => {
   res.json({ success: true });
 });
 
-// GET /api/rebate-program/all-codes
-router.get('/rebate-program/all-codes', async (req, res) => {
+// ─────────────────────────────────────────────────────────────────────────────
+//   Duplicate / conflict checks
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.post('/check-duplicate-detailed', async (req, res) => {
   try {
+    const { RebateType, DateFrom, DateTo, Frequency, CardCode, ItemCode } = req.body;
+
+    console.log(`🔍 Checking for detailed duplicate rebate program...`);
+
+    try {
+      const tableCheckQuery = `SELECT COUNT(*) as Count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'RebateProgram'`;
+      const tableCheck = await req.db.request().query(tableCheckQuery);
+      if (tableCheck.recordset[0].Count === 0) {
+        return res.json({ success: true, exists: false, message: 'RebateProgram table not found' });
+      }
+    } catch (tableError) { console.log('Error checking tables:', tableError.message); }
+
+    let query = '';
+    if (RebateType === 'Fixed') {
+      query = `
+        SELECT rp.RebateCode, rp.DateFrom, rp.DateTo, rp.Frequency,
+               fcr.CardCode, fcr.CardName, fpr.ItemCode, fpr.ItemName
+        FROM RebateProgram rp
+        INNER JOIN FixCustRebate fcr ON rp.RebateCode = fcr.RebateCode
+        INNER JOIN FixProdRebate fpr ON rp.RebateCode = fpr.RebateCode
+        WHERE rp.RebateType = @RebateType
+          AND rp.DateFrom = @DateFrom AND rp.DateTo = @DateTo
+          AND rp.Frequency = @Frequency
+          AND fcr.CardCode = @CardCode AND fpr.ItemCode = @ItemCode
+      `;
+    } else if (RebateType === 'Percentage') {
+      query = `
+        SELECT rp.RebateCode, rp.DateFrom, rp.DateTo, rp.Frequency,
+               pcr.CardCode, pcr.CardName, ppr.ItemCode, ppr.ItemName
+        FROM RebateProgram rp
+        INNER JOIN PerCustRebate pcr ON rp.RebateCode = pcr.RebateCode
+        INNER JOIN PerProdRebate ppr ON rp.RebateCode = ppr.RebateCode
+        WHERE rp.RebateType = @RebateType
+          AND rp.DateFrom = @DateFrom AND rp.DateTo = @DateTo
+          AND rp.Frequency = @Frequency
+          AND pcr.CardCode = @CardCode AND ppr.ItemCode = @ItemCode
+      `;
+    } else if (RebateType === 'Incremental') {
+      query = `
+        SELECT rp.RebateCode, rp.DateFrom, rp.DateTo, rp.Frequency,
+               icr.CardCode, icr.CardName, iir.ItemCode, iir.ItemName
+        FROM RebateProgram rp
+        INNER JOIN IncCustRebate icr ON rp.RebateCode = icr.RebateCode
+        INNER JOIN IncItemRebate iir ON rp.RebateCode = iir.RebateCode
+        WHERE rp.RebateType = @RebateType
+          AND rp.DateFrom = @DateFrom AND rp.DateTo = @DateTo
+          AND rp.Frequency = @Frequency
+          AND icr.CardCode = @CardCode AND iir.ItemCode = @ItemCode
+      `;
+    } else {
+      return res.json({ success: true, exists: false, message: 'Invalid rebate type' });
+    }
+
     const result = await req.db.request()
-      .query(`SELECT RebateCode, RebateType, SlpName, DateFrom, DateTo 
-              FROM RebateProgram 
-              WHERE RebateCode LIKE 'REB-%' 
-              ORDER BY RebateCode DESC`);
-    res.json({ success: true, codes: result.recordset });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+      .input('RebateType', sql.NVarChar, RebateType)
+      .input('DateFrom', sql.Date, DateFrom)
+      .input('DateTo', sql.Date, DateTo)
+      .input('Frequency', sql.NVarChar, Frequency)
+      .input('CardCode', sql.NVarChar, CardCode)
+      .input('ItemCode', sql.NVarChar, ItemCode)
+      .query(query);
+
+    const exists = result.recordset.length > 0;
+    if (exists) {
+      const duplicate = result.recordset[0];
+      res.json({
+        success: true,
+        exists: true,
+        existingRebateCode: duplicate.RebateCode,
+        existingDateFrom: duplicate.DateFrom,
+        existingDateTo: duplicate.DateTo,
+        existingFrequency: duplicate.Frequency,
+        existingCardCode: duplicate.CardCode,
+        existingCardName: duplicate.CardName,
+        existingItemCode: duplicate.ItemCode,
+        existingItemName: duplicate.ItemName,
+      });
+    } else {
+      res.json({ success: true, exists: false });
+    }
+  } catch (error) {
+    console.error('❌ Error checking for duplicates:', error);
+    res.status(200).json({
+      success: false, exists: false, error: error.message,
+      message: 'Error checking duplicates, but will proceed with save',
+    });
+  }
+});
+
+router.get('/test', (req, res) => {
+  res.json({ success: true, message: 'Rebate program API is working', timestamp: new Date().toISOString() });
+});
+
+router.post('/check-duplicates-batch', async (req, res) => {
+  try {
+    const { RebateType, DateFrom, DateTo, Frequency, combinations } = req.body;
+    console.log(`🔍 Batch checking ${combinations.length} combinations for duplicates...`);
+
+    const results = [];
+    for (const combo of combinations) {
+      let query = '';
+      if (RebateType === 'Fixed') {
+        query = `
+          SELECT rp.RebateCode, rp.DateFrom, rp.DateTo, rp.Frequency,
+                 fcr.CardCode, fcr.CardName, fpr.ItemCode, fpr.ItemName
+          FROM RebateProgram rp
+          INNER JOIN FixCustRebate fcr ON rp.RebateCode = fcr.RebateCode
+          INNER JOIN FixProdRebate fpr ON rp.RebateCode = fpr.RebateCode
+          WHERE rp.RebateType = @RebateType
+            AND rp.DateFrom = @DateFrom AND rp.DateTo = @DateTo
+            AND rp.Frequency = @Frequency
+            AND fcr.CardCode = @CardCode AND fpr.ItemCode = @ItemCode
+        `;
+      } else if (RebateType === 'Percentage') {
+        query = `
+          SELECT rp.RebateCode, rp.DateFrom, rp.DateTo, rp.Frequency,
+                 pcr.CardCode, pcr.CardName, ppr.ItemCode, ppr.ItemName
+          FROM RebateProgram rp
+          INNER JOIN PerCustRebate pcr ON rp.RebateCode = pcr.RebateCode
+          INNER JOIN PerProdRebate ppr ON rp.RebateCode = ppr.RebateCode
+          WHERE rp.RebateType = @RebateType
+            AND rp.DateFrom = @DateFrom AND rp.DateTo = @DateTo
+            AND rp.Frequency = @Frequency
+            AND pcr.CardCode = @CardCode AND ppr.ItemCode = @ItemCode
+        `;
+      } else if (RebateType === 'Incremental') {
+        query = `
+          SELECT rp.RebateCode, rp.DateFrom, rp.DateTo, rp.Frequency,
+                 icr.CardCode, icr.CardName, iir.ItemCode, iir.ItemName
+          FROM RebateProgram rp
+          INNER JOIN IncCustRebate icr ON rp.RebateCode = icr.RebateCode
+          INNER JOIN IncItemRebate iir ON rp.RebateCode = iir.RebateCode
+          WHERE rp.RebateType = @RebateType
+            AND rp.DateFrom = @DateFrom AND rp.DateTo = @DateTo
+            AND rp.Frequency = @Frequency
+            AND icr.CardCode = @CardCode AND iir.ItemCode = @ItemCode
+        `;
+      }
+
+      const result = await req.db.request()
+        .input('RebateType', sql.NVarChar, RebateType)
+        .input('DateFrom', sql.Date, DateFrom)
+        .input('DateTo', sql.Date, DateTo)
+        .input('Frequency', sql.NVarChar, Frequency)
+        .input('CardCode', sql.NVarChar, combo.CardCode)
+        .input('ItemCode', sql.NVarChar, combo.ItemCode)
+        .query(query);
+
+      if (result.recordset.length > 0) {
+        const dup = result.recordset[0];
+        results.push({
+          customerCode: combo.CardCode,
+          itemCode: combo.ItemCode,
+          exists: true,
+          existingRebateCode: dup.RebateCode,
+          existingDateFrom: dup.DateFrom,
+          existingDateTo: dup.DateTo,
+          existingFrequency: dup.Frequency,
+          existingCardName: dup.CardName,
+          existingItemName: dup.ItemName,
+        });
+      } else {
+        results.push({ customerCode: combo.CardCode, itemCode: combo.ItemCode, exists: false });
+      }
+    }
+
+    const duplicates = results.filter(r => r.exists);
+    res.json({
+      success: true,
+      duplicates,
+      totalChecked: combinations.length,
+      duplicateCount: duplicates.length,
+    });
+  } catch (error) {
+    console.error('❌ Error in batch duplicate check:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/check-item-conflict', async (req, res) => {
+  try {
+    const { RebateType, DateFrom, DateTo, Frequency, ItemCode } = req.body;
+    console.log(`🔍 Checking if item ${ItemCode} exists in ANY program with same parameters...`);
+
+    try {
+      const tableCheck = await req.db.request().query(`
+        SELECT COUNT(*) as Count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'RebateProgram'
+      `);
+      if (tableCheck.recordset[0].Count === 0) {
+        return res.json({ success: true, exists: false, message: 'RebateProgram table not found' });
+      }
+    } catch (tableError) { console.log('Error checking tables:', tableError.message); }
+
+    let query = '';
+    if (RebateType === 'Fixed') {
+      query = `
+        SELECT DISTINCT rp.RebateCode, rp.DateFrom, rp.DateTo, rp.Frequency, rp.QuotaType,
+               fpr.ItemCode, fpr.ItemName
+        FROM RebateProgram rp
+        INNER JOIN FixProdRebate fpr ON rp.RebateCode = fpr.RebateCode
+        WHERE rp.RebateType = @RebateType
+          AND rp.DateFrom = @DateFrom AND rp.DateTo = @DateTo
+          AND rp.Frequency = @Frequency
+          AND fpr.ItemCode = @ItemCode
+      `;
+    } else if (RebateType === 'Percentage') {
+      query = `
+        SELECT DISTINCT rp.RebateCode, rp.DateFrom, rp.DateTo, rp.Frequency, rp.QuotaType,
+               ppr.ItemCode, ppr.ItemName
+        FROM RebateProgram rp
+        INNER JOIN PerProdRebate ppr ON rp.RebateCode = ppr.RebateCode
+        WHERE rp.RebateType = @RebateType
+          AND rp.DateFrom = @DateFrom AND rp.DateTo = @DateTo
+          AND rp.Frequency = @Frequency
+          AND ppr.ItemCode = @ItemCode
+      `;
+    } else if (RebateType === 'Incremental') {
+      query = `
+        SELECT DISTINCT rp.RebateCode, rp.DateFrom, rp.DateTo, rp.Frequency, rp.QuotaType,
+               iir.ItemCode, iir.ItemName
+        FROM RebateProgram rp
+        INNER JOIN IncItemRebate iir ON rp.RebateCode = iir.RebateCode
+        WHERE rp.RebateType = @RebateType
+          AND rp.DateFrom <= @DateTo AND rp.DateTo >= @DateFrom
+          AND rp.Frequency = @Frequency
+          AND iir.ItemCode = @ItemCode
+      `;
+    } else {
+      return res.json({ success: true, exists: false, message: 'Invalid rebate type' });
+    }
+
+    const result = await req.db.request()
+      .input('RebateType', sql.NVarChar, RebateType)
+      .input('DateFrom', sql.Date, DateFrom)
+      .input('DateTo', sql.Date, DateTo)
+      .input('Frequency', sql.NVarChar, Frequency)
+      .input('ItemCode', sql.NVarChar, ItemCode)
+      .query(query);
+
+    if (result.recordset.length > 0) {
+      const program = result.recordset[0];
+      res.json({
+        success: true,
+        exists: true,
+        existingProgram: {
+          RebateCode: program.RebateCode,
+          DateFrom: program.DateFrom,
+          DateTo: program.DateTo,
+          Frequency: program.Frequency,
+          QuotaType: program.QuotaType,
+          ItemCode: program.ItemCode,
+          ItemName: program.ItemName,
+        },
+      });
+    } else {
+      res.json({ success: true, exists: false });
+    }
+  } catch (error) {
+    console.error('❌ Error checking item conflict:', error);
+    res.status(200).json({
+      success: false, exists: false, error: error.message,
+      message: 'Error checking item conflicts',
+    });
+  }
+});
+
+// ─── check-duplicate-program (forgiving version) ───────────────────────────
+router.post('/rebate-program/check-duplicate-program', async (req, res) => {
+  try {
+    const { RebateType, DateFrom, DateTo, Frequency, ExcludeRebateCode } = req.body;
+
+    // Be forgiving: skip the check if any required field is missing
+    // (prevents front-end from failing on incomplete form state)
+    if (!RebateType || !DateFrom || !DateTo || !Frequency) {
+      console.warn('⚠️ check-duplicate-program skipped — missing fields:', {
+        RebateType, DateFrom, DateTo, Frequency
+      });
+      return res.json({
+        success: true,
+        exists: false,
+        skipped: true,
+        message: 'Skipped duplicate check — missing required fields'
+      });
+    }
+
+    try {
+      const tableCheck = await req.db.request().query(`SELECT COUNT(*) as Count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'RebateProgram'`);
+      if (tableCheck.recordset[0].Count === 0) return res.json({ success: true, exists: false, message: 'RebateProgram table not found' });
+    } catch (tableError) { console.log('Error checking tables:', tableError.message); }
+
+    let query = `
+      SELECT RebateCode, RebateType, DateFrom, DateTo, Frequency, QuotaType, CreatedDate
+      FROM RebateProgram 
+      WHERE RebateType = @RebateType AND Frequency = @Frequency
+        AND DateFrom <= @DateTo AND DateTo >= @DateFrom
+    `;
+    if (ExcludeRebateCode) query += ` AND RebateCode <> @ExcludeRebateCode `;
+
+    const request = req.db.request()
+      .input('RebateType', sql.NVarChar, RebateType)
+      .input('Frequency',  sql.NVarChar, Frequency)
+      .input('DateFrom',   sql.Date, DateFrom)
+      .input('DateTo',     sql.Date, DateTo);
+    if (ExcludeRebateCode) request.input('ExcludeRebateCode', sql.NVarChar, ExcludeRebateCode);
+
+    const result = await request.query(query);
+    const exists = result.recordset.length > 0;
+
+    if (exists) {
+      const program = result.recordset[0];
+      res.json({
+        success: true,
+        exists: true,
+        program: {
+          RebateCode: program.RebateCode,
+          RebateType: program.RebateType,
+          DateFrom:   program.DateFrom,
+          DateTo:     program.DateTo,
+          Frequency:  program.Frequency,
+          QuotaType:  program.QuotaType,
+          CreatedDate: program.CreatedDate
+        }
+      });
+    } else {
+      res.json({ success: true, exists: false });
+    }
+  } catch (error) {
+    console.error('❌ check-duplicate-program error:', error.message);
+    res.status(200).json({
+      success: false,
+      exists: false,
+      error: error.message,
+      message: 'Error checking for duplicate program'
+    });
+  }
+});
+
+// ─── check-customer-conflict (forgiving version, SlpCode removed) ─────────
+router.post('/rebate-program/check-customer-conflict', async (req, res) => {
+  try {
+    const { RebateType, DateFrom, DateTo, Frequency, CardCode, ExcludeRebateCode } = req.body;
+
+    // Be forgiving: skip if fields missing
+    if (!RebateType || !DateFrom || !DateTo || !Frequency || !CardCode) {
+      console.warn('⚠️ check-customer-conflict skipped — missing fields:', {
+        RebateType, DateFrom, DateTo, Frequency, CardCode
+      });
+      return res.json({ success: true, exists: false, skipped: true });
+    }
+
+    try {
+      const tableCheck = await req.db.request().query(`
+        SELECT COUNT(*) as Count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'RebateProgram'
+      `);
+      if (tableCheck.recordset[0].Count === 0) {
+        return res.json({ success: true, exists: false, message: 'RebateProgram table not found' });
+      }
+    } catch (tableError) { console.log('Error checking tables:', tableError.message); }
+
+    let query = '';
+    if (RebateType === 'Fixed') {
+      query = `
+        SELECT DISTINCT rp.RebateCode, rp.DateFrom, rp.DateTo, rp.Frequency, rp.QuotaType,
+               fcr.CardCode, fcr.CardName
+        FROM RebateProgram rp
+        INNER JOIN FixCustRebate fcr ON rp.RebateCode = fcr.RebateCode
+        WHERE rp.RebateType = @RebateType
+          AND rp.Frequency = @Frequency
+          AND rp.DateFrom <= @DateTo AND rp.DateTo >= @DateFrom
+          AND fcr.CardCode = @CardCode
+      `;
+    } else if (RebateType === 'Percentage') {
+      query = `
+        SELECT DISTINCT rp.RebateCode, rp.DateFrom, rp.DateTo, rp.Frequency, rp.QuotaType,
+               pcr.CardCode, pcr.CardName
+        FROM RebateProgram rp
+        INNER JOIN PerCustRebate pcr ON rp.RebateCode = pcr.RebateCode
+        WHERE rp.RebateType = @RebateType
+          AND rp.Frequency = @Frequency
+          AND rp.DateFrom <= @DateTo AND rp.DateTo >= @DateFrom
+          AND pcr.CardCode = @CardCode
+      `;
+    } else if (RebateType === 'Incremental') {
+      query = `
+        SELECT DISTINCT rp.RebateCode, rp.DateFrom, rp.DateTo, rp.Frequency, rp.QuotaType,
+               icr.CardCode, icr.CardName
+        FROM RebateProgram rp
+        INNER JOIN IncCustRebate icr ON rp.RebateCode = icr.RebateCode
+        WHERE rp.RebateType = @RebateType
+          AND rp.Frequency = @Frequency
+          AND rp.DateFrom <= @DateTo AND rp.DateTo >= @DateFrom
+          AND icr.CardCode = @CardCode
+      `;
+    } else {
+      return res.json({ success: true, exists: false, message: 'Invalid rebate type' });
+    }
+
+    if (ExcludeRebateCode) query += ` AND rp.RebateCode <> @ExcludeRebateCode `;
+
+    const request = req.db.request()
+      .input('RebateType', sql.NVarChar, RebateType)
+      .input('Frequency',  sql.NVarChar, Frequency)
+      .input('DateFrom',   sql.Date, DateFrom)
+      .input('DateTo',     sql.Date, DateTo)
+      .input('CardCode',   sql.NVarChar, CardCode);
+    if (ExcludeRebateCode) request.input('ExcludeRebateCode', sql.NVarChar, ExcludeRebateCode);
+
+    const result = await request.query(query);
+    const exists = result.recordset.length > 0;
+
+    if (exists) {
+      const program = result.recordset[0];
+      res.json({
+        success: true,
+        exists: true,
+        existingProgram: {
+          RebateCode: program.RebateCode,
+          DateFrom: program.DateFrom,
+          DateTo: program.DateTo,
+          Frequency: program.Frequency,
+          QuotaType: program.QuotaType,
+          CardCode: program.CardCode,
+          CardName: program.CardName,
+        },
+      });
+    } else {
+      res.json({ success: true, exists: false });
+    }
+  } catch (error) {
+    console.error('❌ Error checking customer conflict:', error);
+    res.status(200).json({
+      success: false,
+      exists: false,
+      error: error.message,
+      message: 'Error checking customer conflicts',
+    });
   }
 });
 

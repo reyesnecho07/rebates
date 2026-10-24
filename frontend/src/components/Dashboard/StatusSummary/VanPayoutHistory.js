@@ -1,112 +1,150 @@
 // VanPayoutHistory.jsx
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, RefreshCw, Wallet } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { RefreshCw, Wallet, Layers, Calendar, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Lock } from 'lucide-react';
 
 const VanPayoutHistory = ({
   theme = 'light',
   customerModalTab,
   modalCustomer,
-  paginatedPayouts,
-  filteredPayouts,
-  payoutCurrentPage,
-  setPayoutCurrentPage,
-  payoutRowsPerPage,
-  setPayoutRowsPerPage,
-  editingPayoutId,
-  setEditingPayoutId,
-  editedAmountReleased,
-  setEditedAmountReleased,
-  saveMessage,
-  setSaveMessage,
-  handlePayoutStatusChange, // kept for compatibility but not used
-  loadDetailedPayoutsData,
   formatCurrency,
-  setFilteredPayouts,
-  setPaginatedPayouts,
+  access,
 }) => {
-  const isDark = theme === 'dark';
-  const [isProcessingData, setIsProcessingData]   = useState(false);
-  const [beginningBalances, setBeginningBalances]   = useState([]);
-  const [syncingSap, setSyncingSap]                 = useState(false);
-  const [sapSyncMessage, setSapSyncMessage]         = useState(null);
-  const [showSapDetails, setShowSapDetails]         = useState({});
-  const [lastSapSync, setLastSapSync]               = useState(null);
+  const isDark  = theme === 'dark';
+  const canView = !!access?.canView;
 
-  const [localFilteredPayouts, setLocalFilteredPayouts] = useState([]);
-  const [localPaginatedPayouts, setLocalPaginatedPayouts] = useState([]);
+  const [viewMode, setViewMode] = useState('quarter'); // 'detail' | 'rebateCode' | 'quarter'
+  const [summaryRows, setSummaryRows] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState(null);
+  const [syncingSap, setSyncingSap] = useState(false);
+  const [sapSyncMessage, setSapSyncMessage] = useState(null);
+  const [expandedRow, setExpandedRow] = useState(null);
 
-  const customerCardCode = modalCustomer?.CardCode || modalCustomer?.cardCode || modalCustomer?.CustomerCode;
-  const rebateType       = modalCustomer?.rebateType || modalCustomer?.RebateType;
-  const rebateCode       = modalCustomer?.rebateCode || modalCustomer?.RebateCode;
+  // ── Detail view (per rebate code, VAN's own payout computation) ──────────
+  const [rebateCodeOptions, setRebateCodeOptions] = useState([]); // [{rebateCode, rebateType}]
+  const [selectedRebateCode, setSelectedRebateCode] = useState('');
+  const [selectedRebateType, setSelectedRebateType] = useState('');
+  const [detailRows, setDetailRows] = useState([]);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
+  const [detailLoadError, setDetailLoadError] = useState(null);
+  const [detailCurrentPage, setDetailCurrentPage] = useState(1);
+  const [detailRowsPerPage, setDetailRowsPerPage] = useState(25);
 
-  // ── Quarter / month helpers ───────────────────────────────────────────────
-  const getQuarterFromPeriod = useCallback((period) => {
-    if (!period) return 0;
-    if (period.includes('Q1') || /January|February|March/.test(period))    return 1;
-    if (period.includes('Q2') || /April|May|June/.test(period))            return 2;
-    if (period.includes('Q3') || /July|August|September/.test(period))     return 3;
-    if (period.includes('Q4') || /October|November|December/.test(period)) return 4;
-    return 0;
-  }, []);
+  // No longer depends on rebateCode / rebateType from the header —
+  // Payout History is always the full customer-wide rollup.
+  const customerCardCode =
+    modalCustomer?.code ||
+    modalCustomer?.CardCode ||
+    modalCustomer?.cardCode ||
+    modalCustomer?.CustomerCode;
 
-  const getYearFromPeriod = useCallback((period) => {
-    if (!period) return new Date().getFullYear();
-    const m = period.match(/\b(20\d{2})\b/);
-    return m ? parseInt(m[1]) : new Date().getFullYear();
-  }, []);
-
-  const getMonthOrder = useCallback((period) => {
-    if (!period) return 99;
-    const map = { January:1, February:2, March:3, April:4, May:5, June:6,
-                  July:7, August:8, September:9, October:10, November:11, December:12 };
-    for (const [name, order] of Object.entries(map)) {
-      if (period.includes(name)) return order;
-    }
-    return 99;
-  }, []);
-
-  const formatSapDate = (s) => {
-    if (!s) return '';
-    try { return new Date(s).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' }); }
-    catch { return s; }
-  };
-
-  // ── SAP sync ──────────────────────────────────────────────────────────────
-  const autoSyncSapData = useCallback(async () => {
+  // ── Load the customer-wide payout rollup ──────────────────────────────────
+  const loadPayoutSummary = useCallback(async () => {
+    if (!canView) return;
     if (!customerCardCode) return;
-    if (lastSapSync && (Date.now() - lastSapSync) < 5000) return;
+    setIsLoading(true);
+    setLoadError(null);
     try {
-      const response = await fetch(
-        `http://192.168.100.193:3006/api/van/customer/${customerCardCode}/sync-sap`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({
-            db: 'VAN',
-            rebateCode,
-            periodFrom: modalCustomer?.dateRange?.periodFrom,
-            periodTo:   modalCustomer?.dateRange?.periodTo,
-          }),
-        }
-      );
+      const url = `http://192.168.100.193:3009/api/van/payouts/customer/${customerCardCode}/payout-summary?db=VAN`;
+      const response = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       const result = await response.json();
       if (result.success) {
-        setLastSapSync(Date.now());
-        if (result.data?.updatedCount > 0) await loadPayoutsWithBalances();
+        const rows = viewMode === 'quarter'
+          ? (result.data?.byQuarter || [])
+          : (result.data?.byRebateCode || []);
+        setSummaryRows(rows);
+
+        const byRebateCode = result.data?.byRebateCode || [];
+
+        // Populate the rebate-code dropdown used by Detail mode from the
+        // same byRebateCode data — no extra endpoint needed.
+        const options = byRebateCode.map(r => ({
+          rebateCode: r.rebateCode,
+          rebateType: (r.rebateTypes && r.rebateTypes[0]) || '',
+          quarterLabel: r.quarterLabel || '',
+        }));
+        setRebateCodeOptions(options);
+        if (!selectedRebateCode && options.length > 0) {
+          setSelectedRebateCode(options[options.length - 1].rebateCode); // default: most recent
+          setSelectedRebateType(options[options.length - 1].rebateType);
+        }
+      } else {
+        setSummaryRows([]);
+        setLoadError(result.message || 'Failed to load payout summary');
       }
     } catch (err) {
-      console.error('Auto SAP sync error:', err);
+      console.error('Error loading payout summary:', err);
+      setSummaryRows([]);
+      setLoadError(err.message || 'Failed to load payout summary');
+    } finally {
+      setIsLoading(false);
     }
-  }, [customerCardCode, rebateCode, modalCustomer?.dateRange, lastSapSync]);
+  }, [customerCardCode, viewMode, selectedRebateCode, canView]);
 
+  useEffect(() => {
+    if (!canView) return;
+    if (customerModalTab === 'payout' && customerCardCode) {
+      loadPayoutSummary();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerModalTab, customerCardCode, viewMode, canView]);
+
+  // ── Load detailed per-transaction rows for one rebate code (VAN's own
+  //    /payouts endpoint — same computation VAN already uses elsewhere,
+  //    nothing recalculated here) ─────────────────────────────────────
+  const loadDetailPayouts = useCallback(async () => {
+    if (!canView) return;
+    if (!customerCardCode || !selectedRebateCode || !selectedRebateType) return;
+    setIsDetailLoading(true);
+    setDetailLoadError(null);
+    try {
+      const url = `http://192.168.100.193:3009/api/van/payouts/customer/${customerCardCode}/payouts` +
+        `?db=VAN&rebateCode=${selectedRebateCode}&rebateType=${selectedRebateType}&useRebatePeriod=true`;
+      const response = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      const result = await response.json();
+      if (result.success) {
+        setDetailRows(result.data?.payouts || []);
+        setDetailCurrentPage(1);
+      } else {
+        setDetailRows([]);
+        setDetailLoadError(result.message || 'Failed to load payout details');
+      }
+    } catch (err) {
+      console.error('Error loading payout details:', err);
+      setDetailRows([]);
+      setDetailLoadError(err.message || 'Failed to load payout details');
+    } finally {
+      setIsDetailLoading(false);
+    }
+  }, [customerCardCode, selectedRebateCode, selectedRebateType, canView]);
+
+  useEffect(() => {
+    if (!canView) return;
+    if (customerModalTab === 'payout' && viewMode === 'detail' && selectedRebateCode) {
+      loadDetailPayouts();
+    }
+  }, [customerModalTab, viewMode, selectedRebateCode, loadDetailPayouts, canView]);
+
+  // ── Optional: manual SAP sync trigger (customer-wide, not rebate-scoped) ──
   const syncNewPayouts = useCallback(async () => {
+    if (!canView) return;
     if (!customerCardCode) return;
     setSyncingSap(true);
     setSapSyncMessage('Syncing with SAP…');
     try {
-      await autoSyncSapData();
+      const response = await fetch(
+        `http://192.168.100.193:3009/api/van/customer/${customerCardCode}/sync-sap`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ db: 'VAN' }),
+        }
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       setSapSyncMessage('✅ SAP sync complete');
+      await loadPayoutSummary();
       setTimeout(() => setSapSyncMessage(null), 3000);
     } catch (err) {
       setSapSyncMessage(`❌ SAP sync failed: ${err.message}`);
@@ -114,176 +152,7 @@ const VanPayoutHistory = ({
     } finally {
       setSyncingSap(false);
     }
-  }, [customerCardCode, autoSyncSapData]);
-
-  useEffect(() => {
-    if (customerModalTab === 'payout' && customerCardCode) {
-      const t = setTimeout(() => autoSyncSapData(), 1000);
-      return () => clearTimeout(t);
-    }
-  }, [customerModalTab, customerCardCode, autoSyncSapData]);
-
-  // ── Data loading ──────────────────────────────────────────────────────────
-  const organizePayoutsByQuarter = useCallback((payouts) => {
-    if (!payouts?.length) return [];
-    const quarters = {};
-
-    payouts.forEach(payout => {
-      const isBeg = payout.isBeginningBalance || (payout.Period && /Balance\s+of\s+Q\d/i.test(payout.Period));
-      const isQtr = payout.isQtrRebate || (payout.Period && payout.Period.includes('Quarter') && payout.Period.includes('Rebate') && payout.Period.includes('-'));
-
-      let quarter, year;
-      if (isBeg) {
-        const m = payout.Period.match(/Balance\s+of\s+Q(\d+)\s+(\d{4})/i);
-        quarter = m ? parseInt(m[1]) : getQuarterFromPeriod(payout.Period);
-        year    = m ? parseInt(m[2]) : getYearFromPeriod(payout.Period);
-      } else {
-        if (payout.PayoutQuarter) {
-          const m = payout.PayoutQuarter.match(/Q(\d+)\s+(\d{4})/);
-          if (m) { quarter = parseInt(m[1]); year = parseInt(m[2]); }
-        }
-        if (!quarter || !year) {
-          if (isQtr) {
-            const qm = payout.Period.match(/Quarter (\d+)/i);
-            const ym = payout.Period.match(/\b(20\d{2})\b/);
-            quarter = qm ? parseInt(qm[1]) : getQuarterFromPeriod(payout.Period);
-            year    = ym ? parseInt(ym[1]) : getYearFromPeriod(payout.Period);
-          } else {
-            quarter = getQuarterFromPeriod(payout.Period);
-            year    = getYearFromPeriod(payout.Period);
-          }
-        }
-      }
-
-      const key = `Q${quarter}-${year}`;
-      if (!quarters[key]) quarters[key] = { year, quarter, beginningBalances: [], regularPayouts: [], quarterRebates: [] };
-
-      if (isBeg)  quarters[key].beginningBalances.push({ ...payout, isBeginningBalance: true });
-      else if (isQtr) quarters[key].quarterRebates.push({ ...payout, isQtrRebate: true });
-      else        quarters[key].regularPayouts.push(payout);
-    });
-
-    const result = [];
-    Object.values(quarters)
-      .sort((a, b) => a.year !== b.year ? a.year - b.year : a.quarter - b.quarter)
-      .forEach(qd => {
-        qd.beginningBalances.forEach(b => result.push(b));
-        [...qd.regularPayouts].sort((a, b) => getMonthOrder(a.Period) - getMonthOrder(b.Period) || new Date(a.Date) - new Date(b.Date)).forEach(p => result.push(p));
-        [...qd.quarterRebates].sort((a, b) => new Date(a.Date) - new Date(b.Date)).forEach(r => result.push({ ...r, isLastInQuarter: true }));
-      });
-
-    return result;
-  }, [getQuarterFromPeriod, getYearFromPeriod, getMonthOrder]);
-
-  const loadPayoutsWithBalances = useCallback(async () => {
-    if (!customerCardCode || !rebateType) return;
-    try {
-      let url = `http://192.168.100.193:3006/api/van/payouts/customer/${customerCardCode}/payouts?db=VAN&rebateType=${rebateType}`;
-      if (rebateCode) url += `&rebateCode=${rebateCode}`;
-      const response = await fetch(url, { headers: { Accept: 'application/json' } });
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-      const result = await response.json();
-      if (result.success) {
-        const processed = organizePayoutsByQuarter(result.data?.payouts || []);
-        setBeginningBalances(result.data?.beginningBalances || []);
-        setFilteredPayouts(processed);
-        const start = (payoutCurrentPage - 1) * payoutRowsPerPage;
-        setPaginatedPayouts(processed.slice(start, start + payoutRowsPerPage));
-      }
-    } catch (err) {
-      console.error('Error loading payouts:', err);
-      setFilteredPayouts([]);
-      setPaginatedPayouts([]);
-      setBeginningBalances([]);
-    }
-  }, [customerCardCode, rebateCode, rebateType, payoutCurrentPage, payoutRowsPerPage, setFilteredPayouts, setPaginatedPayouts, organizePayoutsByQuarter]);
-
-  useEffect(() => {
-    if (customerModalTab === 'payout' && customerCardCode && rebateType) {
-      loadPayoutsWithBalances();
-    }
-  }, [customerModalTab, customerCardCode, rebateType, loadPayoutsWithBalances]);
-
-  // ── Sorted paginated data ─────────────────────────────────────────────────
-  const sortedPaginated = useMemo(() => {
-    if (!paginatedPayouts?.length) return [];
-    const quarters = {};
-
-    paginatedPayouts.forEach(payout => {
-      const isQtr = payout.isQtrRebate || (payout.Period && payout.Period.includes('Quarter') && payout.Period.includes('Rebate') && payout.Period.includes('-'));
-      const isBeg = payout.isBeginningBalance || /Balance\s+of\s+Q\d/i.test(payout.Period);
-
-      let quarter, year;
-      if (isBeg) {
-        const m = payout.Period.match(/Balance\s+of\s+Q(\d+)\s+(\d{4})/i);
-        quarter = m ? parseInt(m[1]) : getQuarterFromPeriod(payout.Period);
-        year    = m ? parseInt(m[2]) : getYearFromPeriod(payout.Period);
-      } else {
-        if (payout.PayoutQuarter) {
-          const m = payout.PayoutQuarter.match(/Q(\d+)\s+(\d{4})/);
-          if (m) { quarter = parseInt(m[1]); year = parseInt(m[2]); }
-        }
-        if (!quarter || !year) {
-          if (isQtr) {
-            const qm = payout.Period.match(/Quarter (\d+)/i);
-            const ym = payout.Period.match(/\b(20\d{2})\b/);
-            quarter = qm ? parseInt(qm[1]) : getQuarterFromPeriod(payout.Period);
-            year    = ym ? parseInt(ym[1]) : getYearFromPeriod(payout.Period);
-          } else {
-            quarter = getQuarterFromPeriod(payout.Period);
-            year    = getYearFromPeriod(payout.Period);
-          }
-        }
-      }
-
-      const key = `Q${quarter}-${year}`;
-      if (!quarters[key]) quarters[key] = { regular: [], rebates: [] };
-      if (isQtr) quarters[key].rebates.push(payout);
-      else       quarters[key].regular.push(payout);
-    });
-
-    const result = [];
-    Object.keys(quarters)
-      .sort((a, b) => {
-        const [qa, ya] = a.split('-'), [qb, yb] = b.split('-');
-        return parseInt(ya) !== parseInt(yb) ? parseInt(ya) - parseInt(yb) : parseInt(qa.replace('Q','')) - parseInt(qb.replace('Q',''));
-      })
-      .forEach(key => {
-        const g = quarters[key];
-        [...g.regular]
-          .sort((a, b) => {
-            const aB = a.isBeginningBalance || /Balance\s+of\s+Q\d/i.test(a.Period);
-            const bB = b.isBeginningBalance || /Balance\s+of\s+Q\d/i.test(b.Period);
-            if (aB && !bB) return -1;
-            if (!aB && bB) return 1;
-            return getMonthOrder(a.Period) - getMonthOrder(b.Period) || new Date(a.Date) - new Date(b.Date);
-          })
-          .forEach(p => result.push(p));
-        [...g.rebates]
-          .sort((a, b) => new Date(a.Date) - new Date(b.Date))
-          .forEach(r => result.push({ ...r, isLastInQuarter: true }));
-      });
-
-    return result;
-  }, [paginatedPayouts, getQuarterFromPeriod, getYearFromPeriod, getMonthOrder]);
-
-  // ── Pagination ─────────────────────────────────────────────────────────────
-  const totalPages = Math.max(1, Math.ceil(filteredPayouts.length / payoutRowsPerPage));
-  const safePage   = Math.min(payoutCurrentPage, totalPages);
-
-  const getPageNums = () => {
-    const total = totalPages, cur = safePage;
-    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
-    if (cur <= 4)         return [1, 2, 3, 4, 5, '...', total];
-    if (cur >= total - 3) return [1, '...', total - 4, total - 3, total - 2, total - 1, total];
-    return [1, '...', cur - 1, cur, cur + 1, '...', total];
-  };
-
-  const goToPage = (page) => {
-    setPayoutCurrentPage(page);
-    const start = (page - 1) * payoutRowsPerPage;
-    setLocalPaginatedPayouts(localFilteredPayouts.slice(start, start + payoutRowsPerPage));
-  };
+  }, [customerCardCode, loadPayoutSummary, canView]);
 
   // ── Theme tokens ───────────────────────────────────────────────────────────
   const T = {
@@ -301,16 +170,6 @@ const VanPayoutHistory = ({
 
   const thCls = `px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest ${T.ts}`;
 
-  const PaginationBtn = ({ icon: Icon, onClick, disabled }) => (
-    <button onClick={onClick} disabled={disabled}
-      className={`w-7 h-7 rounded flex items-center justify-center transition-all ${
-        disabled
-          ? isDark ? 'text-slate-600 cursor-not-allowed' : 'text-slate-300 cursor-not-allowed'
-          : isDark ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100'
-      }`}
-    ><Icon size={14} /></button>
-  );
-
   // ── Badge helpers ──────────────────────────────────────────────────────────
   const badge = (value, color) => {
     const map = {
@@ -320,196 +179,147 @@ const VanPayoutHistory = ({
       amber:   isDark ? 'bg-amber-900/30 text-amber-300 border-amber-700/40'      : 'bg-amber-50 text-amber-700 border-amber-200',
       red:     isDark ? 'bg-red-900/30 text-red-300 border-red-700/40'            : 'bg-red-50 text-red-700 border-red-200',
       slate:   isDark ? 'bg-slate-700 text-slate-400 border-slate-600'             : 'bg-slate-100 text-slate-500 border-slate-200',
-      purple:  isDark ? 'bg-violet-900/30 text-violet-300 border-violet-700/40'   : 'bg-violet-50 text-violet-600 border-violet-200',
     };
     return `inline-block px-2 py-0.5 rounded border font-semibold tabular-nums text-xs whitespace-nowrap ${map[color] || map.slate}`;
   };
 
-  // Map status to color
   const getStatusColor = (status) => {
     switch (status) {
       case 'Paid': return 'emerald';
       case 'Partially Paid': return 'amber';
       case 'Pending': return 'blue';
+      case 'Over-Released': return 'red';
       case 'No Payout': return 'slate';
       default: return 'slate';
     }
   };
 
-  // ── Beginning balance row ─────────────────────────────────────────────────
-  const renderBeginningBalanceRow = (payout, index) => {
-    const m = (payout.Period || '').match(/Balance of Q(\d+) (\d+)/);
-    const tQ = m ? m[1] : '';
-    const tY = m ? m[2] : '';
-    let srcQ = '', srcY = '';
-    if (tQ && tY) {
-      const pq = parseInt(tQ) === 1 ? 4 : parseInt(tQ) - 1;
-      const py = parseInt(tQ) === 1 ? parseInt(tY) - 1 : tY;
-      srcQ = `Q${pq}`; srcY = py;
-    }
-    const amount = parseFloat(payout.TotalAmount) || parseFloat(payout.Balance) || 0;
-
+  const RebateTypeBadge = ({ type }) => {
+    const map = {
+      Fixed:       isDark ? 'bg-blue-900/30 text-blue-300 border-blue-700/40'       : 'bg-blue-50 text-blue-700 border-blue-200',
+      Incremental: isDark ? 'bg-violet-900/30 text-violet-300 border-violet-700/40' : 'bg-violet-50 text-violet-700 border-violet-200',
+      Percentage:  isDark ? 'bg-amber-900/30 text-amber-300 border-amber-700/40'    : 'bg-amber-50 text-amber-700 border-amber-200',
+    };
     return (
-      <tr key={`beg-${payout.Id || index}`} className={`border-b ${
-        isDark ? 'border-slate-700/50 bg-emerald-900/10 border-l-2 border-l-emerald-500' : 'border-slate-100 bg-emerald-50/60 border-l-2 border-l-emerald-400'
-      }`}>
-        <td className="px-5 py-2.5">
-          <span className={`font-medium ${T.tp}`}>{payout.Date || new Date().toLocaleDateString()}</span>
-          <div className={`text-[10px] mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>Beginning Balance</div>
-        </td>
-        <td className="px-4 py-2.5">
-          <div className={`font-medium text-xs ${isDark ? 'text-emerald-200' : 'text-emerald-800'}`}>
-            {(payout.Period || '').replace(/Balance\s+of\s+(Q\d+\s+\d{4})/i, 'Beginning Balance')}
-          </div>
-          {srcQ && (
-            <div className={`text-[10px] mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
-              (From {srcQ} {srcY} transactions)
-            </div>
-          )}
-        </td>
-        <td className="px-4 py-2.5" />
-        <td className="px-4 py-2.5" />
-        <td className="px-4 py-2.5" />
-        <td className="px-4 py-2.5" />
-        <td className="px-4 py-2.5 text-center">
-          <span className={`inline-block px-2 py-0.5 rounded border font-bold tabular-nums text-xs ${
-            isDark ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700/40' : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-          }`}>
-            {formatCurrency(amount)}
-          </span>
-        </td>
-      </tr>
+      <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold whitespace-nowrap border ${
+        map[type] || (isDark ? 'bg-slate-700 text-slate-400 border-slate-600' : 'bg-slate-100 text-slate-600 border-slate-200')
+      }`}>{type || '?'}</span>
     );
   };
 
-  // ── Regular row ────────────────────────────────────────────────────────────
-  const renderPayoutRow = (payout, index) => {
-    const isBeg = payout.isBeginningBalance || (payout.Period && /Balance\s+of\s+Q\d/i.test(payout.Period));
-    if (isBeg) return renderBeginningBalanceRow(payout, index);
+  const formatDateShort = (d) => {
+    if (!d) return '';
+    try { return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+    catch { return ''; }
+  };
 
-    const isQtr         = payout.isQtrRebate;
-    const totalAmount   = parseFloat(payout.TotalAmount || payout.Amount || 0);
-    const baseAmount    = parseFloat(payout.BaseAmount  || payout.baseAmount || 0);
-    const amountReleased = parseFloat(payout.amountReleased || payout.AmountReleased || 0);
-    const prevBalance   = parseFloat(payout.PreviousBalance || 0);
-    const balance       = Math.max(0, totalAmount - amountReleased);
-    const status        = payout.status || payout.Status || 'Pending';
-    const hasSap        = payout.hasSapJournal || false;
-    const journalRemarks = payout.journalRemarks || '';
-    const journalDate   = payout.journalDate || null;
-    const isNoPayout    = status === 'No Payout' && totalAmount <= 0 && !isQtr;
-    const isEditable    = status !== 'No Payout' && (totalAmount > 0 || isQtr); // kept for other uses
-    const isEditing     = editingPayoutId === (payout.id || payout.Id);
+  // ── Detail-row helpers ────────────────────────────────────────────────
+  const isBegBalanceRow = (row) =>
+    !!row.isBeginningBalance || (row.Period && row.Period.includes('Balance of Q'));
 
-    let rowAccent = '';
-    if (isQtr) rowAccent = isDark ? 'border-l-2 border-l-blue-500' : 'border-l-2 border-l-blue-400';
-    if (hasSap) rowAccent = isDark ? 'border-l-2 border-l-violet-500' : 'border-l-2 border-l-violet-400';
-    const rowOpacity = isNoPayout ? 'opacity-70' : '';
+  const totalPages = Math.max(1, Math.ceil(detailRows.length / detailRowsPerPage));
+  const safeDetailPage = Math.min(detailCurrentPage, totalPages);
+  const paginatedDetailRows = detailRows.slice(
+    (safeDetailPage - 1) * detailRowsPerPage,
+    safeDetailPage * detailRowsPerPage
+  );
 
-    const baseColor  = baseAmount > 0 ? 'blue' : 'slate';
-    const totalColor = isNoPayout ? 'slate' : isQtr ? 'violet' : totalAmount > 0 ? 'amber' : 'slate';
-    const balColor   = !isEditable ? 'slate' : balance > 0 ? 'red' : balance === 0 ? 'emerald' : 'slate';
-
-    return (
-      <tr key={payout.id || payout.Id || payout.PayoutId || index}
-        className={`transition-colors duration-100 border-b ${T.row} ${
-          isDark ? 'border-slate-700/50' : 'border-slate-100'
-        } ${rowAccent} ${rowOpacity}`}
-      >
-        {/* Date */}
-        <td className="px-5 py-2.5">
-          <span className={`font-medium ${T.tp}`}>{payout.date || payout.Date || 'N/A'}</span>
-          {isQtr && <div className={`text-[10px] mt-0.5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>Quarter Rebate</div>}
-          {hasSap && !isQtr && (
-            <div className={`text-[10px] mt-0.5 flex items-center gap-1 ${isDark ? 'text-violet-400' : 'text-violet-600'}`}>
-              <span>📋 SAP</span>
-              {journalDate && <span className="text-[8px] opacity-70">{new Date(journalDate).toLocaleDateString()}</span>}
-            </div>
-          )}
-          {isNoPayout && <div className={`text-[10px] mt-0.5 ${T.tm}`}>No Payout</div>}
-        </td>
-
-        {/* Period */}
-        <td className="px-4 py-2.5">
-          <div className={`font-medium text-xs ${
-            isNoPayout ? `italic ${T.ts}` : isQtr ? (isDark ? 'text-violet-300' : 'text-violet-700') : T.tp
-          }`}>
-            {payout.period || payout.Period || 'N/A'}
-          </div>
-          {(payout.calculationNote || payout.CalculationNote) && !isNoPayout && (
-            <div className={`text-[10px] mt-0.5 ${T.tm}`}>{payout.calculationNote || payout.CalculationNote}</div>
-          )}
-          {hasSap && journalRemarks && (
-            <div className={`text-[9px] mt-0.5 truncate max-w-[180px] ${isDark ? 'text-violet-400' : 'text-violet-600'}`}
-              title={journalRemarks}>
-              📝 {journalRemarks}
-            </div>
-          )}
-          {isQtr && prevBalance > 0 && (
-            <div className={`text-[9px] mt-0.5 ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>
-              + Prev: ₱{prevBalance.toFixed(2)}
-            </div>
-          )}
-        </td>
-
-        {/* Rebate Earned */}
-        <td className="px-4 py-2.5 text-center">
-          <span className={badge(formatCurrency(baseAmount), baseColor)}>
-            {formatCurrency(baseAmount)}
-          </span>
-        </td>
-
-        {/* Total Amount */}
-        <td className="px-4 py-2.5 text-center">
-          <span className={badge(formatCurrency(totalAmount), totalColor)}>
-            {formatCurrency(totalAmount)}
-          </span>
-        </td>
-
-        {/* Status - now only a badge, no dropdown */}
-        <td className="px-4 py-2.5 text-center">
-          <span className={badge(status, getStatusColor(status))}>{status}</span>
-        </td>
-
-        {/* Amount Released */}
-        <td className="px-4 py-2.5 text-center">
-          <div className="flex flex-col items-center gap-0.5">
-            <span className={badge(
-              `₱${amountReleased
-                ? new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amountReleased)
-                : '0.00'}`,
-              hasSap ? 'purple' : !isEditable ? 'slate' : 'blue'
-            )}>
-              ₱{amountReleased
-                ? new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amountReleased)
-                : '0.00'}
-            </span>
-            {hasSap && (
-              <span className={`text-[9px] ${isDark ? 'text-violet-400' : 'text-violet-600'}`}>From SAP</span>
-            )}
-          </div>
-        </td>
-
-        {/* Balance */}
-        <td className="px-4 py-2.5 text-center">
-          <span className={badge(formatCurrency(balance), balColor)}>
-            {formatCurrency(balance)}
-          </span>
-        </td>
-      </tr>
-    );
+  const getDetailPageNums = () => {
+    const total = totalPages, cur = safeDetailPage;
+    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+    if (cur <= 4)         return [1, 2, 3, 4, 5, '...', total];
+    if (cur >= total - 3) return [1, '...', total - 4, total - 3, total - 2, total - 1, total];
+    return [1, '...', cur - 1, cur, cur + 1, '...', total];
   };
 
   if (customerModalTab !== 'payout') return null;
 
-  const totalBegBalance = beginningBalances.reduce((s, b) => s + (b.TotalAmount || b.Balance || 0), 0);
+  // ── Access denied state ────────────────────────────────────────────────────
+  if (!canView) {
+    return (
+      <div className={`h-full flex flex-col ${T.bg}`}>
+        <div className={`flex-shrink-0 px-5 py-3 border-b ${T.header}`}>
+          <h4 className={`text-xs font-bold uppercase tracking-widest ${T.tp}`}>Payout History</h4>
+          <p className={`text-[11px] mt-0.5 ${T.ts}`}>Restricted</p>
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center max-w-xs px-6">
+            <div className={`w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-4 ${
+              isDark ? 'bg-red-900/20 border border-red-700/30' : 'bg-red-50 border border-red-200'
+            }`}>
+              <Lock size={22} className={isDark ? 'text-red-400' : 'text-red-600'} />
+            </div>
+            <h3 className={`text-sm font-bold mb-1 ${T.tp}`}>Access Restricted</h3>
+            <p className={`text-xs leading-relaxed ${T.ts}`}>
+              You don't have permission to view payout history.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const totalRebateEarned  = summaryRows.reduce((s, r) => s + (r.baseAmount || 0), 0);
+  const totalAmount        = summaryRows.reduce((s, r) => s + (r.totalAmount || 0), 0);
+  const totalReleased      = summaryRows.reduce((s, r) => s + (r.amountReleased || 0), 0);
+  const totalBalance       = summaryRows.reduce((s, r) => s + (r.balance || 0), 0);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className={`h-full flex flex-col ${T.bg}`}>
 
-      {/* ── Section header ──────────────────────────────────────────────── */}
-      {/* (commented out as in original) */}
+    {/* ── Toolbar: view mode dropdown (right) ─────────────────────────────── */}
+    <div className={`flex-shrink-0 flex items-center justify-end gap-3 px-5 py-2.5 border-b ${T.header}`}>
+      {viewMode === 'detail' && rebateCodeOptions.length > 0 && (
+        <div className="flex items-center gap-2">
+          <span className={`text-[11px] font-medium ${T.ts}`}>Rebate code</span>
+          <select
+            value={selectedRebateCode}
+            onChange={(e) => {
+              const opt = rebateCodeOptions.find(o => o.rebateCode === e.target.value);
+              setSelectedRebateCode(e.target.value);
+              setSelectedRebateType(opt?.rebateType || '');
+            }}
+            className={`pl-3 pr-6 py-1.5 rounded-lg text-[11px] font-semibold border outline-none transition-all appearance-none cursor-pointer ${T.select}`}
+          >
+            {rebateCodeOptions.map(o => (
+              <option key={o.rebateCode} value={o.rebateCode}>
+                {o.quarterLabel ? `${o.rebateCode} — ${o.quarterLabel}` : o.rebateCode}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <span className={`text-[11px] font-medium ${T.ts}`}>View by</span>
+
+        <div className="relative">
+          {viewMode === 'quarter'
+            ? <Calendar
+                size={12}
+                className={`absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none ${T.tm}`}
+              />
+            : viewMode === 'rebateCode'
+            ? <Layers
+                size={12}
+                className={`absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none ${T.tm}`}
+              />
+            : null
+          }
+
+          <select
+            value={viewMode}
+            onChange={(e) => setViewMode(e.target.value)}
+            className={`${viewMode !== 'detail' ? 'pl-7' : 'pl-3'} pr-6 py-1.5 rounded-lg text-[11px] font-semibold border outline-none transition-all appearance-none cursor-pointer ${T.select}`}
+          >
+            <option value="detail">Detail</option>
+            <option value="quarter">Quarter</option>
+            <option value="rebateCode">Rebate Code</option>
+          </select>
+        </div>
+      </div>
+    </div>
 
       {/* SAP sync message */}
       {sapSyncMessage && (
@@ -529,7 +339,186 @@ const VanPayoutHistory = ({
 
       {/* ── Table ───────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-auto">
-        {sortedPaginated.length === 0 ? (
+        {viewMode === 'detail' ? (
+          isDetailLoading ? (
+            <div className="animate-pulse">
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className={`px-5 py-3 border-b flex items-center gap-3 ${isDark ? 'border-slate-700' : 'border-slate-100'}`}>
+                  <div className={`h-3 w-24 rounded ${isDark ? 'bg-slate-700' : 'bg-slate-200'}`} />
+                  <div className={`h-3 w-16 rounded ml-auto ${isDark ? 'bg-slate-700' : 'bg-slate-200'}`} />
+                  <div className={`h-3 w-16 rounded ${isDark ? 'bg-slate-700' : 'bg-slate-200'}`} />
+                </div>
+              ))}
+            </div>
+          ) : detailLoadError ? (
+            <div className="h-full flex items-center justify-center py-16">
+              <div className="text-center">
+                <p className={`text-sm font-semibold mb-1 ${isDark ? 'text-red-400' : 'text-red-600'}`}>Failed to load payout details</p>
+                <p className={`text-xs ${T.ts}`}>{detailLoadError}</p>
+                <button
+                  onClick={loadDetailPayouts}
+                  className="mt-3 px-4 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Retry
+                </button>
+              </div>
+            </div>
+          ) : !selectedRebateCode ? (
+            <div className="h-full flex items-center justify-center py-16">
+              <div className="text-center">
+                <div className={`w-14 h-14 mx-auto rounded-xl flex items-center justify-center mb-4 ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}>
+                  <Wallet size={22} className={T.tm} />
+                </div>
+                <h3 className={`text-sm font-bold mb-1 ${T.tp}`}>No Rebate Programs</h3>
+                <p className={`text-xs ${T.ts}`}>This customer has no rebate programs to show.</p>
+              </div>
+            </div>
+          ) : detailRows.length === 0 ? (
+            <div className="h-full flex items-center justify-center py-16">
+              <div className="text-center">
+                <div className={`w-14 h-14 mx-auto rounded-xl flex items-center justify-center mb-4 ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}>
+                  <Wallet size={22} className={T.tm} />
+                </div>
+                <h3 className={`text-sm font-bold mb-1 ${T.tp}`}>No Payout Records</h3>
+                <p className={`text-xs ${T.ts}`}>No payout records found for {selectedRebateCode}.</p>
+              </div>
+            </div>
+          ) : (
+            <table className="w-full text-xs">
+              <thead className={`sticky top-0 border-b ${T.thead}`}>
+                <tr>
+                  <th className={`${thCls} text-left w-[12%]`}>Date</th>
+                  <th className={`${thCls} text-left w-[22%]`}>Period</th>
+                  <th className={`${thCls} text-center w-[13%]`}>Rebate Earned</th>
+                  <th className={`${thCls} text-center w-[13%]`}>Total Amount</th>
+                  <th className={`${thCls} text-center w-[10%]`}>Status</th>
+                  <th className={`${thCls} text-center w-[15%]`}>Released</th>
+                  <th className={`${thCls} text-center w-[15%]`}>Balance</th>
+                </tr>
+              </thead>
+              <tbody className={`divide-y ${T.divider}`}>
+                {paginatedDetailRows.map((row, i) => {
+                  const isBegBalance = isBegBalanceRow(row);
+                  const isQtr = !!row.isQtrRebate;
+
+                  if (isBegBalance) {
+                    return (
+                      <tr
+                        key={row.PayoutId || `beg-${i}`}
+                        className={`border-b ${
+                          isDark
+                            ? 'border-slate-700/50 bg-emerald-900/10 border-l-2 border-l-emerald-500'
+                            : 'border-slate-100 bg-emerald-50/60 border-l-2 border-l-emerald-400'
+                        }`}
+                      >
+                        <td className="px-5 py-2.5">
+                          <span className={`font-bold ${isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>{row.Date}</span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className={`font-medium text-xs ${isDark ? 'text-emerald-200' : 'text-emerald-800'}`}>
+                            {row.Period}
+                          </div>
+                          {row.CarrySourceNote && (
+                            <div className={`text-[10px] mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                              {row.CarrySourceNote}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5" />
+                        <td className="px-4 py-2.5" />
+                        <td className="px-4 py-2.5" />
+                        <td className="px-4 py-2.5" />
+                        <td className="px-4 py-2.5 text-center">
+                          <span className={badge(formatCurrency(row.TotalAmount ?? row.Balance ?? 0), 'emerald')}>
+                            {formatCurrency(row.TotalAmount ?? row.Balance ?? 0)}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  const rowAccent = isQtr
+                    ? (isDark ? 'border-l-2 border-l-violet-500' : 'border-l-2 border-l-violet-400')
+                    : '';
+                  const isNoPayout = row.Status === 'No Payout';
+
+                  return (
+                    <tr
+                      key={row.PayoutId || i}
+                      className={`transition-colors duration-100 border-b ${T.row} ${
+                        isDark ? 'border-slate-700/50' : 'border-slate-100'
+                      } ${rowAccent} ${isNoPayout ? 'opacity-70' : ''}`}
+                    >
+                      <td className="px-5 py-2.5">
+                        <span className={`font-medium ${T.tp}`}>{row.Date}</span>
+                        {isQtr && (
+                          <div className={`text-[10px] mt-0.5 ${isDark ? 'text-violet-400' : 'text-violet-600'}`}>
+                            Quarter Rebate
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className={`font-medium text-xs ${isQtr ? (isDark ? 'text-violet-300' : 'text-violet-700') : T.tp}`}>
+                          {row.Period}
+                        </div>
+                        {row.CalculationNote && (
+                          <div className={`text-[10px] mt-0.5 ${T.tm}`}>{row.CalculationNote}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={badge(formatCurrency(row.BaseAmount || 0), 'blue')}>
+                          {formatCurrency(row.BaseAmount || 0)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={badge(formatCurrency(row.TotalAmount || 0), isQtr ? 'violet' : row.TotalAmount > 0 ? 'amber' : 'slate')}>
+                          {formatCurrency(row.TotalAmount || 0)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={badge(row.Status, getStatusColor(row.Status))}>{row.Status || 'No Payout'}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={badge(formatCurrency(row.AmountReleased || 0), 'blue')}>
+                          {formatCurrency(row.AmountReleased || 0)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={badge(formatCurrency(row.Balance || 0), row.Balance > 0 ? 'red' : 'emerald')}>
+                          {formatCurrency(row.Balance || 0)}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )
+        ) : isLoading ? (
+          <div className="animate-pulse">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className={`px-5 py-3 border-b flex items-center gap-3 ${isDark ? 'border-slate-700' : 'border-slate-100'}`}>
+                <div className={`h-3 w-24 rounded ${isDark ? 'bg-slate-700' : 'bg-slate-200'}`} />
+                <div className={`h-3 w-16 rounded ml-auto ${isDark ? 'bg-slate-700' : 'bg-slate-200'}`} />
+                <div className={`h-3 w-16 rounded ${isDark ? 'bg-slate-700' : 'bg-slate-200'}`} />
+                <div className={`h-3 w-16 rounded ${isDark ? 'bg-slate-700' : 'bg-slate-200'}`} />
+              </div>
+            ))}
+          </div>
+        ) : loadError ? (
+          <div className="h-full flex items-center justify-center py-16">
+            <div className="text-center">
+              <p className={`text-sm font-semibold mb-1 ${isDark ? 'text-red-400' : 'text-red-600'}`}>Failed to load payout history</p>
+              <p className={`text-xs ${T.ts}`}>{loadError}</p>
+              <button
+                onClick={loadPayoutSummary}
+                className="mt-3 px-4 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        ) : summaryRows.length === 0 ? (
           <div className="h-full flex items-center justify-center py-16">
             <div className="text-center">
               <div className={`w-14 h-14 mx-auto rounded-xl flex items-center justify-center mb-4 ${
@@ -538,82 +527,223 @@ const VanPayoutHistory = ({
                 <Wallet size={22} className={T.tm} />
               </div>
               <h3 className={`text-sm font-bold mb-1 ${T.tp}`}>No Payout Records</h3>
-              <p className={`text-xs ${T.ts}`}>No payout records found for this period.</p>
+              <p className={`text-xs ${T.ts}`}>No payout history found for this customer.</p>
             </div>
           </div>
         ) : (
           <table className="w-full text-xs">
             <thead className={`sticky top-0 border-b ${T.thead}`}>
               <tr>
-                <th className={`${thCls} text-left  w-[18%]`}>Date</th>
-                <th className={`${thCls} text-left  w-[21%]`}>Period</th>
-                <th className={`${thCls} text-center w-[12%]`}>Rebate Earned</th>
-                <th className={`${thCls} text-center w-[12%]`}>Total Amount</th>
+                <th className={`${thCls} text-left w-[22%]`}>
+                  {viewMode === 'quarter' ? 'Quarter' : 'Rebate Code'}
+                </th>
+                <th className={`${thCls} text-left w-[18%]`}>Type(s)</th>
+                <th className={`${thCls} text-center w-[15%]`}>Rebate Earned</th>
+                <th className={`${thCls} text-center w-[15%]`}>Total Amount</th>
                 <th className={`${thCls} text-center w-[10%]`}>Status</th>
-                <th className={`${thCls} text-center w-[13%]`}>Amount Released</th>
-                <th className={`${thCls} text-center w-[13%]`}>Balance</th>
+                <th className={`${thCls} text-center w-[10%]`}>Released</th>
+                <th className={`${thCls} text-center w-[10%]`}>Balance</th>
               </tr>
             </thead>
             <tbody className={`divide-y ${T.divider}`}>
-              {sortedPaginated.map((payout, i) => renderPayoutRow(payout, i))}
+              {summaryRows.map((row, i) => {
+                const dedupeKey = viewMode === 'quarter' ? row.quarterLabel : row.rebateCode;
+                const key = `${dedupeKey || 'row'}-${i}`;
+                const isExpanded = expandedRow === key;
+                return (
+                  <React.Fragment key={key}>
+                    <tr
+                      className={`transition-colors duration-100 cursor-pointer border-b ${T.row} ${
+                        isDark ? 'border-slate-700/50' : 'border-slate-100'
+                      }`}
+                      onClick={() => setExpandedRow(isExpanded ? null : key)}
+                    >
+                    {/* Rebate code / Quarter */}
+                    <td className="px-5 py-2.5">
+                      {viewMode === 'rebateCode' ? (
+                        <>
+                          {/* Rebate Code */}
+                          <span className={`font-semibold ${T.tp}`}>
+                            {row.rebateCode}
+                          </span>
+
+                          {/* Quarter + Date Range */}
+                          {row.quarterLabel && row.dateFrom && row.dateTo && (
+                            <div className={`text-[10px] mt-0.5 ${T.tm}`}>
+                              {row.quarterLabel} : {formatDateShort(row.dateFrom)} – {formatDateShort(row.dateTo)}
+                            </div>
+                          )}
+                          {row.carriedIn > 0.01 && (
+                            <div className={`text-[10px] mt-0.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                              + Carried in {formatCurrency(row.carriedIn)}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {/* Quarter */}
+                          <span className={`font-semibold ${T.tp}`}>
+                            {row.quarterLabel}
+                          </span>
+
+                          {/* Rebate Codes */}
+                          {row.rebateCodes?.length > 0 && (
+                            <div className={`text-[10px] mt-0.5 ${T.tm}`}>
+                              {row.rebateCodes.join(', ')}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </td>
+
+                      {/* Type(s) */}
+                      <td className="px-4 py-2.5">
+                        <div className="flex flex-wrap gap-1">
+                          {(row.rebateTypes || []).map(t => <RebateTypeBadge key={t} type={t} />)}
+                        </div>
+                        {viewMode === 'rebateCode' && (
+                          <div className="mt-1">
+
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Rebate Earned */}
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={badge(formatCurrency(row.baseAmount), 'blue')}>
+                          {formatCurrency(row.baseAmount)}
+                        </span>
+                      </td>
+
+                      {/* Total Amount */}
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={badge(formatCurrency(row.totalAmount), row.totalAmount > 0 ? 'amber' : 'slate')}>
+                          {formatCurrency(row.totalAmount)}
+                        </span>
+                      </td>
+
+                      {/* Status */}
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={badge(row.status, getStatusColor(row.status))}>{row.status}</span>
+                      </td>
+
+                      {/* Released */}
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={badge(formatCurrency(row.amountReleased), 'blue')}>
+                          {formatCurrency(row.amountReleased)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        {row.isOverReleased ? (
+                          <div className="flex flex-col items-center gap-0.5">
+                      <span
+                        className={badge(
+                          formatCurrency(row.balance),
+                          row.balance > 0 ? 'red' : row.balance === 0 ? 'emerald' : 'slate'
+                        )}
+                      >
+                        {row.balance < 0
+                          ? `(${formatCurrency(Math.abs(row.balance))})`
+                          : formatCurrency(row.balance)}
+                      </span>
+                            <span className={`text-[9px] ${isDark ? 'text-red-400' : 'text-red-600'}`}>
+                              Over-released
+                            </span>
+                          </div>
+                        ) : (
+                          <span className={badge(
+                            formatCurrency(row.balance),
+                            row.balance > 0 ? 'red' : row.balance === 0 ? 'emerald' : 'slate'
+                          )}>
+                            {formatCurrency(row.balance)}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+
+                    {/* Expanded detail row — quarter view shows its rebate codes' breakdown */}
+                    {isExpanded && viewMode === 'quarter' && (
+                      <tr className={isDark ? 'bg-slate-800/30' : 'bg-slate-50'}>
+                        <td colSpan={7} className="px-8 py-2">
+                          <span className={`text-[10px] ${T.ts}`}>
+                            This quarter combines: <strong>{row.rebateCodes?.join(', ')}</strong>
+                          </span>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         )}
       </div>
 
-      {/* ── Pagination footer ────────────────────────────────────────────── */}
-      {filteredPayouts.length > 0 && (
+      {/* ── Footer count / pagination ─────────────────────────────────────── */}
+      {viewMode === 'detail' && detailRows.length > 0 && (
         <div className={`flex-shrink-0 flex flex-wrap gap-2 items-center justify-between px-5 py-2.5 border-t ${T.footer}`}>
           <div className="flex items-center gap-3">
             <p className={`text-[11px] ${T.ts}`}>
               Showing{' '}
               <span className={`font-semibold ${T.tp}`}>
-                {(safePage - 1) * payoutRowsPerPage + 1}–{Math.min(safePage * payoutRowsPerPage, filteredPayouts.length)}
+                {(safeDetailPage - 1) * detailRowsPerPage + 1}–{Math.min(safeDetailPage * detailRowsPerPage, detailRows.length)}
               </span>{' '}
-              of{' '}
-              <span className={`font-semibold ${T.tp}`}>{filteredPayouts.length}</span>
+              of <span className={`font-semibold ${T.tp}`}>{detailRows.length}</span>
             </p>
-            {beginningBalances.length > 0 && (
-              <span className={`text-[11px] ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
-                · {beginningBalances.length} beginning balance{beginningBalances.length !== 1 ? 's' : ''}
-              </span>
-            )}
             <div className="flex items-center gap-1.5">
               <span className={`text-[11px] ${T.ts}`}>Per page</span>
               <select
-                value={payoutRowsPerPage}
-                onChange={(e) => {
-                  const n = Number(e.target.value);
-                  setPayoutRowsPerPage(n);
-                  setPayoutCurrentPage(1);
-                  setLocalPaginatedPayouts(localFilteredPayouts.slice(0, n));
-                }}
+                value={detailRowsPerPage}
+                onChange={(e) => { setDetailRowsPerPage(Number(e.target.value)); setDetailCurrentPage(1); }}
                 className={`text-xs border rounded-md px-1.5 py-0.5 outline-none ${T.select}`}
               >
                 {[10, 25, 50].map(n => <option key={n} value={n}>{n}</option>)}
               </select>
             </div>
           </div>
-
           <div className="flex items-center gap-1">
-            <PaginationBtn icon={ChevronsLeft}  onClick={() => goToPage(1)}                      disabled={safePage === 1} />
-            <PaginationBtn icon={ChevronLeft}   onClick={() => goToPage(Math.max(safePage-1,1))} disabled={safePage === 1} />
-            {getPageNums().map((p, i) =>
+            <button onClick={() => setDetailCurrentPage(1)} disabled={safeDetailPage === 1}
+              className={`w-7 h-7 rounded flex items-center justify-center ${safeDetailPage === 1 ? (isDark ? 'text-slate-600 cursor-not-allowed' : 'text-slate-300 cursor-not-allowed') : (isDark ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100')}`}>
+              <ChevronsLeft size={14} />
+            </button>
+            <button onClick={() => setDetailCurrentPage(p => Math.max(p - 1, 1))} disabled={safeDetailPage === 1}
+              className={`w-7 h-7 rounded flex items-center justify-center ${safeDetailPage === 1 ? (isDark ? 'text-slate-600 cursor-not-allowed' : 'text-slate-300 cursor-not-allowed') : (isDark ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100')}`}>
+              <ChevronLeft size={14} />
+            </button>
+            {getDetailPageNums().map((p, i) =>
               p === '...' ? (
                 <span key={`e${i}`} className={`w-7 text-center text-xs ${T.tm}`}>…</span>
               ) : (
-                <button key={p} onClick={() => goToPage(p)}
+                <button
+                  key={p}
+                  onClick={() => setDetailCurrentPage(p)}
                   className={`w-7 h-7 rounded text-xs font-medium transition-all ${
-                    safePage === p
+                    safeDetailPage === p
                       ? 'bg-blue-600 text-white shadow'
                       : isDark ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100'
                   }`}
-                >{p}</button>
+                >
+                  {p}
+                </button>
               )
             )}
-            <PaginationBtn icon={ChevronRight}  onClick={() => goToPage(Math.min(safePage+1, totalPages))} disabled={safePage === totalPages} />
-            <PaginationBtn icon={ChevronsRight} onClick={() => goToPage(totalPages)}                       disabled={safePage === totalPages} />
+            <button onClick={() => setDetailCurrentPage(p => Math.min(p + 1, totalPages))} disabled={safeDetailPage === totalPages}
+              className={`w-7 h-7 rounded flex items-center justify-center ${safeDetailPage === totalPages ? (isDark ? 'text-slate-600 cursor-not-allowed' : 'text-slate-300 cursor-not-allowed') : (isDark ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100')}`}>
+              <ChevronRight size={14} />
+            </button>
+            <button onClick={() => setDetailCurrentPage(totalPages)} disabled={safeDetailPage === totalPages}
+              className={`w-7 h-7 rounded flex items-center justify-center ${safeDetailPage === totalPages ? (isDark ? 'text-slate-600 cursor-not-allowed' : 'text-slate-300 cursor-not-allowed') : (isDark ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100')}`}>
+              <ChevronsRight size={14} />
+            </button>
           </div>
+        </div>
+      )}
+      {viewMode !== 'detail' && summaryRows.length > 0 && (
+        <div className={`flex-shrink-0 flex items-center justify-between px-5 py-2.5 border-t ${T.footer}`}>
+          <p className={`text-[11px] ${T.ts}`}>
+            <span className={`font-semibold ${T.tp}`}>{summaryRows.length}</span>{' '}
+            {viewMode === 'quarter' ? (summaryRows.length !== 1 ? 'quarters' : 'quarter') : (summaryRows.length !== 1 ? 'rebate codes' : 'rebate code')}
+          </p>
         </div>
       )}
     </div>
