@@ -741,17 +741,19 @@ router.get('/rebate-program/master-items', async (req, res) => {
   try {
     const result = await req.db.request().query(`
       SELECT
-        ItemCode,
-        ItemName,
-        SalUnitMsr,
-        ItmsGrpCod,
-        PurPackUn
-      FROM OITM
-      ORDER BY ItemName
+        T0.ItemCode,
+        T0.ItemName,
+        T0.SalUnitMsr,
+        T0.ItmsGrpCod,
+        T1.ItmsGrpNam,
+        T0.PurPackUn
+      FROM OITM T0
+      LEFT JOIN OITB T1 ON T0.ItmsGrpCod = T1.ItmsGrpCod
+      ORDER BY T0.ItemName
     `);
     res.json({ success: true, data: result.recordset });
   } catch (err) {
-    console.error('❌ Error fetching master items with SalUnitMsr:', err);
+    console.error('❌ Error fetching master items:', err); // Look at your terminal for this!
     res.status(500).json({ success: false, error: err.message });
   }
 });

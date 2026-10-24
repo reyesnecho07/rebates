@@ -18,6 +18,9 @@ const lastDayOfMonthLabel = (year, monthIndex) => {
   return `${String(monthIndex + 1).padStart(2, "0")}/${String(lastDay).padStart(2, "0")}/${y}`;
 };
 
+/* ── Round a number to 2 decimal places (avoids FP drift on currency) ── */
+const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
 /* ── Pull a document number out of a payout row (any known key) ────── */
 const pickDocNum = (source) => {
   if (!source) return "";
@@ -226,6 +229,7 @@ const CustomerLedgerModal = ({
                 rebateCode: rb.code,
                 rebateType: rb.type,
                 rows: json.data.payouts || [],
+                monthlyRaw: json.data.monthlyRaw || [],
                 previousBalance: parseFloat(json.data.previousBalance) || 0,
               };
             }
@@ -236,10 +240,12 @@ const CustomerLedgerModal = ({
         const merged = [];
         let bestPrev = 0;
         results.filter(Boolean).forEach(r => {
+          const rawMap = new Map(r.monthlyRaw.map(x => [x.period, x.rawAmount]));
           r.rows.forEach(row => merged.push({
             ...row,
             _rebateCode: r.rebateCode,
             _rebateType: r.rebateType,
+            _rawBase: !row.DocumentType && rawMap.has(row.Period) ? rawMap.get(row.Period) : undefined,
           }));
           if (r.previousBalance > bestPrev) bestPrev = r.previousBalance;
         });
@@ -349,7 +355,7 @@ const CustomerLedgerModal = ({
       if (p.DocumentType) return s;
       if (p.IsBeginningBalance === 1 || p.isBeginningBalance === true) return s;
       if ((p.Period || '').startsWith('Balance of ')) return s;
-      return s + (parseFloat(p.BaseAmount) || 0);
+      return s + (p._rawBase ?? (parseFloat(p.BaseAmount) || 0));
     }, 0);
   }, [yearFilteredPayouts]);
 
@@ -363,7 +369,7 @@ const CustomerLedgerModal = ({
   }, [yearFilteredPayouts]);
 
   // Total Amount (left-card footer) = beginning balance + earned for the SELECTED year
-  const grandTotalEarned = totalEarned + beginningBalanceAmount;
+  const grandTotalEarned = round2(totalEarned + beginningBalanceAmount);
 
   // ── Header Balance ──────────────────────────────────────────────────
   // Mirrors:  SELECT SUM(BaseAmount) - SUM(AmountReleased)

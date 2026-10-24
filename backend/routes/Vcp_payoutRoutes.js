@@ -5,6 +5,8 @@ const router = express.Router();
 
 const REDEMPTION_PREFIX = 'Redemption';
 
+const MIN_LINE_VALUE = 1;   // ignore Percentage lines with a peso value under ₱1 (dust rows)
+
 /* ══════════════════════════════════════════════════════════════════
    QTR REBATE HELPERS
    Normalised comparisons so 'With Quota' / 'WithQuota' / 'with quota'
@@ -12,11 +14,20 @@ const REDEMPTION_PREFIX = 'Redemption';
    ══════════════════════════════════════════════════════════════════ */
 const normalizeKey = (v) => String(v || '').replace(/\s+/g, '').toLowerCase();
 
+/**
+ * Round half-up to 2 decimals, symmetric for negatives.
+ *  - 1050.4225 → 1050.42   (3rd+ decimals < 5 → no round up)
+ *  - 1050.425  → 1050.43
+ * The toFixed(8) pre-step strips floating-point noise
+ * (e.g. 6844.872500000001) before the decimal-shift rounding.
+ * Use ONLY on final totals — never on individual lines before summing.
+ */
 const round2 = (n) => {
   const v = parseFloat(n) || 0;
   if (v === 0) return 0;
   const sign = v < 0 ? -1 : 1;
-  return sign * Number(Math.round(Number(Math.abs(v) + 'e2')) + 'e-2');
+  const abs = Number(Math.abs(v).toFixed(8));          // strips float noise
+  return sign * (Math.floor(abs * 100 + 0.5) / 100);   // 6844.8725 → 6844.87, 6844.8788 → 6844.88
 };
 
 const isWithQuotaType = (quotaType) => normalizeKey(quotaType) === 'withquota';
@@ -302,6 +313,7 @@ router.get('/customer/:customerCode/payouts', async (req, res) => {
     res.json({
       success: true,
       data: {
+        monthlyRaw: monthlyData.map(m => ({ period: m.period, rawAmount: m.rawAmount })),
         payouts: finalPayouts,
         beginningBalances: hasBeginningBalance ? [beginningBalanceRecord] : [],
         regularPayouts: finalPayouts.filter(p => !p.DocumentType),
@@ -389,6 +401,10 @@ const createBeginningBalanceRecord = (customerCode, rebateCode, rebateType, prev
    ★ Percentage: unchanged from original working version
    ★ Fixed: per-item RebatePerBag from FixProdRebate
    ★ Incremental: sums each eligible line's qty × its own RebatePerBag
+
+   ★ ROUNDING RULE: every per-line rebate stays RAW (unrounded). The
+     lines are summed, and the month total is rounded ONCE (round2).
+     The QTR step also works from the raw month total.
 
    ★ QTR REBATE (reworked)
      The customer's QtrRebate is read from PerCustRebate / FixCustRebate /
@@ -557,6 +573,9 @@ const calculateMonthlyPayoutData = async (
           if (isNaN(date.getTime())) return;
           if (date < periodStart || date > periodEnd) return;
 
+          // Percentage: ignore rows with no real peso value (e.g. 0.01, 0.11)
+          if (rebateType === 'Percentage' && Math.abs(parseFloat(transaction.Gtotal) || 0) < MIN_LINE_VALUE) return;
+
           const year = date.getFullYear();
           const month = date.getMonth();
           const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`;
@@ -595,10 +614,11 @@ const calculateMonthlyPayoutData = async (
             (transaction.Weight && transaction.Weight.toString().includes('25'));
 
           if (rebateType === 'Percentage') {
-            // ── UNCHANGED: original Percentage calculation ──
             percentageUsed = (itemCode && itemPercentageMap.has(itemCode)) ? itemPercentageMap.get(itemCode) : 0;
-            dailyRebate = round2((qtyReb * priceAfVAT * percentageUsed) / 100); // <--- ADDED round2
-            calculationNote = `${qtyReb} × ₱${priceAfVAT.toFixed(2)} × ${percentageUsed}% = ₱${dailyRebate.toFixed(2)}`;
+
+          const lineValue = parseFloat(transaction.Gtotal) || 0;     // peso value, negative for ARCM
+          dailyRebate = (lineValue * percentageUsed) / 100;          // RAW, no rounding per row
+          calculationNote = `₱${lineValue.toFixed(2)} × ${percentageUsed}% = ₱${dailyRebate.toFixed(4)}`;
 
           } else if (rebateType === 'Fixed') {
             // ── use per-item RebatePerBag from FixProdRebate ──
@@ -606,7 +626,7 @@ const calculateMonthlyPayoutData = async (
               ? itemFixedRateMap.get(itemCode)
               : baseRebatePerBag;
             percentageUsed = itemRate;
-            dailyRebate = round2(qtyReb * itemRate); // <--- ADDED round2
+            dailyRebate = round2(qtyReb * itemRate);   // round per row, like the report
             calculationNote = `${qtyReb} × ₱${itemRate.toFixed(2)} = ₱${dailyRebate.toFixed(2)}`;
 
           } else if (rebateType === 'Incremental') {
@@ -615,7 +635,7 @@ const calculateMonthlyPayoutData = async (
             const statusStr = String(transaction.EligibilityStatus || '').trim().toLowerCase();
             if (statusStr === 'eligible' && itemRate > 0) {
               percentageUsed = itemRate;
-              dailyRebate = round2(qtyReb * itemRate); // <--- ADDED round2
+              dailyRebate = round2(qtyReb * itemRate);
               calculationNote = `Range ${transaction.CurrentRange || '?'}: ${qtyReb} × ₱${itemRate.toFixed(2)} = ₱${dailyRebate.toFixed(2)}`;
             } else {
               dailyRebate = 0;
@@ -717,6 +737,9 @@ const calculateMonthlyPayoutData = async (
     for (const monthKey in monthlyGroups) {
       const monthWithData = monthlyGroups[monthKey];
 
+      // RAW (unrounded) month total — sum of raw per-line rebates
+      console.log(`🧮 [RAW] ${customerCode}/${rebateCode} ${monthKey} totalBaseAmount =`, monthWithData.totalBaseAmount);
+
       let baseAmount = monthWithData.totalBaseAmount || 0;
       let totalActualSales = monthWithData.totalActualSales || 0;
       let totalPriceAfVAT = monthWithData.totalPriceAfVAT || 0;
@@ -793,11 +816,11 @@ const calculateMonthlyPayoutData = async (
         quotaMet = eligible;
 
         if (eligible) {
-          // ── Sum each line's own qty × its own RebatePerBag ──
+          // ── Sum each line's own qty × its own RebatePerBag (raw) ──
           baseAmount = eligibleRows.reduce((sum, t) => {
             const qty  = parseFloat(t.QtyForReb)   || 0;
             const rate = parseFloat(t.RebatePerBag) || 0;
-            return sum + qty * rate;
+            return sum + round2(qty * rate);
           }, 0);
 
           const rangeRate = parseFloat(eligibleRows[0]?.RebatePerBag) || 0;
@@ -805,7 +828,7 @@ const calculateMonthlyPayoutData = async (
           baseRebatePerBag = rangeRate;
           status = baseAmount > 0 ? 'Pending' : 'No Payout';
           calculationNote = (anyRange ? `Range ${anyRange} achieved — ` : '') +
-            `${eligibleRows.length} eligible line(s): Σ (qty × ₱rate) = ₱${baseAmount.toFixed(2)}`;
+            `${eligibleRows.length} eligible line(s): Σ (qty × ₱rate) = ₱${round2(baseAmount).toFixed(2)}`;
         } else {
           baseAmount = 0; baseRebatePerBag = 0; status = 'No Payout';
           calculationNote = 'No eligible transactions (no range reached)';
@@ -834,19 +857,17 @@ const calculateMonthlyPayoutData = async (
       }
 
       if (rebateType === 'Percentage' && !calculationNote) {
-        // ── UNCHANGED: original Percentage summary ──
         calculationNote = `Percentage Rebate (${itemCalculations.length} items):\n`;
         itemCalculations.forEach(item => {
-          calculationNote += `  ${item.itemName || item.itemCode}: ${item.actualSales} bags × ₱${totalPriceAfVAT > 0 ? (totalPriceAfVAT / totalActualSales).toFixed(2) : 0} × ${item.percentage}% = ₱${item.rebate.toFixed(2)}\n`;
+          calculationNote += `  ${item.itemName || item.itemCode}: ${item.actualSales} bags × ₱${totalPriceAfVAT > 0 ? (totalPriceAfVAT / totalActualSales).toFixed(2) : 0} × ${item.percentage}% = ₱${item.rebate.toFixed(4)}\n`;
         });
-        calculationNote += `  Total: ₱${baseAmount.toFixed(2)}`;
+        calculationNote += `  Total: ₱${round2(baseAmount).toFixed(2)}`;
       } else if (rebateType === 'Fixed' && !calculationNote) {
-        // ── Show per-item qty × per-item rate ──
         calculationNote = `Fixed Rebate (${itemCalculations.length} items):\n`;
         itemCalculations.forEach(item => {
-          calculationNote += `  ${item.itemName || item.itemCode}: ${item.actualSales} × ₱${(item.percentage || 0).toFixed(2)} = ₱${item.rebate.toFixed(2)}\n`;
+          calculationNote += `  ${item.itemName || item.itemCode}: ${item.actualSales} × ₱${(item.percentage || 0).toFixed(2)} = ₱${item.rebate.toFixed(4)}\n`;
         });
-        calculationNote += `  Total: ₱${baseAmount.toFixed(2)}`;
+        calculationNote += `  Total: ₱${round2(baseAmount).toFixed(2)}`;
       }
 
       const monthlyRecord = {
@@ -860,8 +881,9 @@ const calculateMonthlyPayoutData = async (
         monthNumber: monthWithData.monthNumber,
         quarter: monthWithData.quarter,
         year: monthWithData.year,
-        baseAmount: parseFloat(baseAmount.toFixed(2)),
-        amount: parseFloat(baseAmount.toFixed(2)),
+        // Rounded ONCE, from the raw month total
+        baseAmount: round2(baseAmount),
+        amount: round2(baseAmount),
         status,
         amountReleased: 0,
         sapReleasedAmount: 0,
@@ -877,8 +899,10 @@ const calculateMonthlyPayoutData = async (
         dailyCalculations,
         itemCalculations,
         qtrRebate,
-        // QTR fields — filled in by the QTR step below when applicable
-        baseAmountBeforeQtr: parseFloat(baseAmount.toFixed(2)),
+        // QTR fields — baseAmountBeforeQtr keeps the RAW (unrounded) month total
+        // so the QTR step computes from the exact value, not a rounded one.
+        baseAmountBeforeQtr: baseAmount,
+        rawAmount: baseAmount,   // unrounded month total, response only
         qtrRebateApplied: false,
         qtrRebateAmount: 0,
         hasTransactions: true,
@@ -909,6 +933,7 @@ const calculateMonthlyPayoutData = async (
          Percentage        → qtrAmount = month earned × (QtrRebate / 100)
          Fixed/Incremental → qtrAmount = month earned × QtrRebate
          month earned      = month earned + qtrAmount
+       Computed from the RAW month total; rounded once at the end.
        (If you need a different formula for Fixed/Incremental, e.g. QtrRebate
         as ₱ per bag, change ONLY computeQtrAmount below.)
        ══════════════════════════════════════════════════════════════════ */
@@ -951,11 +976,16 @@ const calculateMonthlyPayoutData = async (
         if (!quarterQualified) return;
 
         q.months.forEach(m => {
-          const before    = m.baseAmount;
-          const qtrAmount = parseFloat(computeQtrAmount(before).toFixed(2));
-          if (qtrAmount <= 0) return;
+          // RAW month total (not the rounded m.baseAmount)
+          const beforeRaw = m.baseAmountBeforeQtr;
+          const qtrRaw    = computeQtrAmount(beforeRaw);
+          if (qtrRaw <= 0) return;
 
-          const after = parseFloat((before + qtrAmount).toFixed(2));
+          // Round ONCE, on the final month total
+          const before    = round2(beforeRaw);
+          const after     = round2(beforeRaw + qtrRaw);
+          m.rawAmount = beforeRaw + qtrRaw;
+          const qtrAmount = round2(after - before);
 
           const qtrNote = rebateType === 'Percentage'
             ? `QTR Rebate: ₱${before.toFixed(2)} × ${qtrRebate}% = ₱${qtrAmount.toFixed(2)}`
@@ -1055,7 +1085,7 @@ const saveEarnedPayoutsToDatabase = async (payouts, pool, rebateCode, customerCo
 
     for (const payout of payouts) {
       try {
-        const baseAmount = parseFloat(payout.baseAmount) || 0;
+        const baseAmount = round2(payout.baseAmount);
         const totalAmount = baseAmount;
 
         const isQuotaNotMet = payout.quotaMet === false && payout.eligible === false;
@@ -1561,13 +1591,15 @@ const calculatePayoutDetails = async (transactions, rebateType, customerCode, re
       } catch (error) {
         result.calculationSteps.push(`Rebate per bag: Not found`);
       }
-      result.amount = round2(result.totalAdjustedQtyForReb * result.rebatePerBag); // <--- ADDED round2
+      // Single final amount → computed raw, rounded once
+      let rawAmount = result.totalAdjustedQtyForReb * result.rebatePerBag;
       if (result.qtrRebate > 0) {
-        result.amount = round2(result.amount * result.qtrRebate); // <--- ADDED round2
+        rawAmount = rawAmount * result.qtrRebate;
         result.calculationSteps.push(`Applied QTR rebate: ×${result.qtrRebate}`);
       } else {
         result.calculationSteps.push(`No QTR Rebate configured — base amount only`);
       }
+      result.amount = round2(rawAmount);
     }
   } else if (rebateType === 'Incremental') {
     const eligibleTransactions = transactions.filter(t => t.EligibilityStatus === 'Eligible' && t.CurrentRange);
@@ -1576,13 +1608,15 @@ const calculatePayoutDetails = async (transactions, rebateType, customerCode, re
       const highestTransaction = eligibleTransactions.find(t => t.CurrentRange === highestRange);
       result.eligible = true;
       result.rebatePerBag = parseFloat(highestTransaction?.RebatePerBag) || 0;
-      result.amount = round2(result.totalAdjustedQtyForReb * result.rebatePerBag); // <--- ADDED round2
+      // Single final amount → computed raw, rounded once
+      let rawAmount = result.totalAdjustedQtyForReb * result.rebatePerBag;
       if (result.qtrRebate > 0) {
-        result.amount = round2(result.amount * result.qtrRebate); // <--- ADDED round2
+        rawAmount = rawAmount * result.qtrRebate;
         result.calculationSteps.push(`Applied QTR rebate: ×${result.qtrRebate}`);
       } else {
         result.calculationSteps.push(`No QTR Rebate configured — base amount only`);
       }
+      result.amount = round2(rawAmount);
     }
   }
 

@@ -57,11 +57,12 @@ const getCustomers = async (req, res) => {
             T0.CardCode,
             T0.CardName,
             T1.GroupName,
-            T2.SlpName
+            T2.SlpName,
+            T0.Area 
           FROM
             OCRD T0  
             INNER JOIN OCRG T1 ON T0.GroupCode = T1.GroupCode 
-            INNER JOIN OSLP T2 ON T0.SlpCode = T2.SlpCode
+            INNER JOIN OSLP T2 ON T0.SlpCode   = T2.SlpCode
         `);
       console.log(`🟪 VCP Customers: ${result.recordset.length} records`);
       return result.recordset;

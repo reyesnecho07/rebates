@@ -367,7 +367,7 @@ const VcpTransactionRecords = ({
     if (!isRowCounted(t, idx)) return 0;
 
     const rate        = getRateValue(t);
-    const actualSales = parseFloat(t.ActualSales) || 0;  
+    const actualSales = parseFloat(t.ActualSales) || 0;
     const unitPerQty  = parseFloat(t.UnitPerQty)  || 1;
     const qtyForReb   = unitPerQty > 1 ? actualSales / unitPerQty : actualSales;
 
@@ -444,6 +444,10 @@ const VcpTransactionRecords = ({
 
   // ══════════════════════════════════════════════════════════════════════════
   // Excel export — exports ALL rows in the selected From/To range
+  // Style: dark-blue header, Arial everywhere, plain bold title block,
+  //        grey total row (matches the "Cash Fund" sample report)
+  // Totals: SUBTOTAL(109/103) so Qty, Peso Value, Amount and the row counter
+  //         follow the Excel filter (e.g. Date = January) and hidden rows.
   // ══════════════════════════════════════════════════════════════════════════
   const exportToExcel = async () => {
     if (!sorted.length || isExporting) return;
@@ -460,14 +464,23 @@ const VcpTransactionRecords = ({
 
       const PESO = '"₱"#,##0.00;[Red]-"₱"#,##0.00';
       const QTY  = '#,##0.00;[Red]-#,##0.00';
-      const FONT = 'Calibri';
+      const FONT = 'Arial';
       const C = {
-        navy: 'FF1E3A8A', blue: 'FF2563EB', zebra: 'FFF8FAFC', label: 'FFEFF6FF',
-        border: 'FFCBD5E1', ink: 'FF0F172A', muted: 'FF64748B', white: 'FFFFFFFF',
-        totalBg: 'FFDBEAFE', red: 'FFE11D48', arcmBg: 'FFFFF1F2',
+        headerBlue: 'FF1F4E79',   // dark blue header
+        border:     'FFBFBFBF',   // light grey cell borders
+        headBorder: 'FF17375E',   // slightly darker blue for header borders
+        ink:        'FF000000',   // black text
+        input:      'FF0000FF',   // blue for qty / peso value / rate (like the sample)
+        muted:      'FF595959',
+        white:      'FFFFFFFF',
+        totalBg:    'FFD9D9D9',   // grey total row
+        red:        'FFC00000',
+        arcmBg:     'FFFDECEC',
       };
-      const thin = { style: 'thin', color: { argb: C.border } };
+      const thin       = { style: 'thin', color: { argb: C.border } };
       const allBorders = { top: thin, left: thin, bottom: thin, right: thin };
+      const headThin   = { style: 'thin', color: { argb: C.headBorder } };
+      const headBorders = { top: headThin, left: headThin, bottom: headThin, right: headThin };
       const fill = (argb) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
 
       // local calendar date -> UTC midnight so Excel doesn't shift the day
@@ -503,16 +516,15 @@ const VcpTransactionRecords = ({
         { width: 18 }, // Amount
       ];
 
-      // ── Title banner ──
+      // ── Title (plain bold text, no banner) ──
       ws.mergeCells(1, 1, 1, COLS);
       const title = ws.getCell(1, 1);
       title.value = 'TRANSACTION RECORDS';
-      title.font = { name: FONT, size: 18, bold: true, color: { argb: C.white } };
-      title.fill = fill(C.navy);
-      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(1).height = 34;
+      title.font = { name: FONT, size: 16, bold: true, color: { argb: C.ink } };
+      title.alignment = { vertical: 'middle', horizontal: 'left' };
+      ws.getRow(1).height = 28;
 
-      // ── Info block ──
+      // ── Info block (bold labels + values, no fills) ──
       const rebateTypeLabel = modalCustomer?.rebateType || '—';
       const info = [
         ['Customer', modalCustomer?.customer || modalCustomer?.customerName || 'Unknown Customer'],
@@ -526,47 +538,45 @@ const VcpTransactionRecords = ({
       ];
       info.forEach(([label, value], i) => {
         const rowNo = 2 + i;
+        ws.mergeCells(rowNo, 1, rowNo, 2);
         const lc = ws.getCell(rowNo, 1);
-        lc.value = label;
-        lc.font = { name: FONT, size: 10, bold: true, color: { argb: C.navy } };
-        lc.fill = fill(C.label);
-        lc.alignment = { vertical: 'middle', indent: 1 };
-        lc.border = { bottom: thin };
-        ws.mergeCells(rowNo, 2, rowNo, COLS);
-        const vc = ws.getCell(rowNo, 2);
-        vc.value = value;
-        vc.font = { name: FONT, size: 11, bold: i === 0, color: { argb: C.ink } };
-        vc.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        vc.border = { bottom: thin };
-        ws.getRow(rowNo).height = 20;
-      });
-      ws.getRow(7).height = 10; // spacer
+        lc.value = `${label.toUpperCase()}:`;
+        lc.font = { name: FONT, size: 10, bold: true, color: { argb: C.ink } };
+        lc.alignment = { vertical: 'middle', horizontal: 'left' };
 
-      // ── Table header ──
+        ws.mergeCells(rowNo, 3, rowNo, COLS);
+        const vc = ws.getCell(rowNo, 3);
+        vc.value = value;
+        vc.font = { name: FONT, size: 10, bold: true, color: { argb: C.ink } };
+        vc.alignment = { vertical: 'middle', horizontal: 'left' };
+        ws.getRow(rowNo).height = 18;
+      });
+      ws.getRow(7).height = 8; // spacer
+
+      // ── Table header (dark blue, white bold Arial, centered) ──
       const headers = [
         'Type', 'Doc No.', 'Date', 'Item Code', 'Item Name', 'Qty', 'Peso Value',
         isPercentage ? 'Percentage' : 'Rebate / Unit', 'Amount',
       ];
       const hr = ws.getRow(HEADER_ROW);
-      hr.height = 26;
+      hr.height = 30;
       headers.forEach((h, i) => {
         const c = hr.getCell(i + 1);
         c.value = h.toUpperCase();
         c.font = { name: FONT, size: 10, bold: true, color: { argb: C.white } };
-        c.fill = fill(C.blue);
-        c.border = allBorders;
-        c.alignment = {
-          vertical: 'middle',
-          horizontal: i <= 4 ? 'left' : 'right',
-          indent: 1,
-        };
+        c.fill = fill(C.headerBlue);
+        c.border = headBorders;
+        c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
       });
 
       // ── Data rows ──
+      // horizontal alignment per column: Type, Doc, Date, Code centered; Item left; numbers right
+      const hAlign = ['center', 'center', 'center', 'center', 'left', 'right', 'right', 'right', 'right'];
+
       let arcmCount = 0;
       sorted.forEach((t, idx) => {
         const row = ws.getRow(FIRST_DATA + idx);
-        row.height = 20;
+        row.height = 18;
 
         const isArcm      = isReturnRow(t);
         if (isArcm) arcmCount += 1;
@@ -595,60 +605,84 @@ const VcpTransactionRecords = ({
           c.value = v;
           c.numFmt = formats[i];
           c.border = allBorders;
+
+          const isInputCol = i === 5 || i === 6 || i === 7;   // qty, peso value, rate → blue like the sample
           const red = (i === 0 && isArcm) || (i === 8 && (amount < 0 || notCounted));
           c.font = {
             name: FONT, size: 10,
-            bold: i === 0 || i === 8,
-            color: { argb: red ? C.red : C.ink },
+            bold: i === 8,
+            color: { argb: red ? C.red : isInputCol ? C.input : C.ink },
           };
           c.alignment = {
             vertical: 'middle',
-            horizontal: i <= 4 ? 'left' : 'right',
-            indent: 1,
+            horizontal: hAlign[i],
             wrapText: i === 4,
+            indent: i === 4 || i >= 5 ? 1 : 0,
           };
-          if (isArcm)            c.fill = fill(C.arcmBg);
-          else if (idx % 2 === 1) c.fill = fill(C.zebra);
+          if (isArcm) c.fill = fill(C.arcmBg);
         });
       });
 
-      // ── Totals row (live SUM formulas) ──
+      // ── Totals row (grey, bold, filter-aware SUBTOTAL formulas) ──
+      // SUBTOTAL(109, ...) = SUM that ignores rows hidden by the filter / manual hide
+      // SUBTOTAL(103, ...) = COUNTA that ignores hidden rows
       const tr = ws.getRow(TOTAL_ROW);
-      tr.height = 26;
-      ws.mergeCells(TOTAL_ROW, 1, TOTAL_ROW, 6);
+      tr.height = 22;
+      ws.mergeCells(TOTAL_ROW, 1, TOTAL_ROW, 5);
+
+      const totalQty  = round2(sorted.reduce((s, t) => s + (parseFloat(t.ActualSales) || 0), 0));
       const totalPeso = round2(sorted.reduce((s, t) => s + (parseFloat(t.Gtotal) || 0), 0));
 
       for (let col = 1; col <= COLS; col++) {
         const c = tr.getCell(col);
         c.fill = fill(C.totalBg);
-        c.font = { name: FONT, size: 11, bold: true, color: { argb: C.navy } };
-        c.border = {
-          top: { style: 'medium', color: { argb: C.navy } },
-          bottom: { style: 'double', color: { argb: C.navy } },
-          left: thin, right: thin,
-        };
+        c.font = { name: FONT, size: 10, bold: true, color: { argb: C.ink } };
+        c.border = allBorders;
         c.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
       }
-      const lbl = tr.getCell(1);
-      lbl.value = 'TOTAL';
-      lbl.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
 
+      // Label + visible-row counter
+      const lbl = tr.getCell(1);
+      lbl.value = {
+        formula: `"TOTAL (" & SUBTOTAL(103,A${FIRST_DATA}:A${LAST_DATA}) & " rows shown)"`,
+        result: `TOTAL (${sorted.length} rows shown)`,
+      };
+      lbl.alignment = { vertical: 'middle', horizontal: 'left', indent: 0 };
+
+      // Qty total (visible rows only)
+      const qtyCell = tr.getCell(6);
+      qtyCell.value = {
+        formula: `SUBTOTAL(109,F${FIRST_DATA}:F${LAST_DATA})`,
+        result: totalQty,
+      };
+      qtyCell.numFmt = QTY;
+
+      // Peso Value total (visible rows only)
       const pesoCell = tr.getCell(7);
-      pesoCell.value = { formula: `SUM(G${FIRST_DATA}:G${LAST_DATA})`, result: totalPeso };
+      pesoCell.value = {
+        formula: `SUBTOTAL(109,G${FIRST_DATA}:G${LAST_DATA})`,
+        result: totalPeso,
+      };
       pesoCell.numFmt = PESO;
 
+      // Amount total (visible rows only)
       const amtCell = tr.getCell(9);
-      amtCell.value = { formula: `SUM(I${FIRST_DATA}:I${LAST_DATA})`, result: grandTotalAmount };
+      amtCell.value = {
+        formula: `SUBTOTAL(109,I${FIRST_DATA}:I${LAST_DATA})`,
+        result: grandTotalAmount,
+      };
       amtCell.numFmt = PESO;
 
-      // Footnote
+      // Footnote (small italic, like the sample)
       ws.mergeCells(TOTAL_ROW + 2, 1, TOTAL_ROW + 2, COLS);
       const note = ws.getCell(TOTAL_ROW + 2, 1);
       note.value =
         `${sorted.length} transaction${sorted.length !== 1 ? 's' : ''} ` +
         `(${sorted.length - arcmCount} AR Invoice, ${arcmCount} ARCM) · ` +
-        `ARCM = A/R Credit Memo, deducted from the total. Amounts in red are deductions or not counted.`;
+        `ARCM = A/R Credit Memo, deducted from the total. Amounts in red are deductions or not counted. ` +
+        `Totals update automatically when you filter or hide rows.`;
       note.font = { name: FONT, size: 9, italic: true, color: { argb: C.muted } };
+      note.alignment = { vertical: 'middle', horizontal: 'left' };
 
       // Filter dropdowns + print header
       ws.autoFilter = { from: { row: HEADER_ROW, column: 1 }, to: { row: LAST_DATA, column: COLS } };

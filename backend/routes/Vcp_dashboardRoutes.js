@@ -4,12 +4,19 @@ import { getPool } from '../services/databaseService.js';
 
 const router = express.Router();
 
+// Round half-up to 2 decimals. Use ONLY on final totals, never per row.
+// 1050.4225 → 1050.42 | 6844.8725 → 6844.87 | 6844.8788 → 6844.88
 const round2 = (n) => {
   const v = parseFloat(n) || 0;
   if (v === 0) return 0;
   const sign = v < 0 ? -1 : 1;
-  return sign * Number(Math.round(Number(Math.abs(v) + 'e2')) + 'e-2');
+  const abs = Number(Math.abs(v).toFixed(8));          // strips float noise
+  return sign * Number(Math.round(Number(abs + 'e2')) + 'e-2');
 };
+
+// Percentage rows with a peso value under ₱1 (e.g. 0.01, 0.11) are not counted.
+// Keep this equal to MIN_LINE_VALUE in the payout routes.
+const MIN_LINE_VALUE = 1;
 
 // In ALL routes, add better error handling for database pool
 const getDatabasePool = (databaseName) => {
@@ -1919,8 +1926,8 @@ res.json({
           const itemTransactions = transactions.filter(t => t.ItemCode === itemCode);
           return itemTransactions[itemTransactions.length - 1]?.CumulativeQtyForReb || 0;
         }).reduce((sum, qty) => sum + qty, 0) / totalQuota) * 100 : 0,
-      totalRebateAmount: rebateType === 'Incremental' || rebateType === 'Percentage' ? 
-        transactions.reduce((sum, t) => sum + (t.RebateAmount || 0), 0) : 0,
+        totalRebateAmount: rebateType === 'Incremental' || rebateType === 'Percentage' ? 
+          round2(transactions.reduce((sum, t) => sum + (t.RebateAmount || 0), 0)) : 0,
       dateRange: {
         startDate: startDate,
         endDate: endDate,
@@ -2188,7 +2195,7 @@ const processIncrementalTransactions = (
   // ─────────────────────────────────────────────────────────────────
   rawRows.forEach((r, index) => {
     const rate = periodRate.get(r.periodKey) || 0;
-    const rebateAmount = rate > 0 ? round2(r.qtyForReb * rate) : 0; // ✅ Added round2
+    const rebateAmount = rate > 0 ? r.qtyForReb * rate : 0;   // raw
 
     // Progress bar = how far the running total got toward the first tier
     let progress = 0;
@@ -2335,9 +2342,9 @@ const processPercentageTransactions = (sapTransactions, rebateItemMap, rebateDet
 
     const verdict = monthVerdict.get(monthKey) || { met: true, target: 0, achieved: 0, monthName };
 
-    // Raw amount for this line (what WOULD be earned)
     const gtotal          = sapTrans.Gtotal || 0;
-    const rawRebateAmount = round2((gtotal * percentage) / 100); // ✅ Added round2
+    const isDustRow       = Math.abs(gtotal) < MIN_LINE_VALUE;                // 0.01 / 0.11 style rows
+    const rawRebateAmount = isDustRow ? 0 : (gtotal * percentage) / 100;      // RAW, no per-row rounding
 
     // Quota gate: only credit rebate if the MONTH met its quota
     const finalRebateAmount = verdict.met ? rawRebateAmount : 0;
@@ -2390,7 +2397,7 @@ const processPercentageTransactions = (sapTransactions, rebateItemMap, rebateDet
       CalculationNote:
         itemName.toLowerCase().includes('25kg') && unitPerQty > 1
           ? `${actualSales} ÷ ${unitPerQty} = ${qtyForReb.toFixed(2)}`
-          : `${actualSales} × ${priceAfVAT.toFixed(2)} × ${percentage}% = ${rawRebateAmount.toFixed(2)}${
+          : `${actualSales} × ${priceAfVAT.toFixed(2)} × ${percentage}% = ${rawRebateAmount.toFixed(4)}${
               verdict.met ? '' : ' — quota not met, ₱0 credited'
             }`,
     });

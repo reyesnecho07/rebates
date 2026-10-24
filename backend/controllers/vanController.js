@@ -25,16 +25,16 @@ const getItems = async (req, res) => {
       const result = await pool
         .request()
         .query(`
-          SELECT
-            T0.ItemCode,
-            T0.ItemName,
-            T1.ItmsGrpNam
-          FROM
-            OITM T0
-            INNER JOIN OITB T1 ON T0.ItmsGrpCod = T1.ItmsGrpCod
-          WHERE
-            T0.ItemName <> ''
-          ORDER BY T0.ItemName
+        SELECT
+          T0.ItemCode,
+          T0.ItemName,
+          T0.SalUnitMsr,
+          T0.ItmsGrpCod,
+          T1.ItmsGrpNam,
+          T0.PurPackUn
+        FROM OITM T0
+        LEFT JOIN OITB T1 ON T0.ItmsGrpCod = T1.ItmsGrpCod
+        ORDER BY T0.ItemName
         `);
       console.log(`🟩 VAN Items: ${result.recordset.length} records`);
       return result.recordset;
@@ -57,7 +57,8 @@ const getCustomers = async (req, res) => {
             T0.CardCode,
             T0.CardName,
             T1.GroupName,
-            T2.SlpName
+            T2.SlpName,
+            T0.Area 
           FROM
             OCRD T0  
             INNER JOIN OCRG T1 ON T0.GroupCode = T1.GroupCode 

@@ -1,5 +1,6 @@
 // src/components/rebate/CustomerSelectionModal.jsx
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Search, CheckSquare, Square, Check, Users, Filter } from 'lucide-react';
 import Loading from "../../components/common/Loading";
 
@@ -37,6 +38,10 @@ const DASH_FONT = `
   .dash-pop { animation: dash-pop 0.2s cubic-bezier(0.16,1,0.3,1); }
 `;
 
+const POPUP_WIDTH = 320;
+const POPUP_EST_HEIGHT = 380;
+const POPUP_GAP = 6;
+
 const CustomerSelectionModal = ({
   isOpen,
   onClose,
@@ -54,13 +59,18 @@ const CustomerSelectionModal = ({
   const [isConfirming, setIsConfirming] = useState(false);
   const [displayCount, setDisplayCount] = useState(50);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [filterPopupPos, setFilterPopupPos] = useState({ top: 0, left: 0 });
+
   const searchTimeoutRef = useRef(null);
   const observerRef = useRef(null);
   const loadingTriggerRef = useRef(null);
   const filterRef = useRef(null);
+  const filterPopupRef = useRef(null);
+  const modalRef = useRef(null);
 
   const [selectedGroup, setSelectedGroup] = useState('');
   const [selectedSlp, setSelectedSlp] = useState('');
+  const [selectedArea, setSelectedArea] = useState('');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
 
   const customerMap = useMemo(() => {
@@ -70,8 +80,16 @@ const CustomerSelectionModal = ({
       const name = customer.CardName || customer.name || customer.label;
       const groupName = customer.GroupName || customer.groupName || '';
       const slpName = customer.SlpName || customer.slpName || '';
+      const area = customer.AreaName || customer.Area || customer.area || '';
       if (id) {
-        map.set(id, { ...customer, _id: id, _name: name, _groupName: groupName, _slpName: slpName });
+        map.set(id, {
+          ...customer,
+          _id: id,
+          _name: name,
+          _groupName: groupName,
+          _slpName: slpName,
+          _area: area,
+        });
       }
     });
     return map;
@@ -91,10 +109,17 @@ const CustomerSelectionModal = ({
     return Array.from(slps).sort();
   }, [customersWithIds]);
 
+  const uniqueAreas = useMemo(() => {
+    const areas = new Set();
+    customersWithIds.forEach(customer => { if (customer._area) areas.add(customer._area); });
+    return Array.from(areas).sort();
+  }, [customersWithIds]);
+
   const filteredCustomers = useMemo(() => {
     let results = customersWithIds;
     if (selectedGroup) results = results.filter(customer => customer._groupName === selectedGroup);
     if (selectedSlp)   results = results.filter(customer => customer._slpName === selectedSlp);
+    if (selectedArea)  results = results.filter(customer => customer._area === selectedArea);
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase().trim();
       if (term.length < 2 && searchTerm.length > 0) return [];
@@ -104,7 +129,7 @@ const CustomerSelectionModal = ({
       );
     }
     return results;
-  }, [customersWithIds, searchTerm, selectedGroup, selectedSlp]);
+  }, [customersWithIds, searchTerm, selectedGroup, selectedSlp, selectedArea]);
 
   const displayedCustomers = useMemo(() => filteredCustomers.slice(0, displayCount), [filteredCustomers, displayCount]);
   const hasMore = useMemo(() => filteredCustomers.length > displayCount, [filteredCustomers.length, displayCount]);
@@ -114,6 +139,7 @@ const CustomerSelectionModal = ({
       setDisplayCount(50);
       setSelectedGroup('');
       setSelectedSlp('');
+      setSelectedArea('');
       setIsFilterOpen(false);
       setTimeout(() => {
         const initialSelected = new Set();
@@ -127,14 +153,6 @@ const CustomerSelectionModal = ({
       }, 0);
     }
   }, [isOpen, selectedCustomers]);
-
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (filterRef.current && !filterRef.current.contains(event.target)) setIsFilterOpen(false);
-    };
-    if (isFilterOpen) document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isFilterOpen]);
 
   useEffect(() => {
     if (filteredCustomers.length === 0) { setIsSelectAllChecked(false); return; }
@@ -159,7 +177,13 @@ const CustomerSelectionModal = ({
 
   const handleGroupChange = useCallback((e) => { setSelectedGroup(e.target.value); setDisplayCount(50); }, []);
   const handleSlpChange   = useCallback((e) => { setSelectedSlp(e.target.value);   setDisplayCount(50); }, []);
-  const clearFilters      = useCallback(() => { setSelectedGroup(''); setSelectedSlp(''); setDisplayCount(50); }, []);
+  const handleAreaChange  = useCallback((e) => { setSelectedArea(e.target.value);  setDisplayCount(50); }, []);
+  const clearFilters      = useCallback(() => {
+    setSelectedGroup('');
+    setSelectedSlp('');
+    setSelectedArea('');
+    setDisplayCount(50);
+  }, []);
   const applyFilters      = useCallback(() => { setIsFilterOpen(false); }, []);
 
   const loadMore = useCallback(() => {
@@ -191,6 +215,65 @@ const CustomerSelectionModal = ({
       if (observerRef.current) observerRef.current.disconnect();
     };
   }, []);
+
+  /* ─── Filter popup positioning (portal + smart flip) ─────────────────── */
+  const computeFilterPopupPosition = useCallback(() => {
+    if (!filterRef.current) return null;
+    const rect = filterRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom - POPUP_GAP;
+    const spaceAbove = rect.top - POPUP_GAP;
+
+    const modalRect = modalRef.current?.getBoundingClientRect();
+    const modalSpaceBelow = modalRect ? modalRect.bottom - rect.bottom - POPUP_GAP : Infinity;
+
+    // If the modal can't fit the popup below, open ABOVE the button so it's never cut.
+    const openAbove = modalSpaceBelow < POPUP_EST_HEIGHT && spaceAbove > spaceBelow;
+
+    const left = Math.max(8, Math.min(rect.right - POPUP_WIDTH, window.innerWidth - POPUP_WIDTH - 8));
+    const top = openAbove
+      ? Math.max(8, rect.top - POPUP_GAP - POPUP_EST_HEIGHT)
+      : rect.bottom + POPUP_GAP;
+
+    return { top, left };
+  }, []);
+
+  const handleFilterToggle = useCallback(() => {
+    if (!isFilterOpen) {
+      const pos = computeFilterPopupPosition();
+      if (pos) setFilterPopupPos(pos);
+      setIsFilterOpen(true);
+    } else {
+      setIsFilterOpen(false);
+    }
+  }, [isFilterOpen, computeFilterPopupPosition]);
+
+  useEffect(() => {
+    if (!isFilterOpen) return;
+    const handler = () => {
+      const pos = computeFilterPopupPosition();
+      if (pos) setFilterPopupPos(pos);
+    };
+    window.addEventListener('resize', handler);
+    window.addEventListener('scroll', handler, true);
+    return () => {
+      window.removeEventListener('resize', handler);
+      window.removeEventListener('scroll', handler, true);
+    };
+  }, [isFilterOpen, computeFilterPopupPosition]);
+
+  // Click outside — checks the button AND the portaled popup
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (
+        filterRef.current && !filterRef.current.contains(event.target) &&
+        filterPopupRef.current && !filterPopupRef.current.contains(event.target)
+      ) {
+        setIsFilterOpen(false);
+      }
+    };
+    if (isFilterOpen) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isFilterOpen]);
 
   const toggleSelectAll = useCallback(() => {
     requestAnimationFrame(() => {
@@ -314,6 +397,7 @@ const CustomerSelectionModal = ({
       )}
 
       <div
+        ref={modalRef}
         className="dash-glass dash-pop rounded-[28px] w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden"
         style={{
           background: K.glassDeep,
@@ -375,95 +459,23 @@ const CustomerSelectionModal = ({
 
             <div className="relative" ref={filterRef}>
               <button
-                onClick={() => setIsFilterOpen(!isFilterOpen)}
+                onClick={handleFilterToggle}
                 disabled={isConfirming}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-full text-xs transition-all dash-glass"
-                style={isFilterOpen || selectedGroup || selectedSlp
+                style={isFilterOpen || selectedGroup || selectedSlp || selectedArea
                   ? { background: `${APPLE.blue}1c`, border: `1px solid ${APPLE.blue}55`, color: APPLE.blue }
                   : { background: K.chipBg, border: `1px solid ${K.hairline}`, color: K.muted }
                 }
               >
                 <Filter className="w-3.5 h-3.5" />
                 <span>Filter</span>
-                {(selectedGroup || selectedSlp) && (
+                {(selectedGroup || selectedSlp || selectedArea) && (
                   <span className="ml-1 px-1.5 py-0.5 rounded-full text-xs font-semibold"
                     style={{ background: `${APPLE.blue}1c`, color: APPLE.blue }}>
-                    {(selectedGroup ? 1 : 0) + (selectedSlp ? 1 : 0)}
+                    {(selectedGroup ? 1 : 0) + (selectedSlp ? 1 : 0) + (selectedArea ? 1 : 0)}
                   </span>
                 )}
               </button>
-
-              {isFilterOpen && (
-                <div
-                  className="dash-glass dash-pop absolute right-0 top-full mt-1 w-80 p-4 rounded-2xl z-10"
-                  style={{ background: K.glassDeep, border: `1px solid ${K.rim}`, boxShadow: K.shadow }}
-                >
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold" style={{ color: K.ink }}>Filter Customers</h3>
-                      <button
-                        onClick={() => setIsFilterOpen(false)}
-                        className="w-7 h-7 rounded-full flex items-center justify-center transition-colors"
-                        style={{ background: K.chipBg, color: K.muted }}
-                        onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hairline; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = K.chipBg; }}
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium mb-1.5" style={{ color: K.muted }}>Customer Group</label>
-                      <select
-                        value={selectedGroup}
-                        onChange={handleGroupChange}
-                        disabled={isConfirming}
-                        className="w-full px-3 py-2 rounded-xl text-xs focus:outline-none dash-glass"
-                        style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}
-                      >
-                        <option value="">All Groups</option>
-                        {uniqueGroups.map(group => <option key={group} value={group}>{group}</option>)}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium mb-1.5" style={{ color: K.muted }}>Sales Person</label>
-                      <select
-                        value={selectedSlp}
-                        onChange={handleSlpChange}
-                        disabled={isConfirming}
-                        className="w-full px-3 py-2 rounded-xl text-xs focus:outline-none dash-glass"
-                        style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}
-                      >
-                        <option value="">All Sales Persons</option>
-                        {uniqueSlps.map(slp => <option key={slp} value={slp}>{slp}</option>)}
-                      </select>
-                    </div>
-
-                    <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: K.hairline }}>
-                      <button
-                        onClick={clearFilters}
-                        disabled={isConfirming}
-                        className="px-3 py-1.5 text-xs rounded-full transition-all"
-                        style={{ color: K.muted }}
-                        onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.chipBg; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = 'transparent'; }}
-                      >
-                        Clear All
-                      </button>
-                      <button
-                        onClick={applyFilters}
-                        className="px-4 py-1.5 text-xs rounded-full text-white font-medium transition-all"
-                        style={{ background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`, boxShadow: `0 4px 12px -4px ${APPLE.blue}88` }}
-                        onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
-                        onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
-                      >
-                        Apply Filters
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -488,7 +500,7 @@ const CustomerSelectionModal = ({
               </span>
             </button>
 
-            {(selectedGroup || selectedSlp) && (
+            {(selectedGroup || selectedSlp || selectedArea) && (
               <div className="flex items-center gap-1.5">
                 <span className="text-xs" style={{ color: K.faint }}>|</span>
                 {selectedGroup && (
@@ -496,6 +508,15 @@ const CustomerSelectionModal = ({
                     style={{ background: K.chipBg, color: K.muted }}>
                     Group: {selectedGroup}
                     <button onClick={(e) => { e.stopPropagation(); setSelectedGroup(''); }} className="ml-1" style={{ color: K.faint }}>
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                )}
+                {selectedArea && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs"
+                    style={{ background: K.chipBg, color: K.muted }}>
+                    Area: {selectedArea}
+                    <button onClick={(e) => { e.stopPropagation(); setSelectedArea(''); }} className="ml-1" style={{ color: K.faint }}>
                       <X className="w-3 h-3" />
                     </button>
                   </span>
@@ -565,6 +586,106 @@ const CustomerSelectionModal = ({
           </div>
         </div>
       </div>
+
+      {/* ── Filter popup — rendered via portal so it never gets clipped ── */}
+      {isFilterOpen && createPortal(
+        <div
+          ref={filterPopupRef}
+          className="dash-page dash-glass dash-pop rounded-2xl p-4 dash-scroll"
+          style={{
+            position: 'fixed',
+            top: filterPopupPos.top,
+            left: filterPopupPos.left,
+            width: POPUP_WIDTH,
+            maxHeight: `calc(100vh - 16px)`,
+            overflowY: 'auto',
+            zIndex: 10000,
+            background: K.glassDeep,
+            border: `1px solid ${K.rim}`,
+            boxShadow: K.shadow,
+          }}
+        >
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold" style={{ color: K.ink }}>Filter Customers</h3>
+              <button
+                onClick={() => setIsFilterOpen(false)}
+                className="w-7 h-7 rounded-full flex items-center justify-center transition-colors"
+                style={{ background: K.chipBg, color: K.muted }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hairline; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = K.chipBg; }}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: K.muted }}>Customer Group</label>
+              <select
+                value={selectedGroup}
+                onChange={handleGroupChange}
+                disabled={isConfirming}
+                className="w-full px-3 py-2 rounded-xl text-xs focus:outline-none dash-glass"
+                style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}
+              >
+                <option value="">All Groups</option>
+                {uniqueGroups.map(group => <option key={group} value={group}>{group}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: K.muted }}>Area</label>
+              <select
+                value={selectedArea}
+                onChange={handleAreaChange}
+                disabled={isConfirming}
+                className="w-full px-3 py-2 rounded-xl text-xs focus:outline-none dash-glass"
+                style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}
+              >
+                <option value="">All Areas</option>
+                {uniqueAreas.map(area => <option key={area} value={area}>{area}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: K.muted }}>Sales Person</label>
+              <select
+                value={selectedSlp}
+                onChange={handleSlpChange}
+                disabled={isConfirming}
+                className="w-full px-3 py-2 rounded-xl text-xs focus:outline-none dash-glass"
+                style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}
+              >
+                <option value="">All Sales Persons</option>
+                {uniqueSlps.map(slp => <option key={slp} value={slp}>{slp}</option>)}
+              </select>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: K.hairline }}>
+              <button
+                onClick={clearFilters}
+                disabled={isConfirming}
+                className="px-3 py-1.5 text-xs rounded-full transition-all"
+                style={{ color: K.muted }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.chipBg; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = 'transparent'; }}
+              >
+                Clear All
+              </button>
+              <button
+                onClick={applyFilters}
+                className="px-4 py-1.5 text-xs rounded-full text-white font-medium transition-all"
+                style={{ background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`, boxShadow: `0 4px 12px -4px ${APPLE.blue}88` }}
+                onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
+                onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+              >
+                Apply Filters
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };
