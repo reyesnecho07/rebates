@@ -7,43 +7,13 @@ import {
   User, Settings, LayoutDashboard, DollarSign, ClipboardList, Shield, Layout, FileCog,
 } from 'lucide-react';
 import axios from 'axios';
-import { useTheme } from '../context/ThemeContext';
 import SideBarError from '../components/common/SideBarError';
 import accessControlService from '../services/accessControlService';
 
-/* ─── Apple system colour language ───────────────────────────────────────── */
-const APPLE = {
-  blue:   "#0A84FF",
-  purple: "#BF5AF2",
-  red:    "#FF453A",
-  orange: "#FF9F0A",
-  green:  "#32D74B",
-  gray:   "#8E8E93",
-};
+/* ── Design system ──────────────────────────────────────────────── */
+import { PALETTE, useTokens } from '../design-system';
 
-const tokens = (isDark) => ({
-  ink:       isDark ? "#F2F2F7" : "#1C1C1E",
-  muted:     isDark ? "#98989F" : "#6E6E73",
-  faint:     isDark ? "#68686D" : "#AEAEB2",
-  glass:     isDark ? "rgba(30,30,36,0.6)"   : "rgba(255,255,255,0.65)",
-  glassDeep: isDark ? "rgba(24,24,28,0.85)"  : "rgba(255,255,255,0.9)",
-  hairline:  isDark ? "rgba(255,255,255,0.08)" : "rgba(60,60,67,0.12)",
-  rim:       isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.8)",
-  chipBg:    isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
-  hover:     isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
-  shadow:    isDark ? "0 20px 50px -14px rgba(0,0,0,0.65)" : "0 20px 50px -18px rgba(30,41,79,0.18)",
-  bg:        isDark ? "#000000" : "#EEF1F7",
-});
-
-const FONT = `
-  .sb-page, .sb-page * { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif; }
-  .sb-glass { -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%); }
-  .sb-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
-  .sb-scroll::-webkit-scrollbar-thumb { background: rgba(142,142,147,0.35); border-radius: 999px; }
-  .sb-scroll::-webkit-scrollbar-track { background: transparent; }
-`;
-
-const BASE_URL              = 'http://192.168.100.193:3009/api';
+const BASE_URL              = '/api';
 const POLL_INTERVAL         = 30_000;
 const CACHE_KEY             = 'sidebar_nav_cache';
 const CACHE_TIMESTAMP_KEY   = 'sidebar_nav_cache_timestamp';
@@ -54,11 +24,7 @@ const ALLOWED_DB_NAMES      = new Set(['VAN_DB', 'NEXCHEM_DB', 'VCP_DB']);
 const REBATE_GROUP_KEYWORDS = ['rebate'];
 const USER_DB_ORDER_PREFIX  = 'databaseOrder_';
 
-/* ─── Hardcoded primary items — EXACT order is preserved ─────────────────────
-   These are always injected at the top of each DB's item list, in the order
-   below. Items already supplied by the API with the same `routePath` are
-   skipped, so no duplicates ever appear.
-   ──────────────────────────────────────────────────────────────────────────── */
+/* ─── Hardcoded primary items — EXACT order is preserved ──────────── */
 const HARDCODED_PRIMARY_ITEMS = {
   NEXCHEM_DB: [
     { navItemId: 'nexchem-01-dashboard',   navItemName: 'Dashboard',       routePath: '/Nexchem_Dashboard',       icon: Home,       order: 1 },
@@ -66,9 +32,6 @@ const HARDCODED_PRIMARY_ITEMS = {
     { navItemId: 'nexchem-03-rebprog',     navItemName: 'Rebate Program',  routePath: '/Nexchem_RebatePrograms',  icon: FileText,   order: 3 },
     { navItemId: 'nexchem-04-status',      navItemName: 'Customer Summary',  routePath: '/Nexchem_CustomerSummary',   icon: BarChart2,  order: 4 },
     { navItemId: 'nexchem-05-reports',     navItemName: 'Reports',         routePath: '/Nexchem_Reports',         icon: BarChart2,  order: 5 },
-    //{ navItemId: 'nexchem-06-items',       navItemName: 'Item Records',    routePath: '/Nexchem_ItemRecords',     icon: Package,    order: 6 },
-    //{ navItemId: 'nexchem-07-sales',       navItemName: 'Sales Employee',  routePath: '/Nexchem_SalesEmployee',   icon: User,       order: 7 },
-    //{ navItemId: 'nexchem-08-customers',   navItemName: 'Customer Records',routePath: '/Nexchem_CustomerRecords', icon: Users,      order: 8 },
   ],
   VAN_DB: [
     { navItemId: 'van-01-dashboard',   navItemName: 'Dashboard',        routePath: '/Van_Dashboard',       icon: Home,       order: 1 },
@@ -76,9 +39,6 @@ const HARDCODED_PRIMARY_ITEMS = {
     { navItemId: 'van-03-rebprog',     navItemName: 'Rebate Program',   routePath: '/Van_RebatePrograms',  icon: FileText,   order: 3 },
     { navItemId: 'van-04-status',      navItemName: 'Customer Summary',   routePath: '/Van_CustomerSummary',   icon: BarChart2,  order: 4 },
     { navItemId: 'van-05-reports',     navItemName: 'Reports',          routePath: '/Van_Reports',         icon: BarChart2,  order: 5 },
-   //{ navItemId: 'van-06-items',       navItemName: 'Item Records',     routePath: '/Van_ItemRecords',     icon: Package,    order: 6 },
-   // { navItemId: 'van-07-sales',       navItemName: 'Sales Employee',   routePath: '/Van_SalesEmployee',   icon: User,       order: 7 },
-    //{ navItemId: 'van-08-customers',   navItemName: 'Customer Records', routePath: '/Van_CustomerRecords', icon: Users,      order: 8 },
   ],
   VCP_DB: [
     { navItemId: 'vcp-01-dashboard',   navItemName: 'Dashboard',        routePath: '/Vcp_Dashboard',       icon: Home,       order: 1 },
@@ -86,9 +46,6 @@ const HARDCODED_PRIMARY_ITEMS = {
     { navItemId: 'vcp-03-rebprog',     navItemName: 'Rebate Program',   routePath: '/Vcp_RebatePrograms',  icon: FileText,   order: 3 },
     { navItemId: 'vcp-04-status',      navItemName: 'Customer Summary',   routePath: '/Vcp_CustomerSummary',   icon: BarChart2,  order: 4 },
     { navItemId: 'vcp-05-reports',     navItemName: 'Reports',          routePath: '/Vcp_Reports',         icon: BarChart2,  order: 5 },
-    //{ navItemId: 'vcp-06-items',       navItemName: 'Item Records',     routePath: '/Vcp_ItemRecords',     icon: Package,    order: 6 },
-   // { navItemId: 'vcp-07-sales',       navItemName: 'Sales Employee',   routePath: '/Vcp_SalesEmployee',   icon: User,       order: 7 },
-    //{ navItemId: 'vcp-08-customers',   navItemName: 'Customer Records', routePath: '/Vcp_CustomerRecords', icon: Users,      order: 8 },
   ],
 };
 
@@ -96,7 +53,7 @@ function isRebateGroup(groupName = '') {
   return REBATE_GROUP_KEYWORDS.some(k => groupName.toLowerCase().includes(k));
 }
 
-// ── Auth helpers ──────────────────────────────────────────────────────────────
+// ── Auth helpers ──────────────────────────────────────────────────
 function getCurrentUser() {
   try { return JSON.parse(localStorage.getItem('currentUser') || 'null') || null; }
   catch { return null; }
@@ -130,7 +87,7 @@ function loadUserDbOrder() {
   } catch { return null; }
 }
 
-// ── Access: batch-fetch canView for every leaf route ─────────────────────────
+// ── Access: batch-fetch canView for every leaf route ──────────────
 function collectRoutePaths(items, out = new Set()) {
   for (const item of items) {
     if (item.routePath) out.add(item.routePath);
@@ -176,7 +133,7 @@ function stampAccess(items, accessMap) {
   }));
 }
 
-// ── Icon resolver ─────────────────────────────────────────────────────────────
+// ── Icon resolver ─────────────────────────────────────────────────
 const ICON_RULES = [
   { keyword: 'dashboard',     icon: Home           },
   { keyword: 'rebatesetup',   icon: FileCog        },
@@ -204,7 +161,7 @@ function getIcon(str = '') {
   return match ? match.icon : FileText;
 }
 
-// ── Hardcoded icon lookup (used when restoring from cache) ────────────────────
+// ── Hardcoded icon lookup (used when restoring from cache) ────────
 function getHardcodedIcon(navItemId) {
   for (const dbName of Object.keys(HARDCODED_PRIMARY_ITEMS)) {
     const found = HARDCODED_PRIMARY_ITEMS[dbName].find(h => h.navItemId === navItemId);
@@ -213,22 +170,22 @@ function getHardcodedIcon(navItemId) {
   return null;
 }
 
-// ── Static visual config ──────────────────────────────────────────────────────
+// ── Static visual config ──────────────────────────────────────────
 const DB_VISUAL = {
   VAN_DB: {
     id: 'van', pathPrefix: '/Van_', dashboardPath: '/Van_Dashboard',
     gradient: 'linear-gradient(155deg, #5AC8FA 0%, #0A84FF 100%)',
-    dotColor: APPLE.blue,
+    dotColor: PALETTE.blue,
   },
   NEXCHEM_DB: {
     id: 'nexchem', pathPrefix: '/Nexchem_', dashboardPath: '/Nexchem_Dashboard',
     gradient: 'linear-gradient(155deg, #BF5AF2 0%, #8B3FD1 100%)',
-    dotColor: APPLE.purple,
+    dotColor: PALETTE.purple,
   },
   VCP_DB: {
     id: 'vcp', pathPrefix: '/Vcp_', dashboardPath: '/Vcp_Dashboard',
     gradient: 'linear-gradient(155deg, #32D74B 0%, #1D9E3F 100%)',
-    dotColor: APPLE.green,
+    dotColor: PALETTE.green,
   },
 };
 function getVisual(dbName) {
@@ -240,7 +197,7 @@ function getVisual(dbName) {
   return {
     id: safe.toLowerCase(), pathPrefix, dashboardPath: `${pathPrefix}Dashboard`,
     gradient: 'linear-gradient(155deg, #8E8E93 0%, #58585B 100%)',
-    dotColor: APPLE.gray,
+    dotColor: PALETTE.gray,
   };
 }
 
@@ -254,7 +211,7 @@ function attachIcons(items) {
   }));
 }
 
-// ── Filter helpers ────────────────────────────────────────────────────────────
+// ── Filter helpers ────────────────────────────────────────────────
 function filterItems(items) {
   return items.reduce((acc, item) => {
     if (item.children?.length) {
@@ -291,7 +248,7 @@ function groupByTag(dbs) {
   return Object.fromEntries(Object.entries(map).filter(([, v]) => v.length > 0));
 }
 
-// ── Build raw nav tree ────────────────────────────────────────────────────────
+// ── Build raw nav tree ────────────────────────────────────────────
 function buildSidebarData(dbRows, navStructure) {
   return dbRows
     .filter(row => {
@@ -338,7 +295,7 @@ function serialise(dbs) {
   ).sort().join('||');
 }
 
-// ── Cache helpers ─────────────────────────────────────────────────────────────
+// ── Cache helpers ─────────────────────────────────────────────────
 function stripIcons(items) {
   return items.map(({ icon, ...rest }) => ({
     ...rest,
@@ -401,17 +358,13 @@ function saveDropdownStates(states) {
   try { localStorage.setItem(DROPDOWN_STATE_KEY, JSON.stringify(states)); } catch {}
 }
 
-/* ─── Inject hardcoded primary items into a DB, respecting user access.
-   Hardcoded items are added as a dedicated "Rebate Primary" group so they
-   flow through the normal filterGroups → filterDatabases pipeline. Items the
-   user cannot view (`accessMap.get(routePath) !== true`) are dropped. ────── */
+/* ─── Inject hardcoded primary items into a DB, respecting access ── */
 function injectHardcodedPrimaryItems(db, accessMap) {
   const hardcoded = HARDCODED_PRIMARY_ITEMS[db.name] || [];
   if (!hardcoded.length) return db;
 
   const hardcodedPaths = new Set(hardcoded.map(h => h.routePath));
 
-  // Remove any API items whose routePath collides with a hardcoded one
   const cleanedGroups = db.groups.map(group => ({
     ...group,
     items: (group.items || []).filter(
@@ -419,7 +372,6 @@ function injectHardcodedPrimaryItems(db, accessMap) {
     ),
   }));
 
-  // Only keep hardcoded items the current user is allowed to view
   const accessible = hardcoded
     .filter(h => accessMap.get(h.routePath) === true)
     .sort((a, b) => a.order - b.order)
@@ -440,7 +392,7 @@ function injectHardcodedPrimaryItems(db, accessMap) {
 
   const hardcodedGroup = {
     groupId:   `${db.id}__primary`,
-    groupName: 'Rebate Primary',   // contains "rebate" → isRebateGroup === true
+    groupName: 'Rebate Primary',
     sortOrder: -1,
     items:     accessible,
   };
@@ -448,9 +400,9 @@ function injectHardcodedPrimaryItems(db, accessMap) {
   return { ...db, groups: [hardcodedGroup, ...cleanedGroups] };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
 // NavItem
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
 const NavItem = ({ item, depth = 0, dotColor, isDark, location, K }) => {
   const visibleChildren = item.children || [];
   const hasChildren     = visibleChildren.length > 0;
@@ -535,9 +487,9 @@ const NavItem = ({ item, depth = 0, dotColor, isDark, location, K }) => {
   );
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
 // DBBlock
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
 const DBBlock = ({
   db, isDark, location, singleDb, K,
   getDropdownState, getDotColor,
@@ -624,9 +576,9 @@ const DBBlock = ({
   );
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
 // TagBlock
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
 const TagBlock = ({
   tagName, tagDbs, isDark, location, singleDb, K,
   getDropdownState, getDotColor,
@@ -645,23 +597,21 @@ const TagBlock = ({
   );
 };
 
-// ── Small syncing indicator ───────────────────────────────────────────────────
+// ── Small syncing indicator ───────────────────────────────────────
 const SyncDot = () => (
   <span
     title="Syncing navigation…"
     className="inline-block w-1.5 h-1.5 rounded-full animate-pulse"
-    style={{ background: APPLE.blue }}
+    style={{ background: PALETTE.blue }}
   />
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
 // Sidebar
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
 const Sidebar = ({ collapsed, setCollapsed, userDbOrder }) => {
-  const location               = useLocation();
-  const { theme, updateTheme } = useTheme();
-  const isDark                 = theme === 'dark';
-  const K                      = tokens(isDark);
+  const location = useLocation();
+  const { theme, isDark, updateTheme, K } = useTokens();
 
   const [activeDatabases, setActiveDatabases] = useState(() => {
     const { data } = loadCachedNavData();
@@ -687,7 +637,7 @@ const Sidebar = ({ collapsed, setCollapsed, userDbOrder }) => {
     if (data?.length) prevSerialRef.current = serialise(data);
   }, []); // eslint-disable-line
 
-  // ── Load theme ─────────────────────────────────────────────────────────────
+  // ── Load theme ─────────────────────────────────────────────────
   useEffect(() => {
     const load = async () => {
       try {
@@ -707,7 +657,7 @@ const Sidebar = ({ collapsed, setCollapsed, userDbOrder }) => {
     load();
   }, []); // eslint-disable-line
 
-  // ── Core fetch ─────────────────────────────────────────────────────────────
+  // ── Core fetch ─────────────────────────────────────────────────
   const fetchAll = useCallback(async (isBackground = false) => {
     if (!isMountedRef.current) return;
 
@@ -775,7 +725,6 @@ const Sidebar = ({ collapsed, setCollapsed, userDbOrder }) => {
         })),
       }));
 
-      // Inject hardcoded primary items now (respecting accessMap), then filter.
       const withPrimary = stampedDbs.map(db => injectHardcodedPrimaryItems(db, accessMap));
       const built       = filterDatabases(withPrimary);
       const serial      = serialise(built);
@@ -888,19 +837,18 @@ const Sidebar = ({ collapsed, setCollapsed, userDbOrder }) => {
     WebkitBackdropFilter: "blur(28px) saturate(180%)",
   };
 
-  const asideClass = `sb-page sb-glass fixed top-0 left-0 h-screen border-r flex flex-col transition-all duration-500 z-50 ${
+  const asideClass = `ds-page ds-glass fixed top-0 left-0 h-screen border-r flex flex-col transition-all duration-500 z-50 ${
     collapsed ? 'w-20' : 'w-64'
   }`;
 
-  // ── Loading ────────────────────────────────────────────────────────────────
+  // ── Loading ────────────────────────────────────────────────────
   if (loading) {
     return (
       <aside className={asideClass} style={asideStyle}>
-        <style>{FONT}</style>
         <div className="flex flex-col items-center justify-center h-full gap-3">
           <div
             className="w-8 h-8 rounded-full border-4 animate-spin"
-            style={{ borderColor: `${APPLE.blue}33`, borderTopColor: APPLE.blue }}
+            style={{ borderColor: `${PALETTE.blue}33`, borderTopColor: PALETTE.blue }}
           />
           {!collapsed && <p className="text-xs" style={{ color: K.muted }}>Loading navigation…</p>}
         </div>
@@ -908,22 +856,20 @@ const Sidebar = ({ collapsed, setCollapsed, userDbOrder }) => {
     );
   }
 
-  // ── Error ──────────────────────────────────────────────────────────────────
+  // ── Error ──────────────────────────────────────────────────────
   if (fetchError && !visibleDatabases.length) {
     return (
       <aside className={asideClass} style={asideStyle}>
-        <style>{FONT}</style>
         <SideBarError error={fetchError} onRetry={handleRetry} collapsed={collapsed} isDark={isDark} />
       </aside>
     );
   }
 
-  // ── Main ───────────────────────────────────────────────────────────────────
+  // ── Main ───────────────────────────────────────────────────────
   return (
     <aside className={asideClass} style={asideStyle}>
-      <style>{FONT}</style>
 
-      {/* ── Header ──────────────────────────────────────────────────────────── */}
+      {/* ── Header ────────────────────────────────────────────── */}
       <div className="flex items-center justify-between px-4 py-3.5" style={{ borderBottom: `1px solid ${K.hairline}` }}>
         <div className={`flex items-center gap-3 transition-all duration-300 group ${collapsed ? 'justify-center w-full' : 'min-w-0 flex-1'}`}>
           <div className="relative w-8 h-8 flex-shrink-0">
@@ -967,8 +913,8 @@ const Sidebar = ({ collapsed, setCollapsed, userDbOrder }) => {
         )}
       </div>
 
-      {/* ── Nav list ────────────────────────────────────────────────────────── */}
-      <div className="flex-1 py-3 overflow-y-auto sb-scroll">
+      {/* ── Nav list ──────────────────────────────────────────── */}
+      <div className="flex-1 py-3 overflow-y-auto ds-scroll">
         {visibleDatabases.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full px-4 text-center gap-2">
             <Database className="w-8 h-8" style={{ color: K.faint }} />
@@ -1102,7 +1048,7 @@ const Sidebar = ({ collapsed, setCollapsed, userDbOrder }) => {
         )}
       </div>
 
-      {/* ── Footer ──────────────────────────────────────────────────────────── */}
+      {/* ── Footer ────────────────────────────────────────────── */}
       <div className="px-4 py-3" style={{ borderTop: `1px solid ${K.hairline}` }}>
         {!collapsed ? (
           <div className="flex flex-col items-center justify-center gap-0.5 py-1 rounded-lg px-2">

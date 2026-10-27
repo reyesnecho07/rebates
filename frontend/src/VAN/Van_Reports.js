@@ -1,4 +1,4 @@
-// Van_Reports.jsx — Rebate Sales Program Monitoring Report
+// src/pages/Van_Reports.jsx — Rebate Sales Program Monitoring Report
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import {
@@ -15,72 +15,22 @@ import { saveAs } from 'file-saver';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import AccessDenied from '../components/common/AccessDenied';
-import { useTheme } from '../context/ThemeContext';
 import { useComponentRegistration } from '../hooks/useComponentRegistration';
 import useAccessControl from '../hooks/useAccessControl';
 import vanLogo from '../assets/van.png';
+import { API_BASE, DB_NAME } from '../config/appConfig';
 
-const API_BASE  = 'http://192.168.100.193:3009/api';
-const DB_NAME   = 'USER';
+/* ── Design system ──────────────────────────────────────────────── */
+import { PALETTE, useTokens, DesignPage } from '../design-system';
+
 const REPORT_DB = 'VAN';
 
 /* ─── Paper geometry — 8.5 x 13 in (long bond / folio), LANDSCAPE ─────── */
-const PAPER_W_IN   = 13;      // landscape width  (long side)
-const PAPER_H_IN   = 8.5;     // landscape height (short side)
-const PAPER_W_PX   = Math.round(PAPER_W_IN * 96);   // 1248 px @ 96 dpi
-const PAPER_H_PX   = Math.round(PAPER_H_IN * 96);   // 816 px @ 96 dpi
-const PAGE_PAD_IN  = 0.15;    // breathing room on continuation pages
-
-/* ─── Apple system colour language ─────────────────────────────────────── */
-const APPLE = {
-  blue:   "#0A84FF",
-  purple: "#BF5AF2",
-  red:    "#FF453A",
-  orange: "#FF9F0A",
-  green:  "#32D74B",
-  gray:   "#8E8E93",
-};
-
-const dashTokens = (isDark) => ({
-  ink:       isDark ? "#F2F2F7" : "#1C1C1E",
-  muted:     isDark ? "#98989F" : "#6E6E73",
-  faint:     isDark ? "#68686D" : "#AEAEB2",
-  glass:     isDark ? "rgba(30,30,36,0.6)"   : "rgba(255,255,255,0.65)",
-  glassDeep: isDark ? "rgba(24,24,28,0.95)"  : "rgba(255,255,255,0.98)",
-  hairline:  isDark ? "rgba(255,255,255,0.08)" : "rgba(60,60,67,0.12)",
-  rim:       isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.8)",
-  chipBg:    isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
-  hover:     isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
-  shadow:    isDark ? "0 20px 50px -14px rgba(0,0,0,0.65)" : "0 20px 50px -18px rgba(30,41,79,0.18)",
-  bg:        isDark ? "#000000" : "#EEF1F7",
-});
-
-const DASH_FONT = `
-  .dash-page, .dash-page * { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif; }
-  .dash-glass { -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%); }
-  .dash-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
-  .dash-scroll::-webkit-scrollbar-thumb { background: rgba(142,142,147,0.4); border-radius: 999px; }
-  .dash-scroll::-webkit-scrollbar-track { background: transparent; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes dash-pop { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-  .dash-pop { animation: dash-pop 0.2s cubic-bezier(0.16,1,0.3,1); }
-  @keyframes fadeSlideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
-  @keyframes pulse-ring { 0% { box-shadow:0 0 0 0 rgba(10,132,255,0.35); } 70% { box-shadow:0 0 0 10px rgba(10,132,255,0); } 100%{ box-shadow:0 0 0 0 rgba(10,132,255,0); } }
-  .nx-card { animation: fadeSlideUp 0.3s ease both; }
-  .nx-btn-primary:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.05); }
-  .nx-btn-primary:active:not(:disabled) { transform: translateY(0); }
-  .nx-btn-secondary:hover:not(:disabled) { transform: translateY(-1px); }
-  .nx-input:focus { border-color: #0A84FF !important; box-shadow: 0 0 0 3px rgba(10,132,255,0.15); }
-`;
-
-const injectFonts = () => {
-  if (document.getElementById('nexchem-report-fonts')) return;
-  const link = document.createElement('link');
-  link.id   = 'nexchem-report-fonts';
-  link.rel  = 'stylesheet';
-  link.href = 'https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap';
-  document.head.appendChild(link);
-};
+const PAPER_W_IN   = 13;
+const PAPER_H_IN   = 8.5;
+const PAPER_W_PX   = Math.round(PAPER_W_IN * 96);
+const PAPER_H_PX   = Math.round(PAPER_H_IN * 96);
+const PAGE_PAD_IN  = 0.15;
 
 /* ─── Quarter helpers ───────────────────────────────────────────────────── */
 const QTR_NAMES  = ['1ST QUARTER','2ND QUARTER','3RD QUARTER','4TH QUARTER'];
@@ -91,7 +41,6 @@ const yFromDate  = (d) => new Date(d).getFullYear();
 const qLabel     = (q, y) => `${QTR_NAMES[q-1]} ${y} (${QTR_RANGES[q-1]})`;
 const qShort     = (q) => QTR_SHORT[q-1] || '';
 
-/* ─── Month name maps ──────────────────────────────────────────────────── */
 const HEADER_MONTHS = {
   JAN: 'JANUARY', FEB: 'FEBRUARY', MAR: 'MARCH',
   APR: 'APRIL',   MAY: 'MAY',      JUN: 'JUNE',
@@ -118,7 +67,6 @@ const sectionQuarterShort = (section) => {
   return qShort(Math.floor(idx / 3) + 1);
 };
 
-/* ─── Signatories ───────────────────────────────────────────────────────── */
 const SIGNATORIES = [
   { name: 'RAQUEL RODRIGUEZ',  title: 'Marketing Associate',        label: 'Prepared by:' },
   { name: 'TESSIE CADACIO',    title: 'Marketing Supervisor',       label: 'Checked by:' },
@@ -128,17 +76,13 @@ const SIGNATORIES = [
   { name: 'JERALD S. LO',      title: 'General Manager',            label: 'Approved by:' },
 ];
 
-/* ─── Number formatting ─────────────────────────────────────────────────── */
 const fmt    = (n) => (n == null || isNaN(n)) ? '' : Number(n).toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const fmtAmt = (n) => (n == null || isNaN(n) || n === 0) ? '' : `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
 const num    = (n) => (n == null || isNaN(n)) ? 0 : Number(n);
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   Report table constants — LIGHTER BORDERS, LIGHT-GRAY HEADERS
-   ═══════════════════════════════════════════════════════════════════════════ */
+/* ─── Report table style constants (used ONLY inside the printable PDF) ── */
 const BORDER_HEADER = '1px solid #d1d5db';
 const BORDER_DATA   = '1px solid #e5e7eb';
-
 const HEADER_BG  = '#E5E7EB';
 const HEADER_FG  = '#111827';
 const TOTAL_BG   = '#E5E7EB';
@@ -210,7 +154,7 @@ const calcQtrRebateAmount = (cust) => {
 };
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   ReportTable — single section
+   ReportTable — LAYOUT INTENTIONAL: ALL INLINE (used for PDF/PNG export)
    ═══════════════════════════════════════════════════════════════════════════ */
 const ReportTable = ({ section, idx: sectionIdx }) => {
   const {
@@ -239,7 +183,6 @@ const ReportTable = ({ section, idx: sectionIdx }) => {
   return (
     <table style={tableStyle({ marginBottom: sectionIdx > 0 ? '16px' : '0' })}>
       <thead>
-        {/* Row 1 */}
         <tr>
           <th rowSpan={2} style={thStyle({ width: '28px' })}>#</th>
           <th rowSpan={2} style={thStyle({ width: '150px', textAlign: 'left' })}>DEALERS NAME</th>
@@ -265,7 +208,6 @@ const ReportTable = ({ section, idx: sectionIdx }) => {
           )}
         </tr>
 
-        {/* Row 2 */}
         <tr>
           {items.map((_, ii) => (
             <React.Fragment key={`lbl-${ii}`}>
@@ -362,7 +304,6 @@ const ReportTable = ({ section, idx: sectionIdx }) => {
               );
             })}
 
-            {/* ── TOTAL ROW ── */}
             <tr>
               <td style={totalTdStyle({ textAlign: 'center' })} />
               <td style={totalTdStyle({ textAlign: 'left' })} />
@@ -370,12 +311,8 @@ const ReportTable = ({ section, idx: sectionIdx }) => {
               {items.map((_, ii) => (
                 <React.Fragment key={`tot-${ii}`}>
                   {isIncremental
-                    ? ranges.map((_, ri) => (
-                        <td key={`trv-${ri}`} style={totalTdStyle({})} />
-                      ))
-                    : quarterMonths.map((_, mi) => (
-                        <td key={`tmq-${mi}`} style={totalTdStyle({})} />
-                      ))
+                    ? ranges.map((_, ri) => (<td key={`trv-${ri}`} style={totalTdStyle({})} />))
+                    : quarterMonths.map((_, mi) => (<td key={`tmq-${mi}`} style={totalTdStyle({})} />))
                   }
                   {quarterMonths.map((_, mi) => (
                     <td key={`tma-${mi}`} style={totalTdStyle({})} />
@@ -402,9 +339,6 @@ const ReportTable = ({ section, idx: sectionIdx }) => {
   );
 };
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   MergedReportTable
-   ═══════════════════════════════════════════════════════════════════════════ */
 const MergedReportTable = ({ sections }) => {
   const customerOrder = [];
   const customerMap   = new Map();
@@ -579,16 +513,10 @@ const MergedReportTable = ({ sections }) => {
             return (
               <React.Fragment key={`tot-${sec.rebateCode}`}>
                 {sec.isInc
-                  ? sec.ranges.map((_, ri) => (
-                      <td key={`trv-${ri}`} style={totalTdStyle({})} />
-                    ))
-                  : sec.quarterMonths.map((_, mi) => (
-                      <td key={`tmq-${mi}`} style={totalTdStyle({})} />
-                    ))
+                  ? sec.ranges.map((_, ri) => (<td key={`trv-${ri}`} style={totalTdStyle({})} />))
+                  : sec.quarterMonths.map((_, mi) => (<td key={`tmq-${mi}`} style={totalTdStyle({})} />))
                 }
-                {sec.quarterMonths.map((_, mi) => (
-                  <td key={`tma-${mi}`} style={totalTdStyle({})} />
-                ))}
+                {sec.quarterMonths.map((_, mi) => (<td key={`tma-${mi}`} style={totalTdStyle({})} />))}
                 <td style={totalTdStyle({ textAlign: 'right' })}>
                   {t.amountTotal > 0 ? fmtAmt(t.amountTotal) : ''}
                 </td>
@@ -631,7 +559,7 @@ const sliceCanvas = (src, sy, sh) => {
   return out;
 };
 
-/* ─── PrintableReport — one page canvas: 8.5×13in landscape ───────────── */
+/* ─── PrintableReport — LAYOUT INTENTIONAL: ALL INLINE (PDF/PNG canvas) ── */
 const PrintableReport = React.forwardRef(({ sections, userName }, ref) => {
   if (!sections || !sections.length) return null;
   const first = sections[0];
@@ -659,8 +587,8 @@ const PrintableReport = React.forwardRef(({ sections, userName }, ref) => {
     <div
       ref={ref}
       style={{
-        width: `${PAPER_W_PX}px`,          // 13 in
-        minHeight: `${PAPER_H_PX}px`,      // 8.5 in
+        width: `${PAPER_W_PX}px`,
+        minHeight: `${PAPER_H_PX}px`,
         background: '#ffffff',
         padding: '28px 32px',
         boxSizing: 'border-box',
@@ -669,7 +597,6 @@ const PrintableReport = React.forwardRef(({ sections, userName }, ref) => {
         flexDirection: 'column',
       }}
     >
-      {/* ── HEADER BLOCK ─────────────────────────────────────────────── */}
       <div data-pdf="header" style={{ flex: '0 0 auto' }}>
         <div style={{ textAlign: 'left', marginBottom: '-20px', marginTop: '-40px', marginLeft: '-20px' }}>
           <img src={vanLogo} alt="VAN" style={{ width: '100px', height: 'auto', objectFit: 'contain' }} />
@@ -686,7 +613,6 @@ const PrintableReport = React.forwardRef(({ sections, userName }, ref) => {
         </div>
       </div>
 
-      {/* ── BODY (paginated) ─────────────────────────────────────────── */}
       <div data-pdf="body" style={{ flex: '0 0 auto' }}>
         {merged ? (
           <MergedReportTable sections={sections} />
@@ -704,14 +630,9 @@ const PrintableReport = React.forwardRef(({ sections, userName }, ref) => {
         )}
       </div>
 
-      {/* ── SIGNATORIES (pinned to bottom of last page) ──────────────── */}
       <div
         data-pdf="signatories"
-        style={{
-          marginTop: 'auto',
-          paddingTop: '24px',
-          flex: '0 0 auto',
-        }}
+        style={{ marginTop: 'auto', paddingTop: '24px', flex: '0 0 auto' }}
       >
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'space-between', alignItems: 'flex-end' }}>
           {dynamicSignatories.map((sig, i) => (
@@ -736,9 +657,9 @@ const PrintableReport = React.forwardRef(({ sections, userName }, ref) => {
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   RebateSelector
+   RebateSelector — self-contained, uses useTokens()
    ═══════════════════════════════════════════════════════════════════════════ */
-const RebateSelector = ({ rebates, selected, onToggle, onClear, isDark, K, fontStack, monoStack }) => {
+const RebateSelector = ({ rebates, selected, onToggle, onClear }) => {
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
@@ -760,66 +681,37 @@ const RebateSelector = ({ rebates, selected, onToggle, onClear, isDark, K, fontS
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [open]);
 
-  const inputStyle = {
-    width: '100%', padding: '9px 12px',
-    background: K.glass,
-    border: `1px solid ${K.hairline}`,
-    borderRadius: 12, fontSize: 13,
-    color: K.ink, fontFamily: fontStack,
-    outline: 'none', transition: 'border-color 0.2s',
-    boxSizing: 'border-box',
-  };
-
   return (
-    <div ref={containerRef} style={{ position: 'relative' }}>
+    <div ref={containerRef} className="relative">
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
-        style={{
-          ...inputStyle,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          textAlign: 'left', cursor: 'pointer',
-        }}
+        className="w-full px-3 py-[9px] rounded-xl text-[13px] flex items-center justify-between text-left cursor-pointer outline-none transition-colors bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)] focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.15)]"
       >
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span className="truncate">
           {selected.length === 0
             ? 'Select Rebate Code(s)…'
             : selected.length === 1
               ? `${selected[0].rebateCode} — ${selected[0].rebateType}`
               : `${selected.length} rebate codes selected`}
         </span>
-        {open ? <ChevronUp size={14} color={K.faint} /> : <ChevronDown size={14} color={K.faint} />}
+        {open
+          ? <ChevronUp size={14} className="text-[var(--ds-faint)]" />
+          : <ChevronDown size={14} className="text-[var(--ds-faint)]" />}
       </button>
 
       {open && (
-        <div
-          className="dash-glass dash-pop"
-          style={{
-            position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 9999,
-            width: '100%',
-            background: K.glassDeep,
-            border: `1px solid ${K.rim}`,
-            borderRadius: 16, boxShadow: K.shadow,
-            overflow: 'hidden',
-          }}
-        >
-          <div style={{ padding: '8px 10px', borderBottom: `1px solid ${K.hairline}` }}>
-            <div style={{ position: 'relative' }}>
-              <Search size={13} color={K.faint} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+        <div className="ds-glass ds-pop absolute top-[calc(100%+6px)] left-0 z-[9999] w-full bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] rounded-2xl shadow-[var(--ds-shadow)] overflow-hidden">
+          <div className="px-2.5 py-2 border-b border-[var(--ds-hairline)]">
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--ds-faint)]" />
               <input
                 autoFocus
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="Search rebate codes…"
-                style={{
-                  width: '100%', padding: '7px 10px 7px 28px',
-                  background: K.chipBg,
-                  border: `1px solid ${K.hairline}`,
-                  borderRadius: 10, fontSize: 12,
-                  color: K.ink, fontFamily: fontStack,
-                  outline: 'none', boxSizing: 'border-box',
-                }}
+                className="w-full pl-7 pr-2.5 py-[7px] rounded-[10px] text-[12px] outline-none bg-[var(--ds-chip-bg)] border border-[var(--ds-hairline)] text-[var(--ds-ink)]"
               />
             </div>
           </div>
@@ -827,70 +719,48 @@ const RebateSelector = ({ rebates, selected, onToggle, onClear, isDark, K, fontS
           {selected.length > 0 && (
             <button
               onClick={() => { onClear(); setOpen(false); }}
-              style={{
-                width: '100%', textAlign: 'left',
-                padding: '8px 12px', fontSize: 12, fontWeight: 500,
-                color: APPLE.red, background: 'transparent',
-                border: 'none', cursor: 'pointer', fontFamily: fontStack,
-                borderBottom: `1px solid ${K.hairline}`,
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.background = `${APPLE.red}14`}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              className="w-full text-left px-3 py-2 text-[12px] font-medium text-[#FF453A] bg-transparent border-none cursor-pointer border-b border-[var(--ds-hairline)] hover:bg-[#FF453A]/8 transition-colors"
             >
               ✕ Clear all ({selected.length})
             </button>
           )}
 
-          <div style={{ maxHeight: 240, overflowY: 'auto' }} className="dash-scroll">
+          <div className="max-h-[240px] overflow-y-auto ds-scroll">
             {filtered.length === 0 ? (
-              <p style={{ padding: '16px 12px', fontSize: 12, textAlign: 'center', color: K.muted, margin: 0 }}>
+              <p className="px-3 py-4 text-[12px] text-center text-[var(--ds-muted)] m-0">
                 No rebates found
               </p>
             ) : (
               filtered.map(r => {
                 const checked = selected.some(s => s.rebateCode === r.rebateCode);
                 const typePill =
-                  r.rebateType === 'Fixed'       ? { bg: `${APPLE.green}1c`, fg: APPLE.green } :
-                  r.rebateType === 'Incremental' ? { bg: `${APPLE.orange}1c`, fg: APPLE.orange } :
-                                                    { bg: `${APPLE.purple}1c`, fg: APPLE.purple };
+                  r.rebateType === 'Fixed'       ? { bg: 'bg-[#32D74B]/11', fg: 'text-[#32D74B]' } :
+                  r.rebateType === 'Incremental' ? { bg: 'bg-[#FF9F0A]/11', fg: 'text-[#FF9F0A]' } :
+                                                    { bg: 'bg-[#BF5AF2]/11', fg: 'text-[#BF5AF2]' };
                 return (
                   <button
                     key={r.rebateCode}
                     type="button"
                     onClick={() => onToggle(r)}
-                    style={{
-                      width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-                      padding: '9px 12px', textAlign: 'left',
-                      background: checked ? `${APPLE.blue}14` : 'transparent',
-                      border: 'none', cursor: 'pointer', transition: 'background 0.15s',
-                      fontFamily: fontStack,
-                    }}
-                    onMouseEnter={(e) => { if (!checked) e.currentTarget.style.background = K.chipBg; }}
-                    onMouseLeave={(e) => { if (!checked) e.currentTarget.style.background = 'transparent'; }}
+                    className={`w-full flex items-center gap-2.5 px-3 py-[9px] text-left border-none cursor-pointer transition-colors ${
+                      checked ? 'bg-[#0A84FF]/8' : 'hover:bg-[var(--ds-chip-bg)]'
+                    }`}
                   >
-                    <div style={{
-                      width: 16, height: 16, flexShrink: 0,
-                      border: `1.5px solid ${checked ? APPLE.blue : K.hairline}`,
-                      borderRadius: 5,
-                      background: checked ? APPLE.blue : 'transparent',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      {checked && <span style={{ color: '#fff', fontSize: 10, lineHeight: 1 }}>✓</span>}
+                    <div className={`w-4 h-4 flex-shrink-0 rounded-[5px] flex items-center justify-center border-[1.5px] ${
+                      checked ? 'bg-[#0A84FF] border-[#0A84FF]' : 'bg-transparent border-[var(--ds-hairline)]'
+                    }`}>
+                      {checked && <span className="text-white text-[10px] leading-none">✓</span>}
                     </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: K.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[12px] font-semibold text-[var(--ds-ink)] truncate">
                         {r.rebateCode}
                       </div>
-                      <div style={{ fontSize: 11, color: K.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <div className="text-[11px] text-[var(--ds-muted)] truncate">
                         {r.rebateType} • {r.dateFrom ? new Date(r.dateFrom).toLocaleDateString('en-PH', { year: 'numeric', month: 'short' }) : '—'}
                         {r.dateFrom && r.dateTo ? ` – ${new Date(r.dateTo).toLocaleDateString('en-PH', { year: 'numeric', month: 'short' })}` : ''}
                       </div>
                     </div>
-                    <span style={{
-                      fontSize: 10, padding: '2px 8px', borderRadius: 999,
-                      background: typePill.bg, color: typePill.fg,
-                      fontWeight: 600, flexShrink: 0, fontFamily: monoStack,
-                    }}>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ds-font-mono ${typePill.bg} ${typePill.fg}`}>
                       {r.rebateType[0]}
                     </span>
                   </button>
@@ -908,16 +778,11 @@ const RebateSelector = ({ rebates, selected, onToggle, onClear, isDark, K, fontS
    Main Component
    ═══════════════════════════════════════════════════════════════════════════ */
 export default function Van_Reports() {
-  useEffect(() => { injectFonts(); }, []);
-
-  const { theme, updateTheme } = useTheme();
+  const { theme, updateTheme, K } = useTokens();
   const routePath = '/Van_Reports';
   const reportRef = useRef(null);
 
-  const isDark = theme === 'dark';
-  const K = dashTokens(isDark);
   const fontStack = "'Outfit', system-ui, sans-serif";
-  const monoStack = "'DM Mono', monospace";
 
   const [collapsed, setCollapsed]                     = useState(false);
   const [showVanDropdown, setShowVanDropdown]         = useState(true);
@@ -1094,14 +959,7 @@ export default function Van_Reports() {
     return `REBATE_MONITORING_${d}.${ext}`;
   };
 
-  /* ═══════════════════════════════════════════════════════════════════════
-     PDF EXPORT
-     • Paper: 8.5 × 13 in (long bond / folio) in LANDSCAPE  → 13 × 8.5 in
-     • Content is NOT stretched to fill page height.
-     • Row-safe pagination: as soon as the next table row would not fit,
-       a new page starts.
-     • Signatories are pinned to the bottom of the LAST page.
-     ═══════════════════════════════════════════════════════════════════════ */
+  /* ── PDF export — kept verbatim ───────────────────────────────────── */
   const exportToPDF = async () => {
     const root = reportRef.current;
     if (!root) return;
@@ -1109,26 +967,22 @@ export default function Van_Reports() {
     const pdf = new jsPDF({
       orientation: 'landscape',
       unit: 'in',
-      format: [PAPER_W_IN, PAPER_H_IN],   // 13 x 8.5 in (landscape)
+      format: [PAPER_W_IN, PAPER_H_IN],
     });
 
-    const pgW = pdf.internal.pageSize.getWidth();   // 13 in
-    const pgH = pdf.internal.pageSize.getHeight();  // 8.5 in
+    const pgW = pdf.internal.pageSize.getWidth();
+    const pgH = pdf.internal.pageSize.getHeight();
 
     try {
       const rootRect = root.getBoundingClientRect();
 
       const canvas = await html2canvas(root, {
-        scale: 2,
-        backgroundColor: '#ffffff',
-        useCORS: true,
-        logging: false,
-        scrollX: 0,
-        scrollY: 0,
+        scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false,
+        scrollX: 0, scrollY: 0,
       });
 
       const effScale   = canvas.width / (rootRect.width || 1);
-      const inPerPx    = pgW / canvas.width;          // canvas px → inches
+      const inPerPx    = pgW / canvas.width;
       const pxToCanvas = (v) => v * effScale;
 
       const bodyEl = root.querySelector('[data-pdf="body"]');
@@ -1141,7 +995,6 @@ export default function Van_Reports() {
       }
       contentEnd = Math.max(1, Math.min(contentEnd, canvas.height));
 
-      /* ── Collect safe break boundaries (bottom edge of each table row) ── */
       const boundSet = new Set();
       root.querySelectorAll('tr').forEach((tr) => {
         const b = pxToCanvas(tr.getBoundingClientRect().bottom - rootRect.top);
@@ -1153,14 +1006,12 @@ export default function Van_Reports() {
       }
       const bounds = [...boundSet].sort((a, b) => a - b);
 
-      /* ── Paginate body ── */
       const pages = [];
       let cursor  = 0;
       let pageIdx = 0;
       let guard   = 0;
 
-      const availablePx = (i) =>
-        (i === 0 ? pgH : pgH - PAGE_PAD_IN * 2) / inPerPx;
+      const availablePx = (i) => (i === 0 ? pgH : pgH - PAGE_PAD_IN * 2) / inPerPx;
 
       while (cursor < contentEnd - 2 && guard++ < 400) {
         const limit = cursor + availablePx(pageIdx);
@@ -1186,7 +1037,6 @@ export default function Van_Reports() {
 
       if (!pages.length) pages.push({ start: 0, end: contentEnd, top: 0 });
 
-      /* ── Grab signatories as separate image ── */
       let sigCanvas   = null;
       let sigHeightIn = 0;
 
@@ -1201,7 +1051,6 @@ export default function Van_Reports() {
         }
       }
 
-      /* ── Will signatories fit on the last content page? ── */
       let sigNeedsOwnPage = false;
       if (sigCanvas) {
         const last        = pages[pages.length - 1];
@@ -1209,7 +1058,6 @@ export default function Van_Reports() {
         if (lastContentIn + sigHeightIn + PAGE_PAD_IN > pgH) sigNeedsOwnPage = true;
       }
 
-      /* ── Render content pages ── */
       pages.forEach((pg, i) => {
         if (i > 0) pdf.addPage();
         const hIn   = (pg.end - pg.start) * inPerPx;
@@ -1217,7 +1065,6 @@ export default function Van_Reports() {
         pdf.addImage(slice.toDataURL('image/png'), 'PNG', 0, pg.top, pgW, hIn, undefined, 'FAST');
       });
 
-      /* ── Render signatories on bottom of last page ── */
       if (sigCanvas) {
         if (sigNeedsOwnPage) pdf.addPage();
         const yPos = Math.max(pgH - sigHeightIn - PAGE_PAD_IN, 0);
@@ -1231,6 +1078,7 @@ export default function Van_Reports() {
     }
   };
 
+  /* ── Excel export — kept verbatim ─────────────────────────────────── */
   const exportToExcel = () => {
     if (!reportSections.length) return;
     const wb = XLSX.utils.book_new();
@@ -1301,33 +1149,15 @@ export default function Van_Reports() {
     canvas.toBlob(b => b && saveAs(b, filename('png')));
   };
 
-  const inputStyle = {
-    width: '100%', padding: '9px 12px',
-    background: K.glass,
-    border: `1px solid ${K.hairline}`,
-    borderRadius: 12, fontSize: 13,
-    color: K.ink, fontFamily: fontStack,
-    outline: 'none', transition: 'border-color 0.2s',
-    boxSizing: 'border-box',
-  };
-
-  const labelStyle = {
-    display: 'flex', alignItems: 'center', gap: 6,
-    fontSize: 11, fontWeight: 600,
-    color: K.muted, fontFamily: fontStack,
-    marginBottom: 6, letterSpacing: '0.05em',
-    textTransform: 'uppercase',
-  };
+  /* ── Shared Tailwind classes ─────────────────────────────────────── */
+  const inputClasses = "w-full px-3 py-[9px] rounded-xl text-[13px] outline-none transition-colors bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)] focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.15)]";
+  const labelClasses = "flex items-center gap-1.5 text-[11px] font-semibold text-[var(--ds-muted)] mb-1.5 tracking-[0.05em] uppercase";
 
   const renderAccessLoading = () => (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 380, fontFamily: fontStack }}>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-        <div style={{
-          width: 36, height: 36, borderRadius: '50%',
-          border: `3px solid ${K.hairline}`, borderTopColor: APPLE.blue,
-          animation: 'spin 0.8s linear infinite',
-        }} />
-        <p style={{ fontSize: 13, color: K.muted }}>Verifying access…</p>
+    <div className="flex items-center justify-center min-h-[380px]">
+      <div className="flex flex-col items-center gap-3.5">
+        <div className="w-9 h-9 rounded-full animate-spin border-[3px] border-[var(--ds-hairline)] border-t-[#0A84FF]" />
+        <p className="text-[13px] text-[var(--ds-muted)]">Verifying access…</p>
       </div>
     </div>
   );
@@ -1338,20 +1168,14 @@ export default function Van_Reports() {
         : reportSections.reduce((s, sec) => s + sec.customers.length, 0))
     : 0;
 
-  return (
-    <div className="dash-page" style={{ display: 'flex', minHeight: '100vh', width: '100%', background: K.bg, fontFamily: fontStack, color: K.ink }}>
-      <style>{DASH_FONT}</style>
+  const canGenerate = access.canCreate && !loading && selectedRebates.length > 0;
+  const canExport   = access.canExport && showReport && reportSections.length > 0;
 
-      <div
-        className="pointer-events-none fixed inset-0"
-        style={{
-          backgroundImage: `
-            radial-gradient(700px circle at 8% 0%, ${APPLE.blue}${isDark ? "26" : "30"}, transparent 55%),
-            radial-gradient(650px circle at 92% 10%, ${APPLE.purple}${isDark ? "1a" : "20"}, transparent 55%)
-          `,
-          zIndex: 0,
-        }}
-      />
+  return (
+    <DesignPage className="flex w-full">
+
+      {/* Aurora wash */}
+      <div className="pointer-events-none fixed inset-0 z-0 ds-aurora-blue-purple" />
 
       <Sidebar
         collapsed={collapsed} setCollapsed={setCollapsed}
@@ -1361,157 +1185,120 @@ export default function Van_Reports() {
         theme={theme}
       />
 
-      <main style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', marginLeft: collapsed ? 80 : 256, transition: 'margin-left 0.4s cubic-bezier(.4,0,.2,1)', zIndex: 1 }}>
-        <Header collapsed={collapsed} userName={userName} userCode={userCode} initials={initials} logo={vanLogo} theme={theme} />
-        <div className="dash-scroll" style={{ paddingTop: 64, flex: 1, padding: '80px 32px 40px', overflowY: 'auto' }}>
-          <div
-            className="nx-card dash-glass"
-            style={{
-              background: K.glass,
-              border: `1px solid ${K.hairline}`,
-              borderRadius: 22,
-              boxShadow: K.shadow,
-              padding: '32px 32px 36px',
-              maxWidth: 1600, margin: '0 auto',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28, paddingBottom: 20, borderBottom: `1px solid ${K.hairline}` }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <div style={{
-                  width: 46, height: 46, borderRadius: 14,
-                  background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  boxShadow: `0 4px 16px -4px ${APPLE.blue}88`, flexShrink: 0,
-                }}>
-                  <BarChart2 size={22} color="#fff" />
+      <main
+        className={`relative flex-1 flex flex-col min-h-screen z-[1] transition-[margin-left] duration-[400ms] ease-[cubic-bezier(.4,0,.2,1)] ${
+          collapsed ? 'ml-20' : 'ml-64'
+        }`}
+      >
+        <Header
+          collapsed={collapsed}
+          userName={userName}
+          userCode={userCode}
+          initials={initials}
+          logo={vanLogo}
+          theme={theme}
+        />
+
+        <div className="ds-scroll flex-1 overflow-y-auto pt-20 px-8 pb-10">
+          <div className="ds-fade-up ds-glass rounded-[22px] bg-[var(--ds-glass)] border border-[var(--ds-hairline)] shadow-[var(--ds-shadow)] px-8 pt-8 pb-9 max-w-[1600px] mx-auto">
+
+            {/* ── Title bar ── */}
+            <div className="flex items-center justify-between mb-7 pb-5 gap-4 flex-wrap border-b border-[var(--ds-hairline)]">
+              <div className="flex items-center gap-3.5">
+                <div className="w-[46px] h-[46px] rounded-[14px] flex items-center justify-center flex-shrink-0 ds-gradient-primary shadow-[0_4px_16px_-4px_rgba(10,132,255,0.53)]">
+                  <BarChart2 size={22} className="text-white" />
                 </div>
                 <div>
-                  <h1 style={{ fontSize: 17, fontWeight: 700, color: K.ink, margin: 0, letterSpacing: '-0.01em' }}>
+                  <h1 className="text-[17px] font-bold tracking-[-0.01em] text-[var(--ds-ink)] m-0">
                     Rebate Monitoring Report
                   </h1>
-                  <p style={{ fontSize: 12, color: K.muted, margin: '3px 0 0', fontWeight: 400 }}>
+                  <p className="text-[12px] text-[var(--ds-muted)] mt-[3px] mb-0 font-normal">
                     Sales Program Rebate Monitoring per Quarter
                   </p>
                 </div>
               </div>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '6px 12px', borderRadius: 999,
-                background: K.chipBg, border: `1px solid ${K.hairline}`,
-                fontSize: 11, color: K.muted, fontWeight: 500, fontFamily: monoStack,
-              }}>
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--ds-chip-bg)] border border-[var(--ds-hairline)] text-[11px] text-[var(--ds-muted)] font-medium ds-font-mono">
                 <Calendar size={12} />
                 {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
               </div>
             </div>
 
+            {/* ── Access gate ── */}
             {accessLoading ? renderAccessLoading() : !access.canView ? (
               <AccessDenied
                 useTokens={true}
-                tokens={{...K, accent: APPLE.blue, accentHover: APPLE.blue, accentLight: `${APPLE.blue}14`, text: K.ink, textMuted: K.muted, textSub: K.muted, success: APPLE.green, error: APPLE.red, errorBg: `${APPLE.red}14`, gold: APPLE.orange, goldLight: `${APPLE.orange}14`, teal: APPLE.blue, tealLight: `${APPLE.blue}14`, cardBg: K.glass, cardBorder: K.hairline, inputBg: K.glass, inputBorder: K.hairline, bg: K.bg, fontStack }}
+                tokens={{
+                  ...K,
+                  accent: PALETTE.blue, accentHover: PALETTE.blue, accentLight: `${PALETTE.blue}14`,
+                  text: K.ink, textMuted: K.muted, textSub: K.muted,
+                  success: PALETTE.green, error: PALETTE.red, errorBg: `${PALETTE.red}14`,
+                  gold: PALETTE.orange, goldLight: `${PALETTE.orange}14`,
+                  teal: PALETTE.blue, tealLight: `${PALETTE.blue}14`,
+                  cardBg: K.glass, cardBorder: K.hairline,
+                  inputBg: K.glass, inputBorder: K.hairline,
+                  bg: K.bg, fontStack,
+                }}
                 message="You don't have permission to view this page. Contact your administrator for access."
               />
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                  <div style={{ display: 'flex', gap: 8 }}>
+              <div className="flex flex-col gap-5">
+                {/* Action bar */}
+                <div className="flex items-center justify-between gap-2.5 flex-wrap">
+                  <div className="flex gap-2">
                     <button
-                      className="nx-btn-primary"
+                      className={`ds-btn-primary flex items-center gap-1.5 px-4 py-[9px] rounded-full text-[13px] font-semibold transition-all duration-200 ${
+                        canGenerate
+                          ? 'ds-gradient-primary text-white cursor-pointer shadow-[0_4px_16px_-6px_rgba(10,132,255,0.53)]'
+                          : 'bg-[var(--ds-chip-bg)] text-[var(--ds-faint)] opacity-60 cursor-not-allowed border-none'
+                      }`}
                       onClick={generateReport}
-                      disabled={loading || !selectedRebates.length || !access.canCreate}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 7,
-                        padding: '9px 18px', borderRadius: 999, fontSize: 13, fontWeight: 600,
-                        border: 'none',
-                        cursor: (access.canCreate && !loading && selectedRebates.length) ? 'pointer' : 'not-allowed',
-                        background: (access.canCreate && !loading && selectedRebates.length)
-                          ? `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`
-                          : K.chipBg,
-                        color: (access.canCreate && !loading && selectedRebates.length) ? '#fff' : K.faint,
-                        opacity: (access.canCreate && !loading && selectedRebates.length) ? 1 : 0.6,
-                        transition: 'all 0.2s',
-                        boxShadow: (access.canCreate && !loading && selectedRebates.length)
-                          ? `0 4px 16px -6px ${APPLE.blue}88`
-                          : 'none',
-                        fontFamily: fontStack,
-                      }}
+                      disabled={!canGenerate}
                     >
-                      {loading ? <RefreshCw size={14} style={{ animation: 'spin 0.8s linear infinite' }} /> : <Zap size={14} />}
+                      {loading ? <RefreshCw size={14} className="animate-spin" style={{ animationDuration: '0.8s' }} /> : <Zap size={14} />}
                       {loading ? 'Generating…' : 'Generate Report'}
                     </button>
 
                     {showReport && (
                       <button
-                        className="nx-btn-secondary"
+                        className="ds-btn-secondary flex items-center gap-1.5 px-3.5 py-[9px] rounded-full text-[13px] font-medium border border-[var(--ds-hairline)] bg-transparent text-[var(--ds-muted)] hover:text-[var(--ds-ink)] hover:bg-[var(--ds-hover)] cursor-pointer transition-all duration-200"
                         onClick={clearReport}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 6,
-                          padding: '9px 14px', borderRadius: 999, fontSize: 13, fontWeight: 500,
-                          border: `1px solid ${K.hairline}`, background: 'transparent', color: K.muted,
-                          cursor: 'pointer', transition: 'all 0.2s', fontFamily: fontStack,
-                        }}
-                        onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hover; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = 'transparent'; }}
                       >
                         <X size={13} /> Clear
                       </button>
                     )}
                   </div>
 
-                  <div style={{ position: 'relative' }}>
+                  <div className="relative">
                     <button
-                      disabled={!access.canExport || !showReport || !reportSections.length}
-                      onClick={() => { if (access.canExport && showReport && reportSections.length) setShowExportDropdown(v => !v); }}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 6,
-                        padding: '9px 14px', borderRadius: 999, fontSize: 13, fontWeight: 500,
-                        border: `1px solid ${(access.canExport && showReport && reportSections.length) ? `${APPLE.blue}55` : K.hairline}`,
-                        background: (access.canExport && showReport && reportSections.length) ? `${APPLE.blue}1c` : K.chipBg,
-                        color: (access.canExport && showReport && reportSections.length) ? APPLE.blue : K.faint,
-                        cursor: (access.canExport && showReport && reportSections.length) ? 'pointer' : 'not-allowed',
-                        opacity: (access.canExport && showReport && reportSections.length) ? 1 : 0.5,
-                        transition: 'all 0.2s', fontFamily: fontStack,
-                      }}
+                      disabled={!canExport}
+                      onClick={() => { if (canExport) setShowExportDropdown(v => !v); }}
+                      className={`flex items-center gap-1.5 px-3.5 py-[9px] rounded-full text-[13px] font-medium transition-all duration-200 ${
+                        canExport
+                          ? 'border border-[#0A84FF]/33 bg-[#0A84FF]/11 text-[#0A84FF] cursor-pointer'
+                          : 'border border-[var(--ds-hairline)] bg-[var(--ds-chip-bg)] text-[var(--ds-faint)] opacity-50 cursor-not-allowed'
+                      }`}
                     >
                       <Download size={13} /> Export <ChevronDown size={13} />
                     </button>
                     {showExportDropdown && access.canExport && (
-                      <div
-                        className="dash-glass dash-pop"
-                        style={{
-                          position: 'absolute', right: 0, top: 'calc(100% + 8px)',
-                          width: 220, borderRadius: 16, zIndex: 50,
-                          background: K.glassDeep,
-                          border: `1px solid ${K.rim}`,
-                          boxShadow: K.shadow,
-                          overflow: 'hidden',
-                        }}
-                      >
-                        <div style={{ padding: '10px 14px 8px', borderBottom: `1px solid ${K.hairline}` }}>
-                          <p style={{ fontSize: 11, fontWeight: 700, color: K.muted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>Export as</p>
+                      <div className="ds-glass ds-pop absolute right-0 top-[calc(100%+8px)] w-[220px] rounded-2xl z-50 overflow-hidden bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] shadow-[var(--ds-shadow)]">
+                        <div className="px-3.5 pt-2.5 pb-2 border-b border-[var(--ds-hairline)]">
+                          <p className="text-[11px] font-bold text-[var(--ds-muted)] uppercase tracking-[0.06em] m-0">Export as</p>
                         </div>
                         {[
-                          { label: 'PDF Document',   ext: 'pdf',  icon: <FileText size={15} color={APPLE.red} />,        fn: exportToPDF   },
-                          { label: 'Excel Workbook', ext: 'xlsx', icon: <FileSpreadsheet size={15} color={APPLE.green} />, fn: exportToExcel },
-                          { label: 'PNG Image',      ext: 'png',  icon: <Image size={15} color={APPLE.purple} />,           fn: exportToPNG   },
+                          { label: 'PDF Document',   ext: 'pdf',  icon: <FileText size={15} className="text-[#FF453A]" />,      fn: exportToPDF   },
+                          { label: 'Excel Workbook', ext: 'xlsx', icon: <FileSpreadsheet size={15} className="text-[#32D74B]" />, fn: exportToExcel },
+                          { label: 'PNG Image',      ext: 'png',  icon: <Image size={15} className="text-[#BF5AF2]" />,            fn: exportToPNG   },
                         ].map(({ label, ext, icon, fn }) => (
                           <button
                             key={ext}
                             onClick={() => { fn(); setShowExportDropdown(false); }}
-                            style={{
-                              width: '100%', textAlign: 'left',
-                              display: 'flex', alignItems: 'center', gap: 10,
-                              padding: '11px 14px', fontSize: 13, color: K.ink,
-                              background: 'transparent', border: 'none', cursor: 'pointer',
-                              transition: 'all 0.15s', fontFamily: fontStack,
-                            }}
-                            onMouseEnter={(e) => e.currentTarget.style.background = K.chipBg}
-                            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                            className="w-full text-left flex items-center gap-2.5 px-3.5 py-[11px] text-[13px] text-[var(--ds-ink)] bg-transparent border-none cursor-pointer transition-colors duration-150 hover:bg-[var(--ds-chip-bg)]"
                           >
                             {icon}
                             <div>
-                              <div style={{ fontWeight: 500 }}>{label}</div>
-                              <div style={{ fontSize: 11, color: K.muted }}>Save as .{ext}</div>
+                              <div className="font-medium">{label}</div>
+                              <div className="text-[11px] text-[var(--ds-muted)]">Save as .{ext}</div>
                             </div>
                           </button>
                         ))}
@@ -1520,49 +1307,29 @@ export default function Van_Reports() {
                   </div>
                 </div>
 
-                <div
-                  className="dash-glass"
-                  style={{
-                    position: 'relative',
-                    zIndex: 40,
-                    background: K.glass,
-                    border: `1px solid ${K.hairline}`,
-                    borderRadius: 18,
-                    padding: '20px 22px',
-                  }}
-                >
-                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.3fr 1fr', gap: 18 }}>
+                {/* Filter card */}
+                <div className="ds-glass relative z-40 bg-[var(--ds-glass)] border border-[var(--ds-hairline)] rounded-[18px] px-[22px] py-5">
+                  <div className="grid grid-cols-1 md:grid-cols-[2fr_1.3fr_1fr] gap-[18px]">
+                    {/* Rebate Code(s) */}
                     <div>
-                      <label style={labelStyle}><Tag size={12} color={APPLE.blue} /> Rebate Code(s)</label>
+                      <label className={labelClasses}><Tag size={12} className="text-[#0A84FF]" /> Rebate Code(s)</label>
                       <RebateSelector
                         rebates={availableRebates}
                         selected={selectedRebates}
                         onToggle={toggleRebate}
                         onClear={() => setSelectedRebates([])}
-                        isDark={isDark}
-                        K={K}
-                        fontStack={fontStack}
-                        monoStack={monoStack}
                       />
                       {selectedRebates.length > 0 && (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                        <div className="flex flex-wrap gap-1.5 mt-2">
                           {selectedRebates.map(r => (
-                            <span key={r.rebateCode} style={{
-                              display: 'inline-flex', alignItems: 'center', gap: 5,
-                              padding: '3px 10px', borderRadius: 999,
-                              fontSize: 11, fontWeight: 600,
-                              background: `${APPLE.blue}14`, color: APPLE.blue,
-                              fontFamily: monoStack,
-                            }}>
+                            <span
+                              key={r.rebateCode}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-[3px] rounded-full text-[11px] font-semibold bg-[#0A84FF]/8 text-[#0A84FF] ds-font-mono"
+                            >
                               {r.rebateCode} ({r.rebateType[0]})
                               <button
                                 onClick={() => toggleRebate(r)}
-                                style={{
-                                  background: 'transparent', border: 'none', cursor: 'pointer',
-                                  display: 'inline-flex', padding: 0, color: 'inherit',
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.color = APPLE.red}
-                                onMouseLeave={(e) => e.currentTarget.style.color = 'inherit'}
+                                className="bg-transparent border-none cursor-pointer inline-flex p-0 text-inherit hover:text-[#FF453A] transition-colors"
                               >
                                 <X size={10} />
                               </button>
@@ -1572,8 +1339,9 @@ export default function Van_Reports() {
                       )}
                     </div>
 
-                    <div className="customer-dropdown-container" style={{ position: 'relative' }}>
-                      <label style={labelStyle}><Users size={12} color={APPLE.blue} /> Customers</label>
+                    {/* Customers */}
+                    <div className="customer-dropdown-container relative">
+                      <label className={labelClasses}><Users size={12} className="text-[#0A84FF]" /> Customers</label>
                       <button
                         type="button"
                         onClick={() => {
@@ -1583,15 +1351,11 @@ export default function Van_Reports() {
                           }
                         }}
                         disabled={!selectedRebates.length || customersLoading}
-                        style={{
-                          ...inputStyle,
-                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          textAlign: 'left',
-                          cursor: (!selectedRebates.length || customersLoading) ? 'not-allowed' : 'pointer',
-                          opacity: (!selectedRebates.length || customersLoading) ? 0.6 : 1,
-                        }}
+                        className={`${inputClasses} flex items-center justify-between text-left ${
+                          (!selectedRebates.length || customersLoading) ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                        }`}
                       >
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <span className="truncate">
                           {customersLoading
                             ? 'Loading customers…'
                             : selectedCustomers.length === 0
@@ -1601,71 +1365,43 @@ export default function Van_Reports() {
                                 : `${selectedCustomers.length} selected`}
                         </span>
                         {customersLoading
-                          ? <RefreshCw size={14} color={K.faint} style={{ animation: 'spin 0.8s linear infinite' }} />
-                          : <ChevronDown size={14} color={K.faint} />}
+                          ? <RefreshCw size={14} className="text-[var(--ds-faint)] animate-spin" style={{ animationDuration: '0.8s' }} />
+                          : <ChevronDown size={14} className="text-[var(--ds-faint)]" />}
                       </button>
 
                       {showCustomerDropdown && availableCustomers.length > 0 && (
-                        <div
-                          className="dash-glass dash-pop"
-                          style={{
-                            position: 'absolute', top: 'calc(100% + 6px)', left: 0,
-                            width: '100%', maxHeight: 260, overflowY: 'auto',
-                            background: K.glassDeep,
-                            border: `1px solid ${K.rim}`,
-                            borderRadius: 16,
-                            boxShadow: K.shadow,
-                            zIndex: 9999, padding: '6px 0',
-                          }}
-                        >
+                        <div className="ds-glass ds-pop absolute top-[calc(100%+6px)] left-0 w-full max-h-[260px] overflow-y-auto bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] rounded-2xl shadow-[var(--ds-shadow)] z-[9999] py-1.5">
                           <div
-                            style={{
-                              padding: '8px 12px',
-                              borderBottom: `1px solid ${K.hairline}`,
-                              display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-                              background: K.chipBg,
-                            }}
+                            className="px-3 py-2 border-b border-[var(--ds-hairline)] flex items-center gap-2 cursor-pointer bg-[var(--ds-chip-bg)]"
                             onClick={() => {
                               const allSelected = tempSelectedCustomers.length === availableCustomers.length;
                               setTempSelectedCustomers(allSelected ? [] : [...availableCustomers]);
                             }}
                           >
-                            <input type="checkbox" checked={tempSelectedCustomers.length === availableCustomers.length} readOnly style={{ accentColor: APPLE.blue }} />
-                            <span style={{ fontSize: 12, fontWeight: 600, color: K.ink }}>Select All</span>
+                            <input type="checkbox" checked={tempSelectedCustomers.length === availableCustomers.length} readOnly className="accent-[#0A84FF]" />
+                            <span className="text-[12px] font-semibold text-[var(--ds-ink)]">Select All</span>
                           </div>
 
                           {availableCustomers.map(cust => (
                             <div
                               key={cust.CardCode}
-                              style={{
-                                padding: '8px 12px',
-                                display: 'flex', alignItems: 'center', gap: 8,
-                                cursor: 'pointer', transition: 'background 0.1s',
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.background = K.chipBg}
-                              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                              className="px-3 py-2 flex items-center gap-2 cursor-pointer transition-colors hover:bg-[var(--ds-chip-bg)]"
                               onClick={() => {
                                 const exists = tempSelectedCustomers.some(c => c.CardCode === cust.CardCode);
                                 setTempSelectedCustomers(prev => exists ? prev.filter(c => c.CardCode !== cust.CardCode) : [...prev, cust]);
                               }}
                             >
-                              <input type="checkbox" checked={tempSelectedCustomers.some(c => c.CardCode === cust.CardCode)} readOnly style={{ accentColor: APPLE.blue }} />
-                              <span style={{ fontSize: 12, color: K.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {cust.CardName} <span style={{ color: K.muted, marginLeft: 4 }}>({cust.CardCode})</span>
+                              <input type="checkbox" checked={tempSelectedCustomers.some(c => c.CardCode === cust.CardCode)} readOnly className="accent-[#0A84FF]" />
+                              <span className="text-[12px] text-[var(--ds-ink)] truncate">
+                                {cust.CardName} <span className="text-[var(--ds-muted)] ml-1">({cust.CardCode})</span>
                               </span>
                             </div>
                           ))}
 
-                          <div style={{ padding: '8px 12px', borderTop: `1px solid ${K.hairline}` }}>
+                          <div className="px-3 py-2 border-t border-[var(--ds-hairline)]">
                             <button
                               onClick={() => { setSelectedCustomers(tempSelectedCustomers); setShowCustomerDropdown(false); }}
-                              style={{
-                                width: '100%', padding: '6px 12px', borderRadius: 999, border: 'none',
-                                background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
-                                color: '#fff', fontSize: 12, fontWeight: 600,
-                                cursor: 'pointer', fontFamily: fontStack,
-                                boxShadow: `0 4px 12px -4px ${APPLE.blue}88`,
-                              }}
+                              className="w-full px-3 py-1.5 rounded-full border-none text-white text-[12px] font-semibold cursor-pointer ds-gradient-primary shadow-[0_4px_12px_-4px_rgba(10,132,255,0.53)]"
                             >
                               Apply
                             </button>
@@ -1674,126 +1410,96 @@ export default function Van_Reports() {
                       )}
                     </div>
 
+                    {/* Report Period */}
                     <div>
-                      <label style={labelStyle}><Calendar size={12} color={APPLE.blue} /> Report Period</label>
-                      <div style={{
-                        ...inputStyle,
-                        display: 'flex', alignItems: 'center',
-                        color: periodLabel() ? K.ink : K.muted,
-                        fontStyle: periodLabel() ? 'normal' : 'italic',
-                        fontSize: 12,
-                      }}>
+                      <label className={labelClasses}><Calendar size={12} className="text-[#0A84FF]" /> Report Period</label>
+                      <div
+                        className={`${inputClasses} flex items-center text-[12px] ${
+                          periodLabel() ? 'text-[var(--ds-ink)]' : 'text-[var(--ds-muted)] italic'
+                        }`}
+                      >
                         {periodLabel() || 'Auto-detected from rebate code'}
                       </div>
                     </div>
                   </div>
                 </div>
 
+                {/* Error banner */}
                 {error && (
-                  <div style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '12px 16px', borderRadius: 14,
-                    background: `${APPLE.red}14`, border: `1px solid ${APPLE.red}33`,
-                    color: APPLE.red, fontSize: 13, fontWeight: 500,
-                  }}>
+                  <div className="flex items-center gap-2.5 px-4 py-3 rounded-[14px] bg-[#FF453A]/8 border border-[#FF453A]/20 text-[#FF453A] text-[13px] font-medium">
                     <XCircle size={15} /> {error}
                   </div>
                 )}
 
+                {/* Loading */}
                 {loading && (
-                  <div className="dash-glass" style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    minHeight: 380, borderRadius: 18,
-                    border: `1px dashed ${K.hairline}`,
-                    background: K.glass,
-                  }}>
-                    <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-                      <div style={{ position: 'relative', width: 56, height: 56 }}>
-                        <div style={{ width: 56, height: 56, borderRadius: '50%', border: `4px solid ${K.hairline}`, position: 'absolute' }} />
-                        <div style={{ width: 56, height: 56, borderRadius: '50%', border: `4px solid ${APPLE.blue}`, borderTopColor: 'transparent', animation: 'spin 0.75s linear infinite', position: 'absolute' }} />
+                  <div className="ds-glass flex items-center justify-center min-h-[380px] rounded-[18px] border border-dashed border-[var(--ds-hairline)] bg-[var(--ds-glass)]">
+                    <div className="text-center flex flex-col items-center gap-4">
+                      <div className="relative w-14 h-14">
+                        <div className="absolute inset-0 w-14 h-14 rounded-full border-4 border-[var(--ds-hairline)]" />
+                        <div className="absolute inset-0 w-14 h-14 rounded-full border-4 border-[#0A84FF] border-t-transparent animate-spin" style={{ animationDuration: '0.75s' }} />
                       </div>
                       <div>
-                        <h3 style={{ fontSize: 16, fontWeight: 700, color: K.ink, margin: '0 0 6px' }}>Generating Monitoring Report</h3>
-                        <p style={{ fontSize: 12, color: K.muted, margin: 0 }}>
-                          Fetching sales data for <span style={{ fontWeight: 700, color: APPLE.blue }}>{selectedRebates.length} rebate code{selectedRebates.length !== 1 ? 's' : ''}</span>
+                        <h3 className="text-base font-bold text-[var(--ds-ink)] m-0 mb-1.5">Generating Monitoring Report</h3>
+                        <p className="text-[12px] text-[var(--ds-muted)] m-0">
+                          Fetching sales data for <span className="font-bold text-[#0A84FF]">{selectedRebates.length} rebate code{selectedRebates.length !== 1 ? 's' : ''}</span>
                         </p>
                       </div>
                     </div>
                   </div>
                 )}
 
+                {/* Report preview */}
                 {!loading && showReport && filteredReportSections.length > 0 && (
-                  <div className="dash-glass" style={{ background: K.glass, border: `1px solid ${K.hairline}`, borderRadius: 18, padding: '20px 22px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <CheckCircle size={15} color={APPLE.green} />
-                        <h3 style={{ fontSize: 14, fontWeight: 700, color: K.ink, margin: 0 }}>Report Preview</h3>
-                        <span style={{
-                          padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
-                          background: `${APPLE.blue}14`, color: APPLE.blue,
-                          fontFamily: monoStack,
-                        }}>
+                  <div className="ds-glass bg-[var(--ds-glass)] border border-[var(--ds-hairline)] rounded-[18px] px-[22px] py-5">
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-2.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <CheckCircle size={15} className="text-[#32D74B]" />
+                        <h3 className="text-[14px] font-bold text-[var(--ds-ink)] m-0">Report Preview</h3>
+                        <span className="px-2.5 py-[3px] rounded-full text-[11px] font-semibold bg-[#0A84FF]/8 text-[#0A84FF] ds-font-mono">
                           {customerCount} customer{customerCount !== 1 ? 's' : ''}
                         </span>
                         {sectionsShareCustomers(reportSections) && (
-                          <span style={{
-                            padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
-                            background: `${APPLE.green}14`, color: APPLE.green,
-                          }}>
+                          <span className="px-2.5 py-[3px] rounded-full text-[11px] font-semibold bg-[#32D74B]/8 text-[#32D74B]">
                             Merged view
                           </span>
                         )}
-                        <span style={{
-                          padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 500,
-                          background: `${APPLE.orange}14`, color: APPLE.orange,
-                          fontFamily: monoStack,
-                        }}>
+                        <span className="px-2.5 py-[3px] rounded-full text-[11px] font-medium bg-[#FF9F0A]/8 text-[#FF9F0A] ds-font-mono">
                           8.5" × 13" · Landscape
                         </span>
                       </div>
-                      <span style={{
-                        padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 500,
-                        background: K.chipBg, color: K.muted,
-                        fontFamily: monoStack,
-                      }}>
+                      <span className="px-2.5 py-[3px] rounded-full text-[11px] font-medium bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] ds-font-mono">
                         {reportSections[0]?.quarterDisplay}
                       </span>
                     </div>
 
                     <div
-                      className="dash-scroll"
-                      style={{
-                        overflowX: 'auto', overflowY: 'auto',
-                        background: isDark ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.04)',
-                        borderRadius: 14,
-                        padding: '24px',
-                        maxHeight: '70vh',
-                      }}
+                      className={`ds-scroll overflow-auto rounded-[14px] p-6 max-h-[70vh] ${
+                        theme === 'dark' ? 'bg-black/35' : 'bg-black/4'
+                      }`}
                     >
-                      <div style={{ width: `${PAPER_W_PX}px`, margin: '0 auto', boxShadow: '0 8px 30px -8px rgba(0,0,0,0.25)', borderRadius: 4, overflow: 'hidden' }}>
+                      <div
+                        className="mx-auto rounded-[4px] overflow-hidden shadow-[0_8px_30px_-8px_rgba(0,0,0,0.25)]"
+                        style={{ width: `${PAPER_W_PX}px` }}
+                      >
                         <PrintableReport ref={reportRef} sections={reportSections} userName={userName} />
                       </div>
                     </div>
                   </div>
                 )}
 
+                {/* Empty state */}
                 {!loading && !showReport && !error && (
-                  <div className="dash-glass" style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    width: '100%', minHeight: 280,
-                    borderRadius: 18,
-                    border: `2px dashed ${K.hairline}`,
-                    background: K.glass,
-                  }}>
-                    <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-                      <div style={{ width: 52, height: 52, borderRadius: 14, background: `${APPLE.blue}1c`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <BarChart2 size={24} color={APPLE.blue} />
+                  <div className="ds-glass flex items-center justify-center w-full min-h-[280px] rounded-[18px] border-2 border-dashed border-[var(--ds-hairline)] bg-[var(--ds-glass)]">
+                    <div className="text-center flex flex-col items-center gap-3">
+                      <div className="w-[52px] h-[52px] rounded-[14px] flex items-center justify-center bg-[#0A84FF]/11">
+                        <BarChart2 size={24} className="text-[#0A84FF]" />
                       </div>
                       <div>
-                        <p style={{ fontSize: 14, fontWeight: 600, color: K.ink, margin: '0 0 4px' }}>No report generated yet</p>
-                        <p style={{ fontSize: 12, color: K.muted, margin: 0 }}>
-                          Select <strong style={{ color: APPLE.blue }}>rebate code(s)</strong>, then click{' '}
-                          <strong style={{ color: APPLE.blue }}>Generate Report</strong>
+                        <p className="text-[14px] font-semibold text-[var(--ds-ink)] m-0 mb-1">No report generated yet</p>
+                        <p className="text-[12px] text-[var(--ds-muted)] m-0">
+                          Select <strong className="text-[#0A84FF]">rebate code(s)</strong>, then click{' '}
+                          <strong className="text-[#0A84FF]">Generate Report</strong>
                         </p>
                       </div>
                     </div>
@@ -1804,6 +1510,6 @@ export default function Van_Reports() {
           </div>
         </div>
       </main>
-    </div>
+    </DesignPage>
   );
 }

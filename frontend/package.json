@@ -13,6 +13,7 @@
     "fast-png": "^6.1.0",
     "file-saver": "^2.0.5",
     "html2canvas": "^1.4.1",
+    "http-proxy-middleware": "^2.0.11",
     "jspdf": "^2.5.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.545.0",
@@ -27,8 +28,8 @@
     "xlsx": "^0.18.5"
   },
   "scripts": {
-    "start": "cross-env PORT=3008 react-scripts start --host 0.0.0.0",
-    "dev": "cross-env PORT=3008 react-scripts start --host 0.0.0.0",
+    "start": "react-scripts start",
+    "dev": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"

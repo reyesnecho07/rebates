@@ -53,7 +53,7 @@ const NexchemPayoutHistory = ({
     setIsSummaryLoading(true);
     setSummaryLoadError(null);
     try {
-      const url = `http://192.168.100.193:3009/api/nexchem/payouts/customer/${customerCardCode}/payout-summary?db=NEXCHEM`;
+      const url = `/api/nexchem/payouts/customer/${customerCardCode}/payout-summary?db=NEXCHEM`;
       const response = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       const result = await response.json();
@@ -117,7 +117,7 @@ const NexchemPayoutHistory = ({
     setSapSyncMessage('Syncing with SAP Journal Entries…');
     try {
       const response = await fetch(
-        `http://192.168.100.193:3009/api/nexchem/customer/${modalCustomer.CardCode}/sync-sap`,
+        `/api/nexchem/customer/${modalCustomer.CardCode}/sync-sap`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },

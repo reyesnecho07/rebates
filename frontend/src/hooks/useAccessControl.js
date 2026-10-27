@@ -1,3 +1,4 @@
+// src/hooks/useAccessControl.js
 import { useState, useEffect, useCallback } from 'react';
 import accessControlService from '../services/accessControlService';
 
@@ -5,6 +6,26 @@ const DEFAULT_ACCESS = {
   canView: false, canCreate: false, canEdit: false,
   canDelete: false, canExport: false, canApprove: false,
 };
+
+const FAIL_OPEN_ACCESS = {
+  canView: true, canCreate: true, canEdit: true,
+  canDelete: true, canExport: true, canApprove: true,
+};
+
+const SYNC_TIMEOUT_MS = 8000;   // sync is best-effort — don't block on it
+const FETCH_TIMEOUT_MS = 12000; // hard cap on the access lookup
+
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
 
 function getCurrentUser() {
   try { return JSON.parse(localStorage.getItem('currentUser') || 'null') || null; }
@@ -14,7 +35,6 @@ function getCurrentUser() {
 function getUserCode() {
   const u = getCurrentUser();
   if (!u) return null;
-  // User_ID is the string identifier like 'AACC10'
   return u.User_ID ?? u.UserCode ?? u.userCode ?? null;
 }
 
@@ -25,7 +45,6 @@ function checkIsSuperUser() {
   return val === 1 || val === true || val === '1';
 }
 
-// Tracks users synced this browser session so we don't sync on every page
 const syncedUsersThisSession = new Set();
 
 function useAccessControl(routePath) {
@@ -36,16 +55,17 @@ function useAccessControl(routePath) {
   const fetchAccess = useCallback(async () => {
     if (!routePath) {
       setAccess(DEFAULT_ACCESS);
+      setAccessError('No routePath supplied');
       setAccessLoading(false);
       return;
     }
 
-    // SuperUser bypass
     if (checkIsSuperUser()) {
       setAccess({
         canView: true, canCreate: true, canEdit: true,
         canDelete: true, canExport: true, canApprove: true,
       });
+      setAccessError(null);
       setAccessLoading(false);
       return;
     }
@@ -53,8 +73,9 @@ function useAccessControl(routePath) {
     const userCode = getUserCode();
 
     if (!userCode) {
-      console.warn('⚠️ No User_ID in localStorage');
+      console.warn('⚠️ No User_ID in localStorage — denying all access');
       setAccess(DEFAULT_ACCESS);
+      setAccessError('No User_ID in localStorage');
       setAccessLoading(false);
       return;
     }
@@ -63,23 +84,29 @@ function useAccessControl(routePath) {
     setAccessError(null);
 
     try {
-      // ── Step 1: Sync once per session ─────────────────────────────────────
+      // ── Step 1: Sync once per session (best-effort, never blocks) ────────
       if (!syncedUsersThisSession.has(userCode)) {
         try {
           console.log(`🔄 First visit — syncing AccessControl rows for: ${userCode}`);
-          const syncResult = await accessControlService.syncUserAccess(userCode, 'USER');
+          const syncResult = await withTimeout(
+            accessControlService.syncUserAccess(userCode, 'USER'),
+            SYNC_TIMEOUT_MS,
+            'syncUserAccess'
+          );
           console.log(`✅ Sync done:`, syncResult?.data);
           syncedUsersThisSession.add(userCode);
         } catch (syncErr) {
-          // Non-fatal — still try to fetch
-          console.warn('⚠️ Sync failed, continuing anyway:', syncErr.message);
+          console.warn('⚠️ Sync failed/timed out, continuing anyway:', syncErr.message);
+          // Do NOT mark as synced so a later visit can retry.
         }
       }
 
-      // ── Step 2: Fetch access for this specific route ───────────────────────
+      // ── Step 2: Fetch access (the important one) ─────────────────────────
       console.log(`📡 Fetching access: "${routePath}" for "${userCode}"`);
-      const response = await accessControlService.getAccessByRouteAndUser_ID(
-        routePath, userCode, 'USER'
+      const response = await withTimeout(
+        accessControlService.getAccessByRouteAndUser_ID(routePath, userCode, 'USER'),
+        FETCH_TIMEOUT_MS,
+        'getAccessByRouteAndUser_ID'
       );
 
       if (response?.success && response?.data) {
@@ -97,15 +124,19 @@ function useAccessControl(routePath) {
           canApprove: d.canApprove ?? false,
         });
       } else {
-        console.warn(`⚠️ No access record for "${routePath}" — all permissions denied`);
+        console.warn(`⚠️ No access record for "${routePath}" — denying all`);
         setAccess(DEFAULT_ACCESS);
+        setAccessError(`No access record for ${routePath}`);
       }
 
     } catch (err) {
       console.error('❌ useAccessControl error:', err.message);
       setAccessError(err.response?.data?.error || err.message);
-      setAccess(DEFAULT_ACCESS);
+      // Fail-open so the spinner stops and the page renders. Change to
+      // setAccess(DEFAULT_ACCESS) if you want fail-closed behavior.
+      setAccess(FAIL_OPEN_ACCESS);
     } finally {
+      // CRITICAL: always runs
       setAccessLoading(false);
     }
   }, [routePath]);

@@ -1,7 +1,6 @@
 // src/VCP/Vcp_StatusSummary.jsx
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { ChevronRight } from "lucide-react";
-import { useTheme } from '../context/ThemeContext';
 import vcpLogo from "../assets/vcp.png";
 import Sidebar from "../components/Sidebar";
 import Header from "../components/Header";
@@ -11,46 +10,29 @@ import VcpTransactionRecords from "../components/Dashboard/StatusSummary/VcpTran
 import { ToastContainer, useToast } from "../components/common/Toast";
 import useAccessControl from '../hooks/useAccessControl';
 import { useComponentRegistration } from '../hooks/useComponentRegistration';
-import { APPLE, dashTokens, DASH_FONT } from "../components/Dashboard/StatusSummary/customerLedgerUtils";
 
-const API_BASE = 'http://192.168.100.193:3009';
+/* ── Design system ──────────────────────────────────────────────── */
+import {
+  useTokens,
+  useSkeletonStyle,
+  DesignPage,
+} from '../design-system';
+
+const API_BASE = '';
 
 /* ──────────────────────────────────────────────────────────────────────
-   Skeleton primitives — used instead of spinner/text "Loading…" states.
+   Skeleton primitives
    ────────────────────────────────────────────────────────────────────── */
-const SKELETON_CSS = `
-@keyframes vcpSkelShimmer {
-  0%   { background-position: -800px 0; }
-  100% { background-position:  800px 0; }
-}
-.vcp-skel {
-  display: block;
-  border-radius: 6px;
-  background-size: 1600px 100%;
-  animation: vcpSkelShimmer 1.5s linear infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .vcp-skel { animation: none; }
-}
-`;
-
-function useSkeletonPalette(isDark) {
-  return {
-    base: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(17,24,39,0.06)',
-    hi:   isDark ? 'rgba(255,255,255,0.13)' : 'rgba(17,24,39,0.12)',
-  };
-}
-
-function Skel({ isDark, w = '100%', h = 12, radius = 6, style }) {
-  const { base, hi } = useSkeletonPalette(isDark);
+function Skel({ w = '100%', h = 12, radius = 6, style }) {
+  const skel = useSkeletonStyle();
   return (
     <span
-      className="vcp-skel"
+      className="block"
       style={{
         width:  typeof w === 'number' ? `${w}px` : w,
         height: typeof h === 'number' ? `${h}px` : h,
         borderRadius: radius,
-        backgroundImage: `linear-gradient(90deg, ${base} 0%, ${hi} 50%, ${base} 100%)`,
+        ...skel(),
         ...style,
       }}
     />
@@ -58,59 +40,46 @@ function Skel({ isDark, w = '100%', h = 12, radius = 6, style }) {
 }
 
 /* Skeleton matching the StatusSummary table layout */
-function StatusSummarySkeleton({ isDark, K }) {
+function StatusSummarySkeleton() {
   const rows = 8;
   return (
-    <div
-      className="rounded-2xl border overflow-hidden"
-      style={{ background: K.glassDeep, borderColor: K.rim, boxShadow: K.shadow }}
-    >
-      {/* Filter toolbar */}
-      <div
-        className="px-6 py-5 border-b flex flex-wrap items-center gap-3"
-        style={{ borderColor: K.hairline }}
-      >
-        <Skel isDark={isDark} w={220} h={36} radius={10} />
-        <Skel isDark={isDark} w={150} h={36} radius={10} />
-        <Skel isDark={isDark} w={150} h={36} radius={10} />
-        <Skel isDark={isDark} w={150} h={36} radius={10} />
+    <div className="rounded-2xl overflow-hidden bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] shadow-[var(--ds-shadow)]">
+      <div className="px-6 py-5 flex flex-wrap items-center gap-3 border-b border-[var(--ds-hairline)]">
+        <Skel w={220} h={36} radius={10} />
+        <Skel w={150} h={36} radius={10} />
+        <Skel w={150} h={36} radius={10} />
+        <Skel w={150} h={36} radius={10} />
         <div className="flex-1" />
-        <Skel isDark={isDark} w={110} h={36} radius={10} />
+        <Skel w={110} h={36} radius={10} />
       </div>
 
-      {/* Table head */}
-      <div
-        className="px-6 py-4 flex items-center gap-4"
-        style={{ borderBottom: `1px solid ${K.hairline}` }}
-      >
-        <Skel isDark={isDark} w="24%" h={10} />
-        <Skel isDark={isDark} w="16%" h={10} />
-        <Skel isDark={isDark} w="18%" h={10} />
-        <Skel isDark={isDark} w="14%" h={10} />
-        <Skel isDark={isDark} w="14%" h={10} />
-        <Skel isDark={isDark} w="10%" h={10} />
+      <div className="px-6 py-4 flex items-center gap-4 border-b border-[var(--ds-hairline)]">
+        <Skel w="24%" h={10} />
+        <Skel w="16%" h={10} />
+        <Skel w="18%" h={10} />
+        <Skel w="14%" h={10} />
+        <Skel w="14%" h={10} />
+        <Skel w="10%" h={10} />
       </div>
 
-      {/* Rows */}
       <div className="px-6 py-2">
         {Array.from({ length: rows }).map((_, i) => (
           <div
             key={i}
-            className="flex items-center gap-4 py-4"
-            style={{ borderBottom: i < rows - 1 ? `1px solid ${K.hairline}` : 'none' }}
+            className={`flex items-center gap-4 py-4 ${i < rows - 1 ? 'border-b border-[var(--ds-hairline)]' : ''}`}
           >
-            <div className="flex items-center gap-3" style={{ width: '24%' }}>
-              <Skel isDark={isDark} w={34} h={34} radius={10} />
+            <div className="flex items-center gap-3 w-[24%]">
+              <Skel w={34} h={34} radius={10} />
               <div className="flex-1 space-y-2">
-                <Skel isDark={isDark} w="80%" h={11} />
-                <Skel isDark={isDark} w="55%" h={9} />
+                <Skel w="80%" h={11} />
+                <Skel w="55%" h={9} />
               </div>
             </div>
-            <Skel isDark={isDark} w="16%" h={11} />
-            <Skel isDark={isDark} w="18%" h={11} />
-            <Skel isDark={isDark} w="14%" h={22} radius={999} />
-            <Skel isDark={isDark} w="14%" h={11} />
-            <Skel isDark={isDark} w="10%" h={11} />
+            <Skel w="16%" h={11} />
+            <Skel w="18%" h={11} />
+            <Skel w="14%" h={22} radius={999} />
+            <Skel w="14%" h={11} />
+            <Skel w="10%" h={11} />
           </div>
         ))}
       </div>
@@ -119,28 +88,27 @@ function StatusSummarySkeleton({ isDark, K }) {
 }
 
 /* Skeleton matching the VcpTransactionRecords table layout */
-function TransactionsSkeleton({ isDark, K }) {
+function TransactionsSkeleton() {
   const rows = 10;
   return (
     <div className="p-6">
       <div className="flex items-center gap-4 mb-4 px-2">
         {[120, 140, 110, 130, 100, 90].map((w, i) => (
-          <Skel key={i} isDark={isDark} w={w} h={10} />
+          <Skel key={i} w={w} h={10} />
         ))}
       </div>
       <div className="space-y-2">
         {Array.from({ length: rows }).map((_, i) => (
           <div
             key={i}
-            className="flex items-center gap-4 px-4 py-3 rounded-xl"
-            style={{ background: K.chipBg, border: `1px solid ${K.hairline}` }}
+            className="flex items-center gap-4 px-4 py-3 rounded-xl bg-[var(--ds-chip-bg)] border border-[var(--ds-hairline)]"
           >
-            <Skel isDark={isDark} w="18%" h={11} />
-            <Skel isDark={isDark} w="14%" h={11} />
-            <Skel isDark={isDark} w="22%" h={11} />
-            <Skel isDark={isDark} w="12%" h={11} />
-            <Skel isDark={isDark} w="16%" h={11} />
-            <Skel isDark={isDark} w="10%" h={11} />
+            <Skel w="18%" h={11} />
+            <Skel w="14%" h={11} />
+            <Skel w="22%" h={11} />
+            <Skel w="12%" h={11} />
+            <Skel w="16%" h={11} />
+            <Skel w="10%" h={11} />
           </div>
         ))}
       </div>
@@ -149,12 +117,10 @@ function TransactionsSkeleton({ isDark, K }) {
 }
 
 function Vcp_CustomerSummary() {
-  const { theme } = useTheme();
+  const { theme, isDark } = useTokens();
   const { toasts, showToast, removeToast } = useToast();
-  const K = dashTokens(theme === 'dark');
   const routePath = '/Vcp_CustomerSummary';
   const { access } = useAccessControl(routePath);
-  const isDark = theme === 'dark';
 
   useComponentRegistration({
     name: 'Vcp_CustomerSummary',
@@ -187,14 +153,11 @@ function Vcp_CustomerSummary() {
   const [statusSummaryPeriodTo,   setStatusSummaryPeriodTo]   = useState("");
   const [selectedProgramStatus, setSelectedProgramStatus] = useState("Active");
   const [currentCustomerPage, setCurrentCustomerPage] = useState(1);
-  const [itemsPerCustomerPage, setItemsPerCustomerPage] = useState(10);
+  const [itemsPerCustomerPage] = useState(10);
 
-  /* ── Ledger modal ─────────────────────────────────────────────────────
-     ledgerReturnCustomer remembers the customer that opened the ledger
-     so the ">" button on the transaction view can restore it without a
-     refetch (the ledger stays mounted the whole time).                 */
+  /* ── Ledger modal ───────────────────────────────────────────────── */
   const [modalCustomer, setModalCustomer] = useState(null);
-  const [ledgerReturnCustomer, setLedgerReturnCustomer] = useState(null);
+  const [, setLedgerReturnCustomer] = useState(null);
 
   /* ── Transaction records view ── */
   const [transactionCustomer, setTransactionCustomer]         = useState(null);
@@ -205,7 +168,6 @@ function Vcp_CustomerSummary() {
   const [filteredTransactions, setFilteredTransactions]       = useState([]);
   const [transactionsLoading, setTransactionsLoading]         = useState(false);
 
-  /* Keep a ref so loadDetailedTransactionsData always reads fresh customer */
   const transactionCustomerRef = useRef(null);
   useEffect(() => { transactionCustomerRef.current = transactionCustomer; }, [transactionCustomer]);
 
@@ -328,12 +290,9 @@ function Vcp_CustomerSummary() {
   };
   const applyFilters = () => { showToast("Filters applied successfully!", "success"); };
 
-  /* Row click just hands the raw row to the modal */
   const handleCustomerClick = (customer) => setModalCustomer(customer);
 
-  /* ─────────────────────────────────────────────────────────────────────────
-     Load the detailed SAP transactions for the active transactionCustomer.
-     ───────────────────────────────────────────────────────────────────────── */
+  /* Load detailed transactions — VCP merges rebateDetails from the response */
   const loadDetailedTransactionsData = useCallback(async (silent = false) => {
     const cust = transactionCustomerRef.current;
     if (!cust) return;
@@ -379,39 +338,22 @@ function Vcp_CustomerSummary() {
     }
   }, [periodFrom, periodTo]);
 
-  /* Reload whenever the period range changes while the transaction view is open */
   useEffect(() => {
     if (!transactionCustomer) return;
-    if (!periodFrom && !periodTo) return;   // wait until dates are set
+    if (!periodFrom && !periodTo) return;
     loadDetailedTransactionsData(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [periodFrom, periodTo]);
 
-  /* ─────────────────────────────────────────────────────────────────────────
-     "Transactions" clicked inside the CustomerLedgerModal.
-
-     IMPORTANT: We deliberately DO NOT close the ledger here. It stays
-     mounted behind the transaction modal (z-[60] vs. its z-50), so when
-     the user clicks ">" the ledger reappears instantly with all of its
-     already-fetched data — no refetch, no year reset, no scroll loss.
-     ───────────────────────────────────────────────────────────────────────── */
+  /* Transactions clicked from ledger — ledger stays mounted underneath */
   const handleViewTransactionsFromLedger = (payload) => {
     const {
-      customer,
-      customerCode,
-      customerName,
-      customerAgent,
-      rebateCodes,
-      fallbackRebateCode,
-      fallbackRebateType,
+      customer, customerCode, customerName, customerAgent,
+      rebateCodes, fallbackRebateCode, fallbackRebateType,
     } = payload;
 
-    // Remember the customer so the ">" button can restore the ledger view
     if (customer) setLedgerReturnCustomer(customer);
 
-    // ⚠️ Note: we do NOT call setModalCustomer(null) — the ledger stays mounted.
-
-    // Build the customer object the transaction view consumes
     const nextCustomer = {
       ...(customer || {}),
       code:        customerCode || customer?.code,
@@ -424,8 +366,6 @@ function Vcp_CustomerSummary() {
 
     setTransactionCustomer(nextCustomer);
     transactionCustomerRef.current = nextCustomer;
-
-    // Reset pagination + period, then seed period from the rebate window
     setTransactionCurrentPage(1);
     setFilteredTransactions([]);
 
@@ -452,7 +392,6 @@ function Vcp_CustomerSummary() {
     }
   };
 
-  /* Close ONLY the transaction view. The ledger is still mounted underneath. */
   const closeTransactionView = () => {
     setTransactionCustomer(null);
     transactionCustomerRef.current = null;
@@ -462,34 +401,21 @@ function Vcp_CustomerSummary() {
     setTransactionCurrentPage(1);
   };
 
-  /* ">" button → close only the transaction view.
-     The ledger reappears instantly with its previous state intact. */
-  const handleBackToLedger = () => {
-    closeTransactionView();
-  };
+  const handleBackToLedger = () => { closeTransactionView(); };
 
-  /* Ledger's own X button → close ledger + clear the return reference. */
   const handleCloseLedger = () => {
     setModalCustomer(null);
     setLedgerReturnCustomer(null);
   };
 
-  /* Show the summary skeleton only on the very first load, so the 3 s
-     auto-refresh doesn't flash skeletons over already-visible data. */
   const showSummarySkeleton = customersLoading && customers.length === 0;
 
   return (
-    <div className="dash-page flex min-h-screen w-full" style={{ background: K.bg, color: K.ink }}>
-      <style>{DASH_FONT}{SKELETON_CSS}</style>
+    <DesignPage className="flex w-full">
+      {/* Aurora wash — blue/green for VCP */}
+      <div className="pointer-events-none fixed inset-0 z-0 ds-aurora-blue-green" />
 
-      <div className="pointer-events-none fixed inset-0" style={{
-        backgroundImage: `
-          radial-gradient(700px circle at 8% 0%, ${APPLE.blue}${theme === 'dark' ? "26" : "30"}, transparent 55%),
-          radial-gradient(650px circle at 92% 10%, ${APPLE.green}${theme === 'dark' ? "1a" : "20"}, transparent 55%)
-        `, zIndex: 0,
-      }} />
-
-      <ToastContainer toasts={toasts} removeToast={removeToast} isDark={theme === 'dark'} />
+      <ToastContainer toasts={toasts} removeToast={removeToast} isDark={isDark} />
 
       <Sidebar
         collapsed={collapsed} setCollapsed={setCollapsed}
@@ -499,10 +425,21 @@ function Vcp_CustomerSummary() {
         theme={theme}
       />
 
-      <main className={`relative flex-1 flex flex-col min-h-screen transition-all duration-500 ${collapsed ? "ml-20" : "ml-64"}`} style={{ zIndex: 1 }}>
-        <Header collapsed={collapsed} userName={userName} userCode={userCode} initials={initials} logo={vcpLogo} theme={theme} />
+      <main
+        className={`relative flex-1 flex flex-col min-h-screen z-[1] transition-all duration-500 ${
+          collapsed ? 'ml-20' : 'ml-64'
+        }`}
+      >
+        <Header
+          collapsed={collapsed}
+          userName={userName}
+          userCode={userCode}
+          initials={initials}
+          logo={vcpLogo}
+          theme={theme}
+        />
 
-        <div className="pt-16 flex-1 p-8 overflow-auto dash-scroll">
+        <div className="pt-16 flex-1 p-8 overflow-auto ds-scroll">
           <div className="relative p-8 w-full max-w-[1600px] mx-auto mt-6">
             <StatusSummary
               customers={customers}
@@ -526,31 +463,26 @@ function Vcp_CustomerSummary() {
               onFetchData={loadCustomerStatus}
               fetchIntervalMs={3000}
               autoFetchEnabled={!modalCustomer && !transactionCustomer}
-              isLoading={false}                 /* ← child spinner suppressed; skeleton handles it */
+              isLoading={false}
               selectedProgramStatus={selectedProgramStatus}
               setSelectedProgramStatus={setSelectedProgramStatus}
               showStatus={false}
             />
 
-            {/* Skeleton overlay on first load (kept as overlay so StatusSummary never unmounts
-                and its polling / filter state is preserved) */}
             {showSummarySkeleton && (
               <div
-                className="absolute inset-0 p-8"
-                style={{ background: K.bg, zIndex: 5 }}
+                className="absolute inset-0 p-8 bg-[var(--ds-bg)] z-[5]"
                 aria-busy="true"
                 aria-live="polite"
               >
-                <StatusSummarySkeleton isDark={isDark} K={K} />
+                <StatusSummarySkeleton />
               </div>
             )}
           </div>
         </div>
       </main>
 
-      {/* ── Customer Ledger Modal ─────────────────────────────────────────
-          NOTE: This stays mounted while the transaction view is open on top
-          of it, so returning to it never triggers a refetch.            */}
+      {/* ── Customer Ledger Modal ───────────────────────────────────────── */}
       {modalCustomer && (
         <CustomerLedgerModal
           customer={modalCustomer}
@@ -562,68 +494,50 @@ function Vcp_CustomerSummary() {
         />
       )}
 
-      {/* ── Transaction Records Modal (opens from the ledger's "Transactions") ── */}
+      {/* ── Transaction Records Modal ───────────────────────────────────── */}
       {transactionCustomer && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4"
-          style={{
-            backgroundColor: isDark ? "rgba(10,10,14,0.7)" : "rgba(0,0,0,0.45)",
-            backdropFilter: "blur(16px)",
-            WebkitBackdropFilter: "blur(16px)",
-          }}
+          className={`fixed inset-0 z-[60] flex items-center justify-center p-4 backdrop-blur-xl ${
+            isDark ? 'bg-[rgba(10,10,14,0.7)]' : 'bg-black/45'
+          }`}
           onClick={closeTransactionView}
         >
           <div
-            className="w-full max-w-[1500px] h-[92vh] rounded-[24px] overflow-hidden border flex flex-col relative"
-            style={{
-              background: K.glassDeep,
-              borderColor: K.rim,
-              boxShadow: K.shadow,
-            }}
+            className="w-full max-w-[1500px] h-[92vh] rounded-[24px] overflow-hidden border flex flex-col relative bg-[var(--ds-glass-deep)] border-[var(--ds-rim)] shadow-[var(--ds-shadow)]"
             onClick={(e) => e.stopPropagation()}
           >
             {/* ">" button — Back to Ledger (closes only the transaction view) */}
             <button
               onClick={handleBackToLedger}
-              className="absolute right-4 top-4 z-20 w-8 h-8 flex items-center justify-center rounded-full transition-all"
-              style={{ background: K.chipBg, color: K.muted }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hairline; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = K.chipBg; }}
+              className="absolute right-4 top-4 z-20 w-8 h-8 flex items-center justify-center rounded-full transition-all bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] hover:bg-[var(--ds-hairline)] hover:text-[var(--ds-ink)]"
               title="Back to Customer Ledger"
             >
               <ChevronRight size={16} />
             </button>
 
-            {/* Header strip: identity + period range */}
-            <div
-              className="flex-shrink-0 px-6 py-4 border-b flex items-center justify-between gap-4"
-              style={{
-                borderColor: K.hairline,
-                background: `linear-gradient(135deg, ${APPLE.blue}0a 0%, ${APPLE.purple}0a 100%)`,
-              }}
-            >
+            {/* Header strip */}
+            <div className="flex-shrink-0 px-6 py-4 border-b flex items-center justify-between gap-4 border-[var(--ds-hairline)] bg-gradient-to-br from-[#0A84FF]/5 to-[#BF5AF2]/5">
               <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-1" style={{ color: K.muted }}>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] mb-1 text-[var(--ds-muted)]">
                   Transaction Records
                 </p>
-                <h2 className="text-lg font-bold truncate leading-tight" style={{ color: K.ink, letterSpacing: '-0.02em' }}>
+                <h2 className="text-lg font-bold truncate leading-tight tracking-[-0.02em] text-[var(--ds-ink)]">
                   {transactionCustomer.customer || transactionCustomer.customerName || 'Unknown Customer'}
                 </h2>
-                <p className="text-[11px] font-mono mt-0.5" style={{ color: K.muted }}>
+                <p className="text-[11px] font-mono mt-0.5 text-[var(--ds-muted)]">
                   {transactionCustomer.code || transactionCustomer.customerCode}
                   {transactionCustomer.agent && transactionCustomer.agent !== 'Unknown Agent' && (
-                    <span style={{ color: K.faint }}> · {transactionCustomer.agent}</span>
+                    <span className="text-[var(--ds-faint)]"> · {transactionCustomer.agent}</span>
                   )}
                   {transactionCustomer.rebateCode && (
-                    <span style={{ color: K.faint }}> · {transactionCustomer.rebateCode}</span>
+                    <span className="text-[var(--ds-faint)]"> · {transactionCustomer.rebateCode}</span>
                   )}
                 </p>
               </div>
             </div>
 
-            {/* Transaction records body — VcpTransactionRecords stays mounted so its
-                auto-load effect doesn't fire in a loop; skeleton is an overlay. */}
-            <div className="flex-1 min-h-0 relative" style={{ background: K.bg }}>
+            {/* Body */}
+            <div className="flex-1 min-h-0 relative bg-[var(--ds-bg)]">
               <VcpTransactionRecords
                 theme={theme}
                 customerModalTab="transaction"
@@ -633,7 +547,7 @@ function Vcp_CustomerSummary() {
                 setTransactionCurrentPage={setTransactionCurrentPage}
                 transactionRowsPerPage={transactionRowsPerPage}
                 setTransactionRowsPerPage={setTransactionRowsPerPage}
-                isLoading={false}                 /* ← child spinner suppressed; skeleton handles it */
+                isLoading={false}
                 periodFrom={periodFrom}
                 periodTo={periodTo}
                 setPeriodFrom={setPeriodFrom}
@@ -645,19 +559,18 @@ function Vcp_CustomerSummary() {
 
               {transactionsLoading && (
                 <div
-                  className="absolute inset-0 overflow-auto dash-scroll"
-                  style={{ background: K.bg, zIndex: 5 }}
+                  className="absolute inset-0 overflow-auto ds-scroll bg-[var(--ds-bg)] z-[5]"
                   aria-busy="true"
                   aria-live="polite"
                 >
-                  <TransactionsSkeleton isDark={isDark} K={K} />
+                  <TransactionsSkeleton />
                 </div>
               )}
             </div>
           </div>
         </div>
       )}
-    </div>
+    </DesignPage>
   );
 }
 

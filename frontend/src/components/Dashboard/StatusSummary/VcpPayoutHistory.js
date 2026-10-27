@@ -51,7 +51,7 @@ const VcpPayoutHistory = ({
     setIsSummaryLoading(true);
     setSummaryLoadError(null);
     try {
-      const url = `http://192.168.100.193:3009/api/vcp/payouts/customer/${customerCardCode}/payout-summary?db=VCP`;
+      const url = `/api/vcp/payouts/customer/${customerCardCode}/payout-summary?db=VCP`;
       const response = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       const result = await response.json();

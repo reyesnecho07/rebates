@@ -6,6 +6,7 @@ import RebateLogo from "./assets/Rebate.png";
 import Sidebar from "./components/Sidebar";
 import Header from './components/Header';
 import { useTheme } from './context/ThemeContext';
+import { API_BASE, DB_NAME } from './config/appConfig';
 
 function HomePage() {
   const { theme, updateTheme } = useTheme();
@@ -20,8 +21,6 @@ function HomePage() {
   const [showVcpDropdown, setShowVcpDropdown] = useState(false);
 
   // API Base URL - Update this to your backend server
-  const API_BASE = 'http://192.168.100.193:3009/api';
-  const DB_NAME = 'USER';
 
   // Floating particles effect state
   const [particles, setParticles] = useState([]);

@@ -9,16 +9,10 @@ class PermissionWebSocket {
     this.reconnectToken = null;
   }
 
-  // ✅ NEW: Get WebSocket URL from environment
   getWebSocketUrl(token) {
-    // Get base URL from environment or fallback to localhost
-    const wsBaseUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:3009';
-    
-    // Remove any trailing slashes
-    const cleanUrl = wsBaseUrl.replace(/\/$/, '');
-    
-    // Construct full WebSocket URL
-    return `${cleanUrl}/ws/permissions?token=${token}`;
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const base = process.env.REACT_APP_WS_URL || `${proto}://${window.location.host}/permission-ws`;
+    return token ? `${base}?token=${encodeURIComponent(token)}` : base;
   }
 
   connect(token) {

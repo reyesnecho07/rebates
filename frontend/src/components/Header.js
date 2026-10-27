@@ -2,43 +2,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Sun, Moon, Loader2, CheckCircle, X } from 'lucide-react';
-import { useTheme } from '../context/ThemeContext';
 import axios from 'axios';
+import { API_BASE, DB_NAME } from '../config/appConfig';
 
-/* ─── Apple system colour language ───────────────────────────────────────── */
-const APPLE = {
-  blue:   "#0A84FF",
-  purple: "#BF5AF2",
-  red:    "#FF453A",
-  orange: "#FF9F0A",
-  green:  "#32D74B",
-  gray:   "#8E8E93",
-};
+/* ── Design system ──────────────────────────────────────────────── */
+import { PALETTE, useTokens } from '../design-system';
 
-const tokens = (isDark) => ({
-  ink:       isDark ? "#F2F2F7" : "#1C1C1E",
-  muted:     isDark ? "#98989F" : "#6E6E73",
-  faint:     isDark ? "#68686D" : "#AEAEB2",
-  glass:     isDark ? "rgba(30,30,36,0.6)"   : "rgba(255,255,255,0.65)",
-  glassDeep: isDark ? "rgba(24,24,28,0.9)"   : "rgba(255,255,255,0.95)",
-  hairline:  isDark ? "rgba(255,255,255,0.08)" : "rgba(60,60,67,0.12)",
-  rim:       isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.8)",
-  chipBg:    isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
-  hover:     isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
-  shadow:    isDark ? "0 20px 50px -14px rgba(0,0,0,0.65)" : "0 20px 50px -18px rgba(30,41,79,0.18)",
-  bg:        isDark ? "#000000" : "#EEF1F7",
-});
-
-const FONT = `
-  .hd-page, .hd-page * { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif; }
-  .hd-glass { -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%); }
-  @keyframes hd-pop { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-  .hd-pop { animation: hd-pop 0.2s cubic-bezier(0.16,1,0.3,1); }
-  @keyframes hd-fade { from { opacity: 0; } to { opacity: 1; } }
-  .hd-fade { animation: hd-fade 0.2s ease-out; }
-`;
-
-// ── Shared profile-sync constants ────────────────────────────────────────
+// ── Shared profile-sync constants ────────────────────────────────
 const PROFILE_UPDATED_EVENT = 'app:profile-updated';
 const getProfileImageKey = (userCode) => `userProfileImage_${userCode}`;
 
@@ -63,15 +33,11 @@ const Header = ({
     message: ""
   });
 
-  const { theme: currentTheme, updateTheme } = useTheme();
-  const isDark = currentTheme === 'dark';
-  const K = tokens(isDark);
+  const { theme: currentTheme, isDark, updateTheme, K } = useTokens();
 
   const fileInputRef = useRef(null);
   const profileDropdownRef = useRef(null);
   const profileButtonRef = useRef(null);
-  const API_BASE = 'http://192.168.100.193:3009/api';
-  const DB_NAME = 'USER';
 
   useEffect(() => {
     if (profileImageProp !== undefined) {
@@ -255,9 +221,8 @@ const Header = ({
 
   return (
     <>
-      <style>{FONT}</style>
       <header
-        className="hd-page hd-glass fixed top-0 right-0 h-16 flex items-center px-8 border-b z-40 transition-all duration-500"
+        className="ds-page ds-glass fixed top-0 right-0 h-16 flex items-center px-8 border-b z-40 transition-all duration-500"
         style={{
           left: collapsed ? '80px' : '256px',
           width: collapsed ? 'calc(100% - 80px)' : 'calc(100% - 256px)',
@@ -302,7 +267,7 @@ const Header = ({
             >
               <div
                 className="relative w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium uppercase overflow-hidden group cursor-pointer"
-                style={{ boxShadow: `0 0 0 2px ${APPLE.blue}33` }}
+                style={{ boxShadow: `0 0 0 2px ${PALETTE.blue}33` }}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (showProfileDropdown) {
@@ -325,7 +290,7 @@ const Header = ({
                 <div
                   className={`w-full h-full flex items-center justify-center profile-initials ${profileImage ? 'hidden' : ''}`}
                   style={{
-                    background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
+                    background: `linear-gradient(155deg, ${PALETTE.blue} 0%, ${PALETTE.purple} 100%)`,
                   }}
                 >
                   {initials}
@@ -357,7 +322,7 @@ const Header = ({
             {showProfileDropdown && (
               <div
                 ref={profileDropdownRef}
-                className="hd-glass hd-pop absolute right-0 top-full mt-2 w-64 rounded-2xl overflow-hidden z-50"
+                className="ds-glass ds-pop absolute right-0 top-full mt-2 w-64 rounded-2xl overflow-hidden z-50"
                 style={{
                   background: K.glassDeep,
                   border: `1px solid ${K.rim}`,
@@ -369,7 +334,7 @@ const Header = ({
                   <div className="flex items-center gap-3">
                     <div
                       className="relative w-10 h-10 rounded-full overflow-hidden group cursor-pointer"
-                      style={{ boxShadow: `0 0 0 2px ${APPLE.blue}33` }}
+                      style={{ boxShadow: `0 0 0 2px ${PALETTE.blue}33` }}
                       onClick={() => {
                         setShowProfileDropdown(false);
                         setShowUploadModal(true);
@@ -389,7 +354,7 @@ const Header = ({
 
                       <div
                         className={`w-full h-full flex items-center justify-center text-white font-medium uppercase dropdown-initials ${profileImage ? 'hidden' : ''}`}
-                        style={{ background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)` }}
+                        style={{ background: `linear-gradient(155deg, ${PALETTE.blue} 0%, ${PALETTE.purple} 100%)` }}
                       >
                         {initials}
                       </div>
@@ -415,19 +380,19 @@ const Header = ({
                       <span className="text-sm font-medium" style={{ color: K.ink }}>Theme</span>
 
                       {themeSaveStatus.saving && (
-                        <div className="flex items-center gap-1 text-xs" style={{ color: APPLE.blue }}>
+                        <div className="flex items-center gap-1 text-xs" style={{ color: PALETTE.blue }}>
                           <Loader2 className="w-3 h-3 animate-spin" />
                           <span>Saving…</span>
                         </div>
                       )}
                       {themeSaveStatus.saved && !themeSaveStatus.error && (
-                        <div className="flex items-center gap-1 text-xs" style={{ color: APPLE.green }}>
+                        <div className="flex items-center gap-1 text-xs" style={{ color: PALETTE.green }}>
                           <CheckCircle className="w-3 h-3" />
                           <span>Saved</span>
                         </div>
                       )}
                       {themeSaveStatus.error && (
-                        <div className="flex items-center gap-1 text-xs" style={{ color: APPLE.red }}>
+                        <div className="flex items-center gap-1 text-xs" style={{ color: PALETTE.red }}>
                           <X className="w-3 h-3" />
                           <span>Error</span>
                         </div>
@@ -439,9 +404,9 @@ const Header = ({
                         onClick={() => handleThemeToggle('light')}
                         className="flex-1 flex items-center justify-center gap-2 py-2 px-2 rounded-xl border transition-all duration-200 text-sm"
                         style={{
-                          background: currentTheme === 'light' ? `${APPLE.blue}18` : K.chipBg,
-                          borderColor: currentTheme === 'light' ? `${APPLE.blue}55` : K.hairline,
-                          color: currentTheme === 'light' ? APPLE.blue : K.muted,
+                          background: currentTheme === 'light' ? `${PALETTE.blue}18` : K.chipBg,
+                          borderColor: currentTheme === 'light' ? `${PALETTE.blue}55` : K.hairline,
+                          color: currentTheme === 'light' ? PALETTE.blue : K.muted,
                           fontWeight: currentTheme === 'light' ? 600 : 500,
                         }}
                         onMouseEnter={(e) => {
@@ -465,9 +430,9 @@ const Header = ({
                         onClick={() => handleThemeToggle('dark')}
                         className="flex-1 flex items-center justify-center gap-2 py-2 px-2 rounded-xl border transition-all duration-200 text-sm"
                         style={{
-                          background: currentTheme === 'dark' ? `${APPLE.blue}18` : K.chipBg,
-                          borderColor: currentTheme === 'dark' ? `${APPLE.blue}55` : K.hairline,
-                          color: currentTheme === 'dark' ? APPLE.blue : K.muted,
+                          background: currentTheme === 'dark' ? `${PALETTE.blue}18` : K.chipBg,
+                          borderColor: currentTheme === 'dark' ? `${PALETTE.blue}55` : K.hairline,
+                          color: currentTheme === 'dark' ? PALETTE.blue : K.muted,
                           fontWeight: currentTheme === 'dark' ? 600 : 500,
                         }}
                         onMouseEnter={(e) => {
@@ -516,8 +481,8 @@ const Header = ({
                       window.location.href = "/login";
                     }}
                     className="flex items-center gap-3 px-4 py-2.5 text-sm transition-colors border-t"
-                    style={{ color: APPLE.red, borderColor: K.hairline }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = `${APPLE.red}14`; }}
+                    style={{ color: PALETTE.red, borderColor: K.hairline }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = `${PALETTE.red}14`; }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -535,7 +500,7 @@ const Header = ({
       {/* Profile Picture Upload Modal */}
       {showUploadModal && (
         <div
-          className="hd-page fixed inset-0 flex items-center justify-center z-50 p-4 hd-fade"
+          className="ds-page ds-fade fixed inset-0 flex items-center justify-center z-50 p-4"
           style={{
             backgroundColor: isDark ? "rgba(10,10,14,0.55)" : "rgba(0,0,0,0.35)",
             backdropFilter: "blur(16px)",
@@ -543,7 +508,7 @@ const Header = ({
           }}
         >
           <div
-            className="hd-glass hd-pop rounded-[28px] w-full max-w-md overflow-hidden"
+            className="ds-glass ds-pop rounded-[28px] w-full max-w-md overflow-hidden"
             style={{
               background: K.glassDeep,
               border: `1px solid ${K.rim}`,
@@ -585,7 +550,7 @@ const Header = ({
                     ) : (
                       <div
                         className="w-full h-full flex items-center justify-center"
-                        style={{ background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)` }}
+                        style={{ background: `linear-gradient(155deg, ${PALETTE.blue} 0%, ${PALETTE.purple} 100%)` }}
                       >
                         <span className="text-3xl font-bold text-white">{initials}</span>
                       </div>
@@ -606,7 +571,7 @@ const Header = ({
                   <label
                     className="flex flex-col items-center justify-center p-4 border-2 border-dashed rounded-xl cursor-pointer transition-colors"
                     style={{ borderColor: K.hairline }}
-                    onMouseEnter={(e) => e.currentTarget.style.borderColor = `${APPLE.blue}88`}
+                    onMouseEnter={(e) => e.currentTarget.style.borderColor = `${PALETTE.blue}88`}
                     onMouseLeave={(e) => e.currentTarget.style.borderColor = K.hairline}
                   >
                     <UploadIcon className="w-6 h-6 mb-2" style={{ color: K.muted }} />
@@ -624,7 +589,7 @@ const Header = ({
                     onClick={() => alert("Camera functionality would open here in a real app")}
                     className="flex flex-col items-center justify-center p-4 border-2 rounded-xl cursor-pointer transition-colors"
                     style={{ borderColor: K.hairline }}
-                    onMouseEnter={(e) => e.currentTarget.style.borderColor = `${APPLE.blue}88`}
+                    onMouseEnter={(e) => e.currentTarget.style.borderColor = `${PALETTE.blue}88`}
                     onMouseLeave={(e) => e.currentTarget.style.borderColor = K.hairline}
                   >
                     <CameraIcon className="w-6 h-6 mb-2" style={{ color: K.muted }} />
@@ -638,11 +603,11 @@ const Header = ({
                   onClick={removeProfileImage}
                   className="flex-1 py-2.5 px-4 font-medium rounded-xl transition-colors"
                   style={{
-                    background: `${APPLE.red}18`,
-                    color: APPLE.red,
+                    background: `${PALETTE.red}18`,
+                    color: PALETTE.red,
                   }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = `${APPLE.red}28`}
-                  onMouseLeave={(e) => e.currentTarget.style.background = `${APPLE.red}18`}
+                  onMouseEnter={(e) => e.currentTarget.style.background = `${PALETTE.red}28`}
+                  onMouseLeave={(e) => e.currentTarget.style.background = `${PALETTE.red}18`}
                 >
                   Remove
                 </button>
@@ -652,13 +617,13 @@ const Header = ({
                   className="flex-1 py-2.5 px-4 font-medium rounded-xl transition-colors text-white"
                   style={{
                     background: (uploadPreview || profileImage)
-                      ? `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`
+                      ? `linear-gradient(155deg, ${PALETTE.blue} 0%, ${PALETTE.purple} 100%)`
                       : K.chipBg,
                     color: (uploadPreview || profileImage) ? "#FFFFFF" : K.faint,
                     cursor: (uploadPreview || profileImage) ? "pointer" : "not-allowed",
                     opacity: (uploadPreview || profileImage) ? 1 : 0.6,
                     boxShadow: (uploadPreview || profileImage)
-                      ? `0 4px 16px -6px ${APPLE.blue}66`
+                      ? `0 4px 16px -6px ${PALETTE.blue}66`
                       : "none",
                   }}
                   onMouseEnter={(e) => {

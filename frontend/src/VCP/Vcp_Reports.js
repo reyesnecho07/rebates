@@ -1,3 +1,4 @@
+// src/pages/Vcp_Reports.jsx
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import axios from 'axios';
 import {
@@ -15,11 +16,14 @@ import { saveAs } from 'file-saver';
 import Sidebar from "../components/Sidebar";
 import Header from '../components/Header';
 import AccessDenied from "../components/common/AccessDenied";
-import { useTheme } from '../context/ThemeContext';
 import { useComponentRegistration } from '../hooks/useComponentRegistration';
 import useAccessControl from '../hooks/useAccessControl';
+import { API_BASE } from '../config/appConfig';
 
-/* ─── Helpers ─────────────────────────────────────────────────────────────── */
+/* ── Design system ──────────────────────────────────────────────── */
+import { PALETTE, useTokens, DesignPage } from '../design-system';
+
+/* ─── Helpers ───────────────────────────────────────────────────── */
 const fmt = (n, decimals = 2) =>
   (parseFloat(n) || 0).toLocaleString('en-US', {
     minimumFractionDigits: decimals,
@@ -45,6 +49,7 @@ const ROWS_FIRST_PAGE = 22;
 const ROWS_OTHER_PAGE = 30;
 const MAX_ROWS_WITH_SIGNATORIES = 26;
 
+/* ─── Report paper styles (intentional inline — used by html2canvas / PDF) ── */
 const BORDER_HEADER = '1px solid #374151';
 const BORDER_DATA   = '1px solid #374151';
 
@@ -78,71 +83,13 @@ const rtdStyle = (extra = {}) => ({
   ...extra,
 });
 
-const APPLE = {
-  blue:   "#0A84FF",
-  purple: "#BF5AF2",
-  red:    "#FF453A",
-  orange: "#FF9F0A",
-  green:  "#32D74B",
-  gray:   "#8E8E93",
-};
-
-const dashTokens = (isDark) => ({
-  ink:       isDark ? "#F2F2F7" : "#1C1C1E",
-  muted:     isDark ? "#98989F" : "#6E6E73",
-  faint:     isDark ? "#68686D" : "#AEAEB2",
-  glass:     isDark ? "rgba(30,30,36,0.6)"   : "rgba(255,255,255,0.65)",
-  glassDeep: isDark ? "rgba(24,24,28,0.95)"  : "rgba(255,255,255,0.98)",
-  hairline:  isDark ? "rgba(255,255,255,0.08)" : "rgba(60,60,67,0.12)",
-  rim:       isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.8)",
-  chipBg:    isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
-  hover:     isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
-  shadow:    isDark ? "0 20px 50px -14px rgba(0,0,0,0.65)" : "0 20px 50px -18px rgba(30,41,79,0.18)",
-  bg:        isDark ? "#000000" : "#EEF1F7",
-});
-
-const DASH_FONT = `
-  .dash-page, .dash-page * { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif; }
-  .dash-glass { -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%); }
-  .dash-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
-  .dash-scroll::-webkit-scrollbar-thumb { background: rgba(142,142,147,0.4); border-radius: 999px; }
-  .dash-scroll::-webkit-scrollbar-track { background: transparent; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes dash-pop { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-  .dash-pop { animation: dash-pop 0.2s cubic-bezier(0.16,1,0.3,1); }
-  @keyframes fadeSlideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
-  @keyframes pulse-ring { 0% { box-shadow:0 0 0 0 rgba(10,132,255,0.35); } 70% { box-shadow:0 0 0 10px rgba(10,132,255,0); } 100%{ box-shadow:0 0 0 0 rgba(10,132,255,0); } }
-  .nx-card { animation: fadeSlideUp 0.3s ease both; }
-  .nx-btn-primary:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.05); }
-  .nx-btn-primary:active:not(:disabled) { transform: translateY(0); }
-  .nx-btn-secondary:hover:not(:disabled) { transform: translateY(-1px); }
-  .nx-input:focus { border-color: #0A84FF !important; box-shadow: 0 0 0 3px rgba(10,132,255,0.15); }
-  .nx-select:focus { border-color: #0A84FF !important; box-shadow: 0 0 0 3px rgba(10,132,255,0.15); outline: none; }
-`;
-
-const injectFonts = () => {
-  if (document.getElementById('vcp-report-fonts')) return;
-  const link = document.createElement('link');
-  link.id   = 'vcp-report-fonts';
-  link.rel  = 'stylesheet';
-  link.href = 'https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap';
-  document.head.appendChild(link);
-};
-
 const NOTED_BY_NAME = 'Bob Manalo';
 
 function Vcp_Reports() {
-  useEffect(() => { injectFonts(); }, []);
-
-  const { theme, updateTheme } = useTheme();
-  const location = useLocation();
+  const { theme, updateTheme } = useTokens();
+  useLocation(); // preserve hook order
   const reportContainerRef = useRef(null);
   const routePath = '/Vcp_Reports';
-
-  const isDark = theme === 'dark';
-  const K = dashTokens(isDark);
-  const fontStack = "'Outfit', system-ui, sans-serif";
-  const monoStack = "'DM Mono', monospace";
 
   const [collapsed,           setCollapsed]           = useState(false);
   const [showVanDropdown,     setShowVanDropdown]     = useState(false);
@@ -182,8 +129,7 @@ function Vcp_Reports() {
 
   const { access, accessLoading } = useAccessControl(routePath);
 
-  const API_BASE = 'http://192.168.100.193:3009/api';
-  const DB_NAME  = 'VCP';
+  const DB_NAME = 'VCP';
 
   useComponentRegistration({
     name: 'Vcp_Reports',
@@ -192,7 +138,7 @@ function Vcp_Reports() {
     routePath: '/Vcp_Reports',
   });
 
-  /* ─── Helpers ──────────────────────────────────────────────────────────── */
+  /* ── Helpers ───────────────────────────────────────────────────── */
   const getCurrentDate = useCallback(() =>
     new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }), []);
 
@@ -233,7 +179,7 @@ function Vcp_Reports() {
     return pages;
   }, []);
 
-  /* ─── Lifecycle ────────────────────────────────────────────────────────── */
+  /* ── Restore persisted state ───────────────────────────────────── */
   useEffect(() => {
     try {
       const savedData   = localStorage.getItem("savedCashFundData");
@@ -257,6 +203,7 @@ function Vcp_Reports() {
     } catch (e) { console.error('Restore error:', e); }
   }, []);
 
+  /* ── Load theme ────────────────────────────────────────────────── */
   useEffect(() => {
     const loadTheme = async () => {
       try {
@@ -277,6 +224,7 @@ function Vcp_Reports() {
     loadTheme();
   }, []); // eslint-disable-line
 
+  /* ── Load user info ────────────────────────────────────────────── */
   useEffect(() => {
     const u        = JSON.parse(localStorage.getItem("currentUser") || "{}");
     const username = u.DisplayName || u.Username || "Unknown User";
@@ -288,6 +236,7 @@ function Vcp_Reports() {
       : parts[0][0].toUpperCase() + parts[parts.length - 1][0].toUpperCase());
   }, []);
 
+  /* ── Persist state ─────────────────────────────────────────────── */
   useEffect(() => { if (reportData) localStorage.setItem("savedCashFundData", JSON.stringify(reportData)); }, [reportData]);
   useEffect(() => {
     localStorage.setItem("savedCashFundParams", JSON.stringify({
@@ -354,7 +303,7 @@ function Vcp_Reports() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showCustomerDropdown, showRebateDropdown]);
 
-  /* ─── Handlers ─────────────────────────────────────────────────────────── */
+  /* ── Handlers ──────────────────────────────────────────────────── */
   const handleRebatesChange = useCallback((codes) => {
     setSelectedRebates(codes);
     setShowReport(false);
@@ -375,7 +324,6 @@ function Vcp_Reports() {
       const minFrom = infos.reduce((m, r) => (!m || (r.DateFrom && r.DateFrom < m)) ? r.DateFrom : m, null);
       const maxTo   = infos.reduce((m, r) => (!m || (r.DateTo   && r.DateTo   > m)) ? r.DateTo   : m, null);
 
-      // Info only — do NOT overwrite the date pickers.
       setRebateInfo({
         DateFrom:  minFrom,
         DateTo:    maxTo,
@@ -478,7 +426,7 @@ function Vcp_Reports() {
     ['savedCashFundData', 'savedCashFundParams', 'savedCashFundShow'].forEach(k => localStorage.removeItem(k));
   };
 
-  /* ─── Exports ───────────────────────────────────────────────────────────── */
+  /* ── Exports ───────────────────────────────────────────────────── */
   const exportToPDF = async () => {
     if (!reportContainerRef.current || !reportData) return;
     try {
@@ -550,13 +498,13 @@ function Vcp_Reports() {
     } catch (e) { console.error('Excel error:', e); alert('Failed to generate Excel file. Please try again.'); }
   };
 
-  /* ─── Status icon ───────────────────────────────────────────────────────── */
+  /* ── Status helpers ────────────────────────────────────────────── */
   const getStatusIcon = (status) => {
     switch (status) {
-      case 'processing': return <RefreshCw style={{ width: 14, height: 14, color: APPLE.blue, animation: 'spin 0.8s linear infinite' }} />;
-      case 'completed':  return <CheckCircle style={{ width: 14, height: 14, color: APPLE.green }} />;
-      case 'failed':     return <XCircle style={{ width: 14, height: 14, color: APPLE.red }} />;
-      default:           return <Clock style={{ width: 14, height: 14, color: K.faint }} />;
+      case 'processing': return <RefreshCw className="text-[#0A84FF] animate-spin" style={{ width: 14, height: 14, animationDuration: '0.8s' }} />;
+      case 'completed':  return <CheckCircle className="text-[#32D74B]" style={{ width: 14, height: 14 }} />;
+      case 'failed':     return <XCircle className="text-[#FF453A]" style={{ width: 14, height: 14 }} />;
+      default:           return <Clock className="text-[var(--ds-faint)]" style={{ width: 14, height: 14 }} />;
     }
   };
 
@@ -564,19 +512,15 @@ function Vcp_Reports() {
     new Date(ds).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   const renderAccessLoading = () => (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 380, fontFamily: fontStack }}>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-        <div style={{
-          width: 36, height: 36, borderRadius: '50%',
-          border: `3px solid ${K.hairline}`, borderTopColor: APPLE.blue,
-          animation: 'spin 0.8s linear infinite',
-        }} />
-        <p style={{ fontSize: 13, color: K.muted }}>Verifying access…</p>
+    <div className="flex items-center justify-center min-h-[380px]">
+      <div className="flex flex-col items-center gap-3.5">
+        <div className="w-9 h-9 rounded-full animate-spin border-[3px] border-[var(--ds-hairline)] border-t-[#0A84FF]" />
+        <p className="text-[13px] text-[var(--ds-muted)]">Verifying access…</p>
       </div>
     </div>
   );
 
-  /* ─── Report page ───────────────────────────────────────────────────────── */
+  /* ─── Report page — LAYOUT INTENTIONAL: ALL INLINE (PDF/PNG canvas) ─── */
   const renderReportPage = (pageRows, pageIndex, totalPages, visible) => {
     const isFirstPage = pageIndex === 0;
     const isLastPage  = pageIndex === totalPages - 1;
@@ -714,26 +658,11 @@ function Vcp_Reports() {
     );
   };
 
-  /* ─── Shared input / label styles ───────────────────────────────────────── */
-  const inputStyle = {
-    width: '100%', padding: '9px 12px',
-    background: K.glass,
-    border: `1px solid ${K.hairline}`,
-    borderRadius: 12, fontSize: 13,
-    color: K.ink, fontFamily: fontStack,
-    outline: 'none', transition: 'border-color 0.2s',
-    boxSizing: 'border-box',
-  };
+  /* ── Shared Tailwind classes ───────────────────────────────────── */
+  const inputClasses = "w-full px-3 py-[9px] rounded-xl text-[13px] outline-none transition-colors bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)] focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.15)]";
+  const labelClasses = "flex items-center gap-1.5 text-[11px] font-semibold text-[var(--ds-muted)] mb-1.5 tracking-[0.05em] uppercase";
 
-  const labelStyle = {
-    display: 'flex', alignItems: 'center', gap: 6,
-    fontSize: 11, fontWeight: 600,
-    color: K.muted, fontFamily: fontStack,
-    marginBottom: 6, letterSpacing: '0.05em',
-    textTransform: 'uppercase',
-  };
-
-  /* ─── Derived flags ─────────────────────────────────────────────────────── */
+  /* ── Derived flags ─────────────────────────────────────────────── */
   const hasRebatesSelected   = selectedRebates.length > 0;
   const hasCustomersSelected = selectedCustomers.length > 0;
   const hasDateRange         = Boolean(dateFrom && dateTo);
@@ -747,7 +676,6 @@ function Vcp_Reports() {
     !hasCustomersSelected ? 'Select at least one customer' :
     !hasDateRange         ? 'Select Date From and Date To first' : '';
 
-  // Search filter for the customer dropdown
   const filteredCustomers = useMemo(() => {
     const q = customerSearch.trim().toLowerCase();
     if (!q) return allCustomers;
@@ -757,21 +685,14 @@ function Vcp_Reports() {
     );
   }, [allCustomers, customerSearch]);
 
-  /* ─── Render ─────────────────────────────────────────────────────────────── */
-  return (
-    <div className="dash-page" style={{ display: 'flex', minHeight: '100vh', width: '100%', background: K.bg, fontFamily: fontStack, color: K.ink }}>
-      <style>{DASH_FONT}</style>
+  const canExport = access.canExport && showReport && reportData;
 
-      <div
-        className="pointer-events-none fixed inset-0"
-        style={{
-          backgroundImage: `
-            radial-gradient(700px circle at 8% 0%, ${APPLE.blue}${isDark ? "26" : "30"}, transparent 55%),
-            radial-gradient(650px circle at 92% 10%, ${APPLE.purple}${isDark ? "1a" : "20"}, transparent 55%)
-          `,
-          zIndex: 0,
-        }}
-      />
+  /* ── Render ────────────────────────────────────────────────────── */
+  return (
+    <DesignPage className="flex w-full">
+
+      {/* Aurora wash — blue/purple; swap to ds-aurora-blue-green for VCP's green identity */}
+      <div className="pointer-events-none fixed inset-0 z-0 ds-aurora-blue-purple" />
 
       <Sidebar
         collapsed={collapsed} setCollapsed={setCollapsed}
@@ -781,47 +702,39 @@ function Vcp_Reports() {
         theme={theme}
       />
 
-      <main style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', marginLeft: collapsed ? 80 : 256, transition: 'margin-left 0.4s cubic-bezier(.4,0,.2,1)', zIndex: 1 }}>
-        <Header collapsed={collapsed} userName={userName} userCode={userCode} initials={initials} logo={vcpLogo} theme={theme} />
+      <main
+        className={`relative flex-1 flex flex-col min-h-screen z-[1] transition-[margin-left] duration-[400ms] ease-[cubic-bezier(.4,0,.2,1)] ${
+          collapsed ? 'ml-20' : 'ml-64'
+        }`}
+      >
+        <Header
+          collapsed={collapsed}
+          userName={userName}
+          userCode={userCode}
+          initials={initials}
+          logo={vcpLogo}
+          theme={theme}
+        />
 
-        <div className="dash-scroll" style={{ paddingTop: 64, flex: 1, padding: '80px 32px 40px', overflowY: 'auto' }}>
-          <div
-            className="nx-card dash-glass"
-            style={{
-              background: K.glass,
-              border: `1px solid ${K.hairline}`,
-              borderRadius: 22,
-              boxShadow: K.shadow,
-              padding: '32px 32px 36px',
-              maxWidth: 1600, margin: '0 auto',
-            }}
-          >
+        <div className="ds-scroll flex-1 overflow-y-auto pt-20 px-8 pb-10">
+          <div className="ds-fade-up ds-glass rounded-[22px] bg-[var(--ds-glass)] border border-[var(--ds-hairline)] shadow-[var(--ds-shadow)] px-8 pt-8 pb-9 max-w-[1600px] mx-auto">
+
             {/* ── Title bar ── */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28, paddingBottom: 20, borderBottom: `1px solid ${K.hairline}` }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <div style={{
-                  width: 46, height: 46, borderRadius: 14,
-                  background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  boxShadow: `0 4px 16px -4px ${APPLE.blue}88`, flexShrink: 0,
-                }}>
-                  <TrendingUp size={22} color="#fff" />
+            <div className="flex items-center justify-between mb-7 pb-5 gap-4 flex-wrap border-b border-[var(--ds-hairline)]">
+              <div className="flex items-center gap-3.5">
+                <div className="w-[46px] h-[46px] rounded-[14px] flex items-center justify-center flex-shrink-0 ds-gradient-primary shadow-[0_4px_16px_-4px_rgba(10,132,255,0.53)]">
+                  <TrendingUp size={22} className="text-white" />
                 </div>
                 <div>
-                  <h1 style={{ fontSize: 17, fontWeight: 700, color: K.ink, margin: 0, letterSpacing: '-0.01em' }}>
+                  <h1 className="text-[17px] font-bold tracking-[-0.01em] text-[var(--ds-ink)] m-0">
                     Cash Fund per Account
                   </h1>
-                  <p style={{ fontSize: 12, color: K.muted, margin: '3px 0 0', fontWeight: 400 }}>
+                  <p className="text-[12px] text-[var(--ds-muted)] mt-[3px] mb-0 font-normal">
                     Generate &amp; export rebate cash fund reports
                   </p>
                 </div>
               </div>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '6px 12px', borderRadius: 999,
-                background: K.chipBg, border: `1px solid ${K.hairline}`,
-                fontSize: 11, color: K.muted, fontWeight: 500, fontFamily: monoStack,
-              }}>
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--ds-chip-bg)] border border-[var(--ds-hairline)] text-[11px] text-[var(--ds-muted)] font-medium ds-font-mono">
                 <Calendar size={12} />
                 {getCurrentDate()}
               </div>
@@ -831,55 +744,40 @@ function Vcp_Reports() {
             {accessLoading ? renderAccessLoading() : !access.canView ? (
               <AccessDenied
                 useTokens={true}
-                tokens={{...K, accent: APPLE.blue, accentHover: APPLE.blue, accentLight: `${APPLE.blue}14`, text: K.ink, textMuted: K.muted, textSub: K.muted, success: APPLE.green, error: APPLE.red, errorBg: `${APPLE.red}14`, gold: APPLE.orange, goldLight: `${APPLE.orange}14`, teal: APPLE.blue, tealLight: `${APPLE.blue}14`, cardBg: K.glass, cardBorder: K.hairline, inputBg: K.glass, inputBorder: K.hairline, bg: K.bg, fontStack }}
+                tokens={{
+                  ...(({} /* placeholder — see note below */)),
+                }}
                 message="You don't have permission to view this page. Contact your administrator for access."
               />
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 24 }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
+                <div className="flex flex-col gap-5">
                   {/* ── Action bar ── */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', gap: 8 }}>
+                  <div className="flex items-center justify-between gap-2.5 flex-wrap">
+                    <div className="flex gap-2 flex-wrap">
                       <button
-                        className="nx-btn-primary"
+                        className={`ds-btn-primary flex items-center gap-1.5 px-4 py-[9px] rounded-full text-[13px] font-semibold transition-all duration-200 ${
+                          canGenerate
+                            ? 'ds-gradient-primary text-white cursor-pointer shadow-[0_4px_16px_-6px_rgba(10,132,255,0.53)]'
+                            : 'bg-[var(--ds-chip-bg)] text-[var(--ds-faint)] opacity-60 cursor-not-allowed border-none'
+                        }`}
                         onClick={generateReport}
                         disabled={!canGenerate}
                         title={generateTooltip}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 7,
-                          padding: '9px 18px', borderRadius: 999, fontSize: 13, fontWeight: 600,
-                          border: 'none',
-                          cursor: canGenerate ? 'pointer' : 'not-allowed',
-                          background: canGenerate
-                            ? `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`
-                            : K.chipBg,
-                          color: canGenerate ? '#fff' : K.faint,
-                          opacity: canGenerate ? 1 : 0.6,
-                          transition: 'all 0.2s',
-                          boxShadow: canGenerate ? `0 4px 16px -6px ${APPLE.blue}88` : 'none',
-                          fontFamily: fontStack,
-                        }}
                       >
-                        {loading ? <RefreshCw size={14} style={{ animation: 'spin 0.8s linear infinite' }} /> : <Zap size={14} />}
+                        {loading ? <RefreshCw size={14} className="animate-spin" style={{ animationDuration: '0.8s' }} /> : <Zap size={14} />}
                         {loading ? 'Generating…' : 'Generate Report'}
                       </button>
 
                       <button
-                        className="nx-btn-secondary"
+                        className={`ds-btn-secondary flex items-center gap-1.5 px-4 py-[9px] rounded-full text-[13px] font-medium border border-[var(--ds-hairline)] bg-transparent transition-all duration-200 ${
+                          (!syncing && !loading && hasRebatesSelected)
+                            ? 'text-[var(--ds-muted)] hover:text-[var(--ds-ink)] hover:bg-[var(--ds-hover)] cursor-pointer'
+                            : 'text-[var(--ds-muted)] opacity-50 cursor-not-allowed'
+                        }`}
                         onClick={syncPayouts}
                         disabled={syncing || loading || !hasRebatesSelected}
                         title={!hasRebatesSelected ? 'Select a rebate code to sync' : 'Sync SAP payout data'}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 7,
-                          padding: '9px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500,
-                          border: `1px solid ${K.hairline}`,
-                          background: 'transparent', color: K.muted,
-                          cursor: (!syncing && !loading && hasRebatesSelected) ? 'pointer' : 'not-allowed',
-                          opacity: (!syncing && !loading && hasRebatesSelected) ? 1 : 0.5,
-                          transition: 'all 0.2s', fontFamily: fontStack,
-                        }}
-                        onMouseEnter={(e) => { if (syncing || loading || !hasRebatesSelected) return; e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hover; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = 'transparent'; }}
                       >
                         <RefreshCw size={14} style={syncing ? { animation: 'spin 0.8s linear infinite' } : {}} />
                         {syncing ? 'Syncing…' : 'Sync Payouts'}
@@ -887,76 +785,45 @@ function Vcp_Reports() {
 
                       {showReport && reportData && (
                         <button
-                          className="nx-btn-secondary"
+                          className="ds-btn-secondary flex items-center gap-1.5 px-3.5 py-[9px] rounded-full text-[13px] font-medium border border-[var(--ds-hairline)] bg-transparent text-[var(--ds-muted)] hover:text-[var(--ds-ink)] hover:bg-[var(--ds-hover)] cursor-pointer transition-all duration-200"
                           onClick={clearReport}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 6,
-                            padding: '9px 14px', borderRadius: 999, fontSize: 13, fontWeight: 500,
-                            border: `1px solid ${K.hairline}`, background: 'transparent', color: K.muted,
-                            cursor: 'pointer', transition: 'all 0.2s', fontFamily: fontStack,
-                          }}
-                          onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hover; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = 'transparent'; }}
                         >
                           <X size={13} /> Clear
                         </button>
                       )}
                     </div>
 
-                    <div style={{ position: 'relative' }}>
+                    <div className="relative">
                       <button
-                        disabled={!access.canExport || !showReport || !reportData}
+                        disabled={!canExport}
                         title={!access.canExport ? 'No export permission' : !showReport ? 'No data' : 'Export'}
-                        onClick={() => { if (access.canExport && showReport && reportData) setShowExportDropdown(v => !v); }}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 6,
-                          padding: '9px 14px', borderRadius: 999, fontSize: 13, fontWeight: 500,
-                          border: `1px solid ${(access.canExport && showReport && reportData) ? `${APPLE.blue}55` : K.hairline}`,
-                          background: (access.canExport && showReport && reportData) ? `${APPLE.blue}1c` : K.chipBg,
-                          color: (access.canExport && showReport && reportData) ? APPLE.blue : K.faint,
-                          cursor: (access.canExport && showReport && reportData) ? 'pointer' : 'not-allowed',
-                          opacity: (access.canExport && showReport && reportData) ? 1 : 0.5,
-                          transition: 'all 0.2s', fontFamily: fontStack,
-                        }}
+                        onClick={() => { if (canExport) setShowExportDropdown(v => !v); }}
+                        className={`flex items-center gap-1.5 px-3.5 py-[9px] rounded-full text-[13px] font-medium transition-all duration-200 ${
+                          canExport
+                            ? 'border border-[#0A84FF]/33 bg-[#0A84FF]/11 text-[#0A84FF] cursor-pointer'
+                            : 'border border-[var(--ds-hairline)] bg-[var(--ds-chip-bg)] text-[var(--ds-faint)] opacity-50 cursor-not-allowed'
+                        }`}
                       >
                         <Download size={13} /> Export <ChevronDown size={13} />
                       </button>
                       {showExportDropdown && access.canExport && (
-                        <div
-                          className="dash-glass dash-pop"
-                          style={{
-                            position: 'absolute', right: 0, top: 'calc(100% + 8px)',
-                            width: 220, borderRadius: 16, zIndex: 50,
-                            background: K.glassDeep,
-                            border: `1px solid ${K.rim}`,
-                            boxShadow: K.shadow,
-                            overflow: 'hidden',
-                          }}
-                        >
-                          <div style={{ padding: '10px 14px 8px', borderBottom: `1px solid ${K.hairline}` }}>
-                            <p style={{ fontSize: 11, fontWeight: 700, color: K.muted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>Export as</p>
+                        <div className="ds-glass ds-pop absolute right-0 top-[calc(100%+8px)] w-[220px] rounded-2xl z-50 overflow-hidden bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] shadow-[var(--ds-shadow)]">
+                          <div className="px-3.5 pt-2.5 pb-2 border-b border-[var(--ds-hairline)]">
+                            <p className="text-[11px] font-bold text-[var(--ds-muted)] uppercase tracking-[0.06em] m-0">Export as</p>
                           </div>
                           {[
-                            { label: 'PDF Document',   ext: 'pdf',  icon: <FileText size={15} color={APPLE.red} />,        fn: exportToPDF   },
-                            { label: 'Excel Workbook', ext: 'xlsx', icon: <FileSpreadsheet size={15} color={APPLE.green} />, fn: exportToExcel },
+                            { label: 'PDF Document',   ext: 'pdf',  icon: <FileText size={15} className="text-[#FF453A]" />,        fn: exportToPDF   },
+                            { label: 'Excel Workbook', ext: 'xlsx', icon: <FileSpreadsheet size={15} className="text-[#32D74B]" />, fn: exportToExcel },
                           ].map(({ label, ext, icon, fn }) => (
                             <button
                               key={ext}
                               onClick={() => { fn(); setShowExportDropdown(false); }}
-                              style={{
-                                width: '100%', textAlign: 'left',
-                                display: 'flex', alignItems: 'center', gap: 10,
-                                padding: '11px 14px', fontSize: 13, color: K.ink,
-                                background: 'transparent', border: 'none', cursor: 'pointer',
-                                transition: 'all 0.15s', fontFamily: fontStack,
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.background = K.chipBg}
-                              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                              className="w-full text-left flex items-center gap-2.5 px-3.5 py-[11px] text-[13px] text-[var(--ds-ink)] bg-transparent border-none cursor-pointer transition-colors duration-150 hover:bg-[var(--ds-chip-bg)]"
                             >
                               {icon}
                               <div>
-                                <div style={{ fontWeight: 500 }}>{label}</div>
-                                <div style={{ fontSize: 11, color: K.muted }}>Save as .{ext}</div>
+                                <div className="font-medium">{label}</div>
+                                <div className="text-[11px] text-[var(--ds-muted)]">Save as .{ext}</div>
                               </div>
                             </button>
                           ))}
@@ -966,29 +833,24 @@ function Vcp_Reports() {
                   </div>
 
                   {/* ── Filter bar ── */}
-                  <div className="dash-glass" style={{ position: 'relative', zIndex: 30, background: K.glass, border: `1px solid ${K.hairline}`, borderRadius: 18, padding: '20px 22px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1.2fr', gap: 18 }}>
+                  <div className="ds-glass relative z-30 bg-[var(--ds-glass)] border border-[var(--ds-hairline)] rounded-[18px] px-[22px] py-5">
+                    <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_1.2fr] gap-[18px]">
 
                       {/* Rebate Codes (optional) */}
-                      <div className="rebate-dropdown-container" style={{ position: 'relative' }}>
-                        <label style={labelStyle}>
-                          <BarChart2 size={12} color={APPLE.blue} />
-                          Rebate Codes <span style={{ color: K.muted, fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(optional)</span>
+                      <div className="rebate-dropdown-container relative">
+                        <label className={labelClasses}>
+                          <BarChart2 size={12} className="text-[#0A84FF]" />
+                          Rebate Codes <span className="text-[var(--ds-muted)] font-normal normal-case tracking-normal">(optional)</span>
                         </label>
                         <button
                           type="button"
-                          className="nx-select"
                           onClick={() => {
                             setShowRebateDropdown(v => !v);
                             setTempSelectedRebates([...selectedRebates]);
                           }}
-                          style={{
-                            ...inputStyle,
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            textAlign: 'left', cursor: 'pointer', appearance: 'none',
-                          }}
+                          className={`${inputClasses} ds-select flex items-center justify-between text-left cursor-pointer appearance-none`}
                         >
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span className="truncate">
                             {selectedRebates.length === 0
                               ? '— All Rebates per Customer —'
                               : selectedRebates.length === rebates.length
@@ -997,26 +859,13 @@ function Vcp_Reports() {
                                   ? selectedRebates[0]
                                   : `${selectedRebates.length} selected`}
                           </span>
-                          <ChevronDown size={14} color={K.faint} />
+                          <ChevronDown size={14} className="text-[var(--ds-faint)]" />
                         </button>
 
                         {showRebateDropdown && rebates.length > 0 && (
-                          <div
-                            className="dash-glass dash-pop"
-                            style={{
-                              position: 'absolute', top: 'calc(100% + 6px)', left: 0,
-                              width: '100%', maxHeight: 300, overflowY: 'auto',
-                              background: K.glassDeep, border: `1px solid ${K.rim}`,
-                              borderRadius: 16, boxShadow: K.shadow,
-                              zIndex: 100, padding: '6px 0',
-                            }}
-                          >
+                          <div className="ds-glass ds-pop absolute top-[calc(100%+6px)] left-0 w-full max-h-[300px] overflow-y-auto bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] rounded-2xl shadow-[var(--ds-shadow)] z-[100] py-1.5">
                             <div
-                              style={{
-                                padding: '8px 12px', borderBottom: `1px solid ${K.hairline}`,
-                                display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-                                background: K.chipBg,
-                              }}
+                              className="px-3 py-2 border-b border-[var(--ds-hairline)] flex items-center gap-2 cursor-pointer bg-[var(--ds-chip-bg)]"
                               onClick={() => {
                                 const allSelected = tempSelectedRebates.length === rebates.length;
                                 setTempSelectedRebates(allSelected ? [] : rebates.map(r => r.RebateCode));
@@ -1026,20 +875,15 @@ function Vcp_Reports() {
                                 type="checkbox"
                                 checked={tempSelectedRebates.length === rebates.length && rebates.length > 0}
                                 readOnly
-                                style={{ accentColor: APPLE.blue }}
+                                className="accent-[#0A84FF]"
                               />
-                              <span style={{ fontSize: 12, fontWeight: 600, color: K.ink }}>Select All</span>
+                              <span className="text-[12px] font-semibold text-[var(--ds-ink)]">Select All</span>
                             </div>
 
                             {rebates.map(r => (
                               <div
                                 key={r.RebateCode}
-                                style={{
-                                  padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8,
-                                  cursor: 'pointer', transition: 'background 0.1s',
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.background = K.chipBg}
-                                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                className="px-3 py-2 flex items-center gap-2 cursor-pointer transition-colors hover:bg-[var(--ds-chip-bg)]"
                                 onClick={() => {
                                   const exists = tempSelectedRebates.includes(r.RebateCode);
                                   setTempSelectedRebates(prev =>
@@ -1051,25 +895,19 @@ function Vcp_Reports() {
                                   type="checkbox"
                                   checked={tempSelectedRebates.includes(r.RebateCode)}
                                   readOnly
-                                  style={{ accentColor: APPLE.blue }}
+                                  className="accent-[#0A84FF]"
                                 />
-                                <span style={{ fontSize: 12, color: K.ink }}>{r.RebateCode}</span>
+                                <span className="text-[12px] text-[var(--ds-ink)]">{r.RebateCode}</span>
                               </div>
                             ))}
 
-                            <div style={{ padding: '8px 12px', borderTop: `1px solid ${K.hairline}`, display: 'flex', gap: 6 }}>
+                            <div className="px-3 py-2 border-t border-[var(--ds-hairline)] flex gap-1.5">
                               <button
                                 onClick={() => {
                                   handleRebatesChange(tempSelectedRebates);
                                   setShowRebateDropdown(false);
                                 }}
-                                style={{
-                                  flex: 1, padding: '6px 12px', borderRadius: 999, border: 'none',
-                                  background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
-                                  color: '#fff', fontSize: 12, fontWeight: 600,
-                                  cursor: 'pointer', fontFamily: fontStack,
-                                  boxShadow: `0 4px 12px -4px ${APPLE.blue}88`,
-                                }}
+                                className="flex-1 px-3 py-1.5 rounded-full border-none text-white text-[12px] font-semibold cursor-pointer ds-gradient-primary shadow-[0_4px_12px_-4px_rgba(10,132,255,0.53)]"
                               >
                                 Apply
                               </button>
@@ -1081,13 +919,7 @@ function Vcp_Reports() {
                                     setShowRebateDropdown(false);
                                   }}
                                   title="Leave blank to use every rebate code each selected customer is enrolled in"
-                                  style={{
-                                    padding: '6px 12px', borderRadius: 999,
-                                    border: `1px solid ${K.hairline}`,
-                                    background: 'transparent', color: K.muted,
-                                    fontSize: 12, fontWeight: 500,
-                                    cursor: 'pointer', fontFamily: fontStack,
-                                  }}
+                                  className="px-3 py-1.5 rounded-full border border-[var(--ds-hairline)] bg-transparent text-[var(--ds-muted)] text-[12px] font-medium cursor-pointer"
                                 >
                                   Clear
                                 </button>
@@ -1097,16 +929,16 @@ function Vcp_Reports() {
                         )}
 
                         {rebateInfo && (
-                          <p style={{ fontSize: 11, color: K.muted, marginTop: 6, fontFamily: monoStack }}>
+                          <p className="text-[11px] text-[var(--ds-muted)] mt-1.5 ds-font-mono">
                             {rebateInfo.DateFrom} → {rebateInfo.DateTo} · {rebateInfo.Frequency}
                           </p>
                         )}
                       </div>
 
                       {/* Customers (REQUIRED, searchable) */}
-                      <div className="customer-dropdown-container" style={{ position: 'relative' }}>
-                        <label style={labelStyle}>
-                          <Users size={12} color={APPLE.blue} /> Customers <span style={{ color: APPLE.blue }}>*</span>
+                      <div className="customer-dropdown-container relative">
+                        <label className={labelClasses}>
+                          <Users size={12} className="text-[#0A84FF]" /> Customers <span className="text-[#0A84FF]">*</span>
                         </label>
                         <button
                           type="button"
@@ -1117,15 +949,11 @@ function Vcp_Reports() {
                             setCustomerSearch("");
                           }}
                           disabled={customersLoading || allCustomers.length === 0}
-                          style={{
-                            ...inputStyle,
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            textAlign: 'left',
-                            cursor: (customersLoading || allCustomers.length === 0) ? 'not-allowed' : 'pointer',
-                            opacity: (customersLoading || allCustomers.length === 0) ? 0.6 : 1,
-                          }}
+                          className={`${inputClasses} flex items-center justify-between text-left ${
+                            (customersLoading || allCustomers.length === 0) ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                          }`}
                         >
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span className="truncate">
                             {customersLoading
                               ? 'Loading customers…'
                               : selectedCustomers.length === 0
@@ -1135,34 +963,18 @@ function Vcp_Reports() {
                                   : `${selectedCustomers.length} selected`}
                           </span>
                           {customersLoading
-                            ? <RefreshCw size={14} color={K.faint} style={{ animation: 'spin 0.8s linear infinite' }} />
-                            : <ChevronDown size={14} color={K.faint} />}
+                            ? <RefreshCw size={14} className="text-[var(--ds-faint)] animate-spin" style={{ animationDuration: '0.8s' }} />
+                            : <ChevronDown size={14} className="text-[var(--ds-faint)]" />}
                         </button>
 
                         {showCustomerDropdown && allCustomers.length > 0 && (
-                          <div
-                            className="dash-glass dash-pop"
-                            style={{
-                              position: 'absolute', top: 'calc(100% + 6px)', left: 0,
-                              width: '100%',
-                              background: K.glassDeep,
-                              border: `1px solid ${K.rim}`,
-                              borderRadius: 16,
-                              boxShadow: K.shadow,
-                              zIndex: 100,
-                              display: 'flex',
-                              flexDirection: 'column',
-                              maxHeight: 440,
-                              overflow: 'hidden',
-                            }}
-                          >
+                          <div className="ds-glass ds-pop absolute top-[calc(100%+6px)] left-0 w-full flex flex-col max-h-[440px] overflow-hidden bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] rounded-2xl shadow-[var(--ds-shadow)] z-[100]">
                             {/* Search box */}
-                            <div style={{ padding: 8, borderBottom: `1px solid ${K.hairline}`, flexShrink: 0 }}>
-                              <div style={{ position: 'relative' }}>
+                            <div className="p-2 border-b border-[var(--ds-hairline)] flex-shrink-0">
+                              <div className="relative">
                                 <Search
                                   size={13}
-                                  color={K.faint}
-                                  style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
+                                  className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--ds-faint)]"
                                 />
                                 <input
                                   type="text"
@@ -1170,28 +982,13 @@ function Vcp_Reports() {
                                   value={customerSearch}
                                   onChange={(e) => setCustomerSearch(e.target.value)}
                                   autoFocus
-                                  style={{
-                                    width: '100%',
-                                    padding: '8px 30px 8px 30px',
-                                    background: K.chipBg,
-                                    border: `1px solid ${K.hairline}`,
-                                    borderRadius: 10,
-                                    fontSize: 12,
-                                    color: K.ink,
-                                    fontFamily: fontStack,
-                                    outline: 'none',
-                                    boxSizing: 'border-box',
-                                  }}
+                                  className="w-full py-2 pl-[30px] pr-[30px] bg-[var(--ds-chip-bg)] border border-[var(--ds-hairline)] rounded-[10px] text-[12px] text-[var(--ds-ink)] outline-none"
                                 />
                                 {customerSearch && (
                                   <button
                                     type="button"
                                     onClick={() => setCustomerSearch('')}
-                                    style={{
-                                      position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
-                                      border: 'none', background: 'transparent', cursor: 'pointer',
-                                      color: K.muted, padding: 2, display: 'flex', alignItems: 'center',
-                                    }}
+                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 border-none bg-transparent cursor-pointer text-[var(--ds-muted)] p-0.5 flex items-center"
                                   >
                                     <X size={12} />
                                   </button>
@@ -1201,12 +998,7 @@ function Vcp_Reports() {
 
                             {/* Select-all (respects search) */}
                             <div
-                              style={{
-                                padding: '8px 12px',
-                                borderBottom: `1px solid ${K.hairline}`,
-                                display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-                                background: K.chipBg, flexShrink: 0,
-                              }}
+                              className="px-3 py-2 border-b border-[var(--ds-hairline)] flex items-center gap-2 cursor-pointer bg-[var(--ds-chip-bg)] flex-shrink-0"
                               onClick={() => {
                                 const allFilteredSelected =
                                   filteredCustomers.length > 0 &&
@@ -1229,35 +1021,29 @@ function Vcp_Reports() {
                                   filteredCustomers.every(c => tempSelectedCustomers.some(x => x.CardCode === c.CardCode))
                                 }
                                 readOnly
-                                style={{ accentColor: APPLE.blue }}
+                                className="accent-[#0A84FF]"
                               />
-                              <span style={{ fontSize: 12, fontWeight: 600, color: K.ink }}>
+                              <span className="text-[12px] font-semibold text-[var(--ds-ink)]">
                                 {customerSearch
                                   ? `Select all results (${filteredCustomers.length})`
                                   : `Select All (${allCustomers.length})`}
                               </span>
-                              <span style={{ marginLeft: 'auto', fontSize: 11, color: K.muted, fontFamily: monoStack }}>
+                              <span className="ml-auto text-[11px] text-[var(--ds-muted)] ds-font-mono">
                                 {tempSelectedCustomers.length} selected
                               </span>
                             </div>
 
                             {/* List */}
-                            <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+                            <div className="flex-1 overflow-y-auto py-1">
                               {filteredCustomers.length === 0 ? (
-                                <p style={{ padding: '20px 12px', fontSize: 12, color: K.muted, textAlign: 'center', margin: 0 }}>
-                                  No customers match “{customerSearch}”
+                                <p className="px-3 py-5 text-[12px] text-[var(--ds-muted)] text-center m-0">
+                                  No customers match &ldquo;{customerSearch}&rdquo;
                                 </p>
                               ) : (
                                 filteredCustomers.map(cust => (
                                   <div
                                     key={cust.CardCode}
-                                    style={{
-                                      padding: '8px 12px',
-                                      display: 'flex', alignItems: 'center', gap: 8,
-                                      cursor: 'pointer', transition: 'background 0.1s',
-                                    }}
-                                    onMouseEnter={(e) => e.currentTarget.style.background = K.chipBg}
-                                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                    className="px-3 py-2 flex items-center gap-2 cursor-pointer transition-colors hover:bg-[var(--ds-chip-bg)]"
                                     onClick={() => {
                                       const exists = tempSelectedCustomers.some(c => c.CardCode === cust.CardCode);
                                       setTempSelectedCustomers(prev =>
@@ -1271,11 +1057,11 @@ function Vcp_Reports() {
                                       type="checkbox"
                                       checked={tempSelectedCustomers.some(c => c.CardCode === cust.CardCode)}
                                       readOnly
-                                      style={{ accentColor: APPLE.blue }}
+                                      className="accent-[#0A84FF]"
                                     />
-                                    <span style={{ fontSize: 12, color: K.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    <span className="text-[12px] text-[var(--ds-ink)] truncate">
                                       {cust.CardName}
-                                      <span style={{ color: K.muted, marginLeft: 4 }}>({cust.CardCode})</span>
+                                      <span className="text-[var(--ds-muted)] ml-1">({cust.CardCode})</span>
                                     </span>
                                   </div>
                                 ))
@@ -1283,30 +1069,18 @@ function Vcp_Reports() {
                             </div>
 
                             {/* Footer */}
-                            <div style={{ padding: 8, borderTop: `1px solid ${K.hairline}`, display: 'flex', gap: 6, flexShrink: 0 }}>
+                            <div className="p-2 border-t border-[var(--ds-hairline)] flex gap-1.5 flex-shrink-0">
                               <button
                                 type="button"
                                 onClick={() => { setSelectedCustomers(tempSelectedCustomers); setShowCustomerDropdown(false); }}
-                                style={{
-                                  flex: 1, padding: '7px 12px', borderRadius: 999, border: 'none',
-                                  background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
-                                  color: '#fff', fontSize: 12, fontWeight: 600,
-                                  cursor: 'pointer', fontFamily: fontStack,
-                                  boxShadow: `0 4px 12px -4px ${APPLE.blue}88`,
-                                }}
+                                className="flex-1 px-3 py-[7px] rounded-full border-none text-white text-[12px] font-semibold cursor-pointer ds-gradient-primary shadow-[0_4px_12px_-4px_rgba(10,132,255,0.53)]"
                               >
                                 Apply
                               </button>
                               <button
                                 type="button"
                                 onClick={() => setTempSelectedCustomers([])}
-                                style={{
-                                  padding: '7px 12px', borderRadius: 999,
-                                  border: `1px solid ${K.hairline}`,
-                                  background: 'transparent', color: K.muted,
-                                  fontSize: 12, fontWeight: 500,
-                                  cursor: 'pointer', fontFamily: fontStack,
-                                }}
+                                className="px-3 py-[7px] rounded-full border border-[var(--ds-hairline)] bg-transparent text-[var(--ds-muted)] text-[12px] font-medium cursor-pointer"
                               >
                                 Clear
                               </button>
@@ -1317,79 +1091,66 @@ function Vcp_Reports() {
 
                       {/* Date From */}
                       <div>
-                        <label style={labelStyle}>
-                          <Calendar size={12} color={APPLE.blue} /> Date From <span style={{ color: APPLE.blue }}>*</span>
+                        <label className={labelClasses}>
+                          <Calendar size={12} className="text-[#0A84FF]" /> Date From <span className="text-[#0A84FF]">*</span>
                         </label>
-                        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="nx-input" style={inputStyle} />
+                        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className={`${inputClasses} ds-input`} />
                       </div>
 
                       {/* Date To */}
                       <div>
-                        <label style={labelStyle}>
-                          <Calendar size={12} color={APPLE.blue} /> Date To <span style={{ color: APPLE.blue }}>*</span>
+                        <label className={labelClasses}>
+                          <Calendar size={12} className="text-[#0A84FF]" /> Date To <span className="text-[#0A84FF]">*</span>
                         </label>
-                        <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="nx-input" style={inputStyle} />
+                        <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className={`${inputClasses} ds-input`} />
                       </div>
                     </div>
                   </div>
 
                   {/* ── Messages ── */}
                   {errorMsg && (
-                    <div style={{
-                      display: 'flex', alignItems: 'flex-start', gap: 10,
-                      padding: '11px 14px', borderRadius: 14,
-                      background: `${APPLE.red}14`, border: `1px solid ${APPLE.red}33`,
-                    }}>
-                      <AlertCircle size={15} color={APPLE.red} style={{ flexShrink: 0, marginTop: 1 }} />
-                      <span style={{ flex: 1, fontSize: 13, color: APPLE.red, fontFamily: fontStack }}>{errorMsg}</span>
-                      <button onClick={() => setErrorMsg("")} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: APPLE.red, padding: 0, lineHeight: 1 }}><X size={14} /></button>
+                    <div className="flex items-start gap-2.5 px-3.5 py-[11px] rounded-[14px] bg-[#FF453A]/8 border border-[#FF453A]/20">
+                      <AlertCircle size={15} className="text-[#FF453A] flex-shrink-0 mt-px" />
+                      <span className="flex-1 text-[13px] text-[#FF453A]">{errorMsg}</span>
+                      <button onClick={() => setErrorMsg("")} className="border-none bg-transparent cursor-pointer text-[#FF453A] p-0 leading-none"><X size={14} /></button>
                     </div>
                   )}
                   {successMsg && (
-                    <div style={{
-                      display: 'flex', alignItems: 'flex-start', gap: 10,
-                      padding: '11px 14px', borderRadius: 14,
-                      background: `${APPLE.green}14`, border: `1px solid ${APPLE.green}33`,
-                    }}>
-                      <CheckCircle size={15} color={APPLE.green} style={{ flexShrink: 0, marginTop: 1 }} />
-                      <span style={{ flex: 1, fontSize: 13, color: APPLE.green, fontFamily: fontStack }}>{successMsg}</span>
-                      <button onClick={() => setSuccessMsg("")} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: APPLE.green, padding: 0, lineHeight: 1 }}><X size={14} /></button>
+                    <div className="flex items-start gap-2.5 px-3.5 py-[11px] rounded-[14px] bg-[#32D74B]/8 border border-[#32D74B]/20">
+                      <CheckCircle size={15} className="text-[#32D74B] flex-shrink-0 mt-px" />
+                      <span className="flex-1 text-[13px] text-[#32D74B]">{successMsg}</span>
+                      <button onClick={() => setSuccessMsg("")} className="border-none bg-transparent cursor-pointer text-[#32D74B] p-0 leading-none"><X size={14} /></button>
                     </div>
                   )}
 
                   {loading && activeJobId && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderRadius: 14, background: `${APPLE.blue}14`, border: `1px solid ${APPLE.blue}33` }}>
+                    <div className="flex items-center gap-3 px-4 py-3 rounded-[14px] bg-[#0A84FF]/8 border border-[#0A84FF]/20">
                       {getStatusIcon(jobStatus)}
-                      <div style={{ flex: 1 }}>
-                        <p style={{ fontSize: 13, fontWeight: 600, color: APPLE.blue, margin: 0 }}>Generating report…</p>
-                        <p style={{ fontSize: 11, color: K.muted, margin: '2px 0 0', fontFamily: monoStack }}>{activeJobId}</p>
+                      <div className="flex-1">
+                        <p className="text-[13px] font-semibold text-[#0A84FF] m-0">Generating report…</p>
+                        <p className="text-[11px] text-[var(--ds-muted)] mt-0.5 mb-0 ds-font-mono">{activeJobId}</p>
                       </div>
                     </div>
                   )}
 
                   {loading && (
-                    <div className="dash-glass" style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      minHeight: 380, borderRadius: 18,
-                      border: `1px dashed ${K.hairline}`,
-                      background: K.glass,
-                    }}>
-                      <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-                        <div style={{ position: 'relative', width: 56, height: 56 }}>
-                          <div style={{ width: 56, height: 56, borderRadius: '50%', border: `4px solid ${K.hairline}`, position: 'absolute' }} />
-                          <div style={{ width: 56, height: 56, borderRadius: '50%', border: `4px solid ${APPLE.blue}`, borderTopColor: 'transparent', animation: 'spin 0.75s linear infinite', position: 'absolute' }} />
+                    <div className="ds-glass flex items-center justify-center min-h-[380px] rounded-[18px] border border-dashed border-[var(--ds-hairline)] bg-[var(--ds-glass)]">
+                      <div className="text-center flex flex-col items-center gap-4">
+                        <div className="relative w-14 h-14">
+                          <div className="absolute inset-0 w-14 h-14 rounded-full border-4 border-[var(--ds-hairline)]" />
+                          <div className="absolute inset-0 w-14 h-14 rounded-full border-4 border-[#0A84FF] border-t-transparent animate-spin" style={{ animationDuration: '0.75s' }} />
                         </div>
                         <div>
-                          <h3 style={{ fontSize: 16, fontWeight: 700, color: K.ink, margin: '0 0 6px' }}>Building Your Report</h3>
-                          <p style={{ fontSize: 12, color: K.muted, margin: 0 }}>
+                          <h3 className="text-base font-bold text-[var(--ds-ink)] m-0 mb-1.5">Building Your Report</h3>
+                          <p className="text-[12px] text-[var(--ds-muted)] m-0">
                             Fetching data for{' '}
-                            <span style={{ fontWeight: 700, color: APPLE.blue, fontFamily: monoStack }}>
+                            <span className="font-bold text-[#0A84FF] ds-font-mono">
                               {selectedCustomers.length} customer(s)
                             </span>
                             {selectedRebates.length > 0 && (
                               <>
                                 {' '}·{' '}
-                                <span style={{ fontWeight: 700, color: APPLE.blue, fontFamily: monoStack }}>
+                                <span className="font-bold text-[#0A84FF] ds-font-mono">
                                   {selectedRebates.join(', ')}
                                 </span>
                               </>
@@ -1405,42 +1166,30 @@ function Vcp_Reports() {
                     const totalPages = pages.length;
                     const safePage   = Math.min(currentPage, totalPages - 1);
                     return (
-                      <div className="dash-glass" style={{ background: K.glass, border: `1px solid ${K.hairline}`, borderRadius: 18, padding: '20px 22px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
-                          <h3 style={{ fontSize: 14, fontWeight: 700, color: K.ink, margin: 0 }}>Report Preview</h3>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                            <span style={{
-                              padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
-                              background: `${APPLE.blue}14`, color: APPLE.blue, fontFamily: monoStack,
-                            }}>
+                      <div className="ds-glass bg-[var(--ds-glass)] border border-[var(--ds-hairline)] rounded-[18px] px-[22px] py-5">
+                        <div className="flex items-center justify-between mb-4 flex-wrap gap-2.5">
+                          <h3 className="text-[14px] font-bold text-[var(--ds-ink)] m-0">Report Preview</h3>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="px-2.5 py-[3px] rounded-full text-[11px] font-semibold bg-[#0A84FF]/8 text-[#0A84FF] ds-font-mono">
                               {reportData.reportRows.length} accounts
                             </span>
                             {totalPages > 1 && (
-                              <span style={{
-                                padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
-                                background: `${APPLE.orange}14`, color: APPLE.orange, fontFamily: monoStack,
-                              }}>
+                              <span className="px-2.5 py-[3px] rounded-full text-[11px] font-semibold bg-[#FF9F0A]/8 text-[#FF9F0A] ds-font-mono">
                                 {totalPages} pages
                               </span>
                             )}
                             {reportData.salesAgent && (
-                              <span style={{
-                                padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 500,
-                                background: K.chipBg, color: K.muted, fontFamily: monoStack,
-                              }}>
+                              <span className="px-2.5 py-[3px] rounded-full text-[11px] font-medium bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] ds-font-mono">
                                 Agent: {reportData.salesAgent}
                               </span>
                             )}
                           </div>
                         </div>
 
-                        <div className="dash-scroll" style={{
-                          overflowX: 'auto',
-                          background: isDark ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.04)',
-                          borderRadius: 14,
-                          padding: '24px',
-                        }}>
-                          <div ref={reportContainerRef} style={{ position: 'relative', width: '1050px', margin: '0 auto' }}>
+                        <div className={`ds-scroll overflow-x-auto rounded-[14px] p-6 ${
+                          theme === 'dark' ? 'bg-black/35' : 'bg-black/4'
+                        }`}>
+                          <div ref={reportContainerRef} className="relative w-[1050px] mx-auto">
                             {pages.map((pageRows, pageIndex) =>
                               renderReportPage(pageRows, pageIndex, totalPages, pageIndex === safePage)
                             )}
@@ -1448,17 +1197,13 @@ function Vcp_Reports() {
                         </div>
 
                         {totalPages > 1 && (
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 18, flexWrap: 'wrap' }}>
+                          <div className="flex items-center justify-center gap-1.5 mt-[18px] flex-wrap">
                             <button
                               onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
                               disabled={safePage === 0}
-                              style={{
-                                width: 32, height: 32, borderRadius: 999,
-                                border: `1px solid ${K.hairline}`, background: 'transparent',
-                                color: K.ink, cursor: safePage === 0 ? 'not-allowed' : 'pointer',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                opacity: safePage === 0 ? 0.35 : 1, transition: 'all 0.15s',
-                              }}
+                              className={`w-8 h-8 rounded-full border border-[var(--ds-hairline)] bg-transparent text-[var(--ds-ink)] flex items-center justify-center transition-all duration-150 ${
+                                safePage === 0 ? 'cursor-not-allowed opacity-35' : 'cursor-pointer hover:bg-[var(--ds-hover)]'
+                              }`}
                             >
                               <ChevronLeft size={15} />
                             </button>
@@ -1468,25 +1213,18 @@ function Vcp_Reports() {
                               const isDotLeft  = i === 1 && safePage > 2;
                               const isDotRight = i === totalPages - 2 && safePage < totalPages - 3;
                               if (!isEdge && !isNearCur) {
-                                if (isDotLeft || isDotRight) return <span key={`dots-${i}`} style={{ fontSize: 13, color: K.muted, padding: '0 2px', userSelect: 'none' }}>&hellip;</span>;
+                                if (isDotLeft || isDotRight) return <span key={`dots-${i}`} className="text-[13px] text-[var(--ds-muted)] px-0.5 select-none">&hellip;</span>;
                                 return null;
                               }
                               return (
                                 <button
                                   key={i}
                                   onClick={() => setCurrentPage(i)}
-                                  style={{
-                                    minWidth: 32, height: 32, padding: '0 8px',
-                                    borderRadius: 999, fontSize: 12, fontWeight: 600,
-                                    border: `1px solid ${i === safePage ? 'transparent' : K.hairline}`,
-                                    background: i === safePage
-                                      ? `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`
-                                      : 'transparent',
-                                    color: i === safePage ? '#fff' : K.ink,
-                                    cursor: 'pointer', transition: 'all 0.15s',
-                                    fontFamily: fontStack,
-                                    boxShadow: i === safePage ? `0 4px 12px -4px ${APPLE.blue}88` : 'none',
-                                  }}
+                                  className={`min-w-[32px] h-8 px-2 rounded-full text-[12px] font-semibold transition-all duration-150 cursor-pointer ${
+                                    i === safePage
+                                      ? 'ds-gradient-primary text-white border border-transparent shadow-[0_4px_12px_-4px_rgba(10,132,255,0.53)]'
+                                      : 'bg-transparent text-[var(--ds-ink)] border border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)]'
+                                  }`}
                                 >
                                   {i + 1}
                                 </button>
@@ -1495,17 +1233,13 @@ function Vcp_Reports() {
                             <button
                               onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))}
                               disabled={safePage === totalPages - 1}
-                              style={{
-                                width: 32, height: 32, borderRadius: 999,
-                                border: `1px solid ${K.hairline}`, background: 'transparent',
-                                color: K.ink, cursor: safePage === totalPages - 1 ? 'not-allowed' : 'pointer',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                opacity: safePage === totalPages - 1 ? 0.35 : 1, transition: 'all 0.15s',
-                              }}
+                              className={`w-8 h-8 rounded-full border border-[var(--ds-hairline)] bg-transparent text-[var(--ds-ink)] flex items-center justify-center transition-all duration-150 ${
+                                safePage === totalPages - 1 ? 'cursor-not-allowed opacity-35' : 'cursor-pointer hover:bg-[var(--ds-hover)]'
+                              }`}
                             >
                               <ChevronRight size={15} />
                             </button>
-                            <span style={{ fontSize: 11, color: K.muted, marginLeft: 6, fontFamily: monoStack }}>{safePage + 1} / {totalPages}</span>
+                            <span className="text-[11px] text-[var(--ds-muted)] ml-1.5 ds-font-mono">{safePage + 1} / {totalPages}</span>
                           </div>
                         )}
                       </div>
@@ -1513,24 +1247,20 @@ function Vcp_Reports() {
                   })()}
 
                   {!loading && !showReport && !activeJobId && (
-                    <div className="dash-glass" style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      width: '100%', maxWidth: 1050, height: 440,
-                      margin: '0 auto', borderRadius: 18,
-                      border: `2px dashed ${K.hairline}`,
-                      background: K.glass,
-                    }}>
-                      <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-                        <div style={{ width: 52, height: 52, borderRadius: 14, background: `${APPLE.blue}1c`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <BarChart2 size={24} color={APPLE.blue} />
+                    <div className="ds-glass flex items-center justify-center mx-auto rounded-[18px] border-2 border-dashed border-[var(--ds-hairline)] bg-[var(--ds-glass)]"
+                      style={{ width: '100%', maxWidth: 1050, height: 440 }}
+                    >
+                      <div className="text-center flex flex-col items-center gap-3">
+                        <div className="w-[52px] h-[52px] rounded-[14px] flex items-center justify-center bg-[#0A84FF]/11">
+                          <BarChart2 size={24} className="text-[#0A84FF]" />
                         </div>
                         <div>
-                          <p style={{ fontSize: 14, fontWeight: 600, color: K.ink, margin: '0 0 4px' }}>No report generated yet</p>
-                          <p style={{ fontSize: 12, color: K.muted, margin: 0, maxWidth: 480 }}>
+                          <p className="text-[14px] font-semibold text-[var(--ds-ink)] m-0 mb-1">No report generated yet</p>
+                          <p className="text-[12px] text-[var(--ds-muted)] m-0 max-w-[480px]">
                             Pick a <strong>date range</strong> and at least one <strong>customer</strong>.
                             Rebate codes are optional — leave them blank to include{' '}
                             <strong>every rebate</strong> each customer is enrolled in. Then click{' '}
-                            <strong style={{ color: APPLE.blue }}>Generate Report</strong>.
+                            <strong className="text-[#0A84FF]">Generate Report</strong>.
                           </p>
                         </div>
                       </div>
@@ -1539,63 +1269,63 @@ function Vcp_Reports() {
                 </div>
 
                 {/* ══ Right sidebar ══ */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, position: 'sticky', top: 24, alignSelf: 'start' }}>
-                  <div className="dash-glass" style={{ background: K.glass, border: `1px solid ${K.hairline}`, borderRadius: 18, padding: '18px 18px 16px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                      <Clock size={15} color={K.muted} />
-                      <h3 style={{ fontSize: 12, fontWeight: 700, color: K.ink, margin: 0, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Activity</h3>
+                <div className="flex flex-col gap-4 sticky top-6 self-start">
+                  <div className="ds-glass bg-[var(--ds-glass)] border border-[var(--ds-hairline)] rounded-[18px] px-[18px] pt-[18px] pb-4">
+                    <div className="flex items-center gap-2 mb-3.5">
+                      <Clock size={15} className="text-[var(--ds-muted)]" />
+                      <h3 className="text-[12px] font-bold text-[var(--ds-ink)] m-0 uppercase tracking-[0.06em]">Activity</h3>
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 400, overflowY: 'auto' }}>
+                    <div className="flex flex-col gap-2 max-h-[400px] overflow-y-auto">
                       {loading && activeJobId && (
-                        <div style={{ padding: '10px 12px', borderRadius: 14, background: `${APPLE.blue}14`, border: `1px solid ${APPLE.blue}33`, animation: 'pulse-ring 1.5s infinite' }}>
-                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                        <div className="px-3 py-2.5 rounded-[14px] bg-[#0A84FF]/8 border border-[#0A84FF]/20" style={{ animation: 'pulse-ring 1.5s infinite' }}>
+                          <div className="flex items-start gap-2">
                             {getStatusIcon(jobStatus)}
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <p style={{ fontSize: 12, fontWeight: 600, color: K.ink, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[12px] font-semibold text-[var(--ds-ink)] m-0 truncate">
                                 {selectedRebates.length > 0 ? selectedRebates.join(', ') : `${selectedCustomers.length} customer(s)`}
                               </p>
-                              <p style={{ fontSize: 11, color: K.muted, margin: '2px 0 4px', fontFamily: monoStack }}>{formatJobDate(new Date().toISOString())}</p>
-                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, fontWeight: 600, background: `${APPLE.blue}1c`, color: APPLE.blue }}>Processing</span>
+                              <p className="text-[11px] text-[var(--ds-muted)] mt-0.5 mb-1 ds-font-mono">{formatJobDate(new Date().toISOString())}</p>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[#0A84FF]/11 text-[#0A84FF]">Processing</span>
                             </div>
                           </div>
                         </div>
                       )}
                       {!loading && showReport && reportData && (
-                        <div style={{ padding: '10px 12px', borderRadius: 14, background: `${APPLE.green}14`, border: `1px solid ${APPLE.green}33` }}>
-                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                            <CheckCircle size={14} color={APPLE.green} style={{ flexShrink: 0, marginTop: 2 }} />
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <p style={{ fontSize: 12, fontWeight: 600, color: K.ink, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: monoStack }}>
+                        <div className="px-3 py-2.5 rounded-[14px] bg-[#32D74B]/8 border border-[#32D74B]/20">
+                          <div className="flex items-start gap-2">
+                            <CheckCircle size={14} className="text-[#32D74B] flex-shrink-0 mt-0.5" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[12px] font-semibold text-[var(--ds-ink)] m-0 truncate ds-font-mono">
                                 {reportData.rebateCodes && reportData.rebateCodes.length > 0
                                   ? reportData.rebateCodes.join(', ')
                                   : 'All rebates per customer'}
                               </p>
-                              <p style={{ fontSize: 11, color: K.muted, margin: '2px 0', fontFamily: monoStack }}>{formatJobDate(new Date().toISOString())}</p>
-                              <p style={{ fontSize: 11, color: K.muted, margin: '0 0 4px' }}>
+                              <p className="text-[11px] text-[var(--ds-muted)] my-0.5 ds-font-mono">{formatJobDate(new Date().toISOString())}</p>
+                              <p className="text-[11px] text-[var(--ds-muted)] mt-0 mb-1">
                                 {reportData.reportRows.length} accounts
                                 {getPaginatedPages(reportData.reportRows).length > 1 && ` · ${getPaginatedPages(reportData.reportRows).length} pages`}
                               </p>
-                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, fontWeight: 600, background: `${APPLE.green}1c`, color: APPLE.green }}>Completed</span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[#32D74B]/11 text-[#32D74B]">Completed</span>
                             </div>
                           </div>
                         </div>
                       )}
                       {!loading && jobStatus === 'failed' && jobError && (
-                        <div style={{ padding: '10px 12px', borderRadius: 14, background: `${APPLE.red}14`, border: `1px solid ${APPLE.red}33` }}>
-                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                            <XCircle size={14} color={APPLE.red} style={{ flexShrink: 0, marginTop: 2 }} />
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <p style={{ fontSize: 12, fontWeight: 600, color: K.ink, margin: 0, fontFamily: monoStack }}>
+                        <div className="px-3 py-2.5 rounded-[14px] bg-[#FF453A]/8 border border-[#FF453A]/20">
+                          <div className="flex items-start gap-2">
+                            <XCircle size={14} className="text-[#FF453A] flex-shrink-0 mt-0.5" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[12px] font-semibold text-[var(--ds-ink)] m-0 ds-font-mono">
                                 {selectedRebates.length > 0 ? selectedRebates.join(', ') : 'Failed'}
                               </p>
-                              <p style={{ fontSize: 11, color: APPLE.red, margin: '3px 0 4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={jobError}>{jobError}</p>
-                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, fontWeight: 600, background: `${APPLE.red}1c`, color: APPLE.red }}>Failed</span>
+                              <p className="text-[11px] text-[#FF453A] mt-1 mb-1 truncate" title={jobError}>{jobError}</p>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[#FF453A]/11 text-[#FF453A]">Failed</span>
                             </div>
                           </div>
                         </div>
                       )}
                       {!loading && !showReport && !activeJobId && jobStatus !== 'failed' && (
-                        <p style={{ fontSize: 12, textAlign: 'center', color: K.muted, padding: '20px 0', margin: 0 }}>No activity yet</p>
+                        <p className="text-[12px] text-center text-[var(--ds-muted)] py-5 m-0">No activity yet</p>
                       )}
                     </div>
                   </div>
@@ -1603,19 +1333,19 @@ function Vcp_Reports() {
                   {showReport && reportData && (() => {
                     const t = getTotalsAmounts(reportData.totals);
                     const items = [
-                      { label: 'Total Rebates Earned',  value: fmtCurrency(t.rebates),  color: APPLE.blue   },
-                      { label: 'Total Released', value: fmtCurrency(t.released), color: APPLE.orange },
-                      { label: 'Balance',        value: fmtCurrency(t.balance),  color: t.balance < 0 ? APPLE.red : APPLE.green },
+                      { label: 'Total Rebates Earned', value: fmtCurrency(t.rebates), colorClass: 'text-[#0A84FF]' },
+                      { label: 'Total Released',        value: fmtCurrency(t.released), colorClass: 'text-[#FF9F0A]' },
+                      { label: 'Balance',               value: fmtCurrency(t.balance), colorClass: t.balance < 0 ? 'text-[#FF453A]' : 'text-[#32D74B]' },
                     ];
                     return (
-                      <div className="dash-glass dash-pop" style={{ background: K.glass, border: `1px solid ${K.hairline}`, borderRadius: 18, padding: '16px 18px' }}>
-                        <p style={{ fontSize: 11, fontWeight: 700, color: K.muted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 12px' }}>
+                      <div className="ds-glass ds-pop bg-[var(--ds-glass)] border border-[var(--ds-hairline)] rounded-[18px] px-[18px] py-4">
+                        <p className="text-[11px] font-bold text-[var(--ds-muted)] uppercase tracking-[0.06em] m-0 mb-3">
                           Summary
                         </p>
-                        {items.map(({ label, value, color }, idx) => (
-                          <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: idx < items.length - 1 ? `1px solid ${K.hairline}` : 'none' }}>
-                            <span style={{ fontSize: 12, color: K.muted }}>{label}</span>
-                            <span style={{ fontSize: 13, fontWeight: 700, color, fontFamily: monoStack }}>{value}</span>
+                        {items.map(({ label, value, colorClass }, idx) => (
+                          <div key={label} className={`flex justify-between items-center py-2 ${idx < items.length - 1 ? 'border-b border-[var(--ds-hairline)]' : ''}`}>
+                            <span className="text-[12px] text-[var(--ds-muted)]">{label}</span>
+                            <span className={`text-[13px] font-bold ds-font-mono ${colorClass}`}>{value}</span>
                           </div>
                         ))}
                       </div>
@@ -1627,7 +1357,7 @@ function Vcp_Reports() {
           </div>
         </div>
       </main>
-    </div>
+    </DesignPage>
   );
 }
 

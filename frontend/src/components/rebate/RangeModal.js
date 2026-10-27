@@ -1,41 +1,9 @@
 // src/components/rebate/RangeModal.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import { TrendingUp, Save, X, Plus, Minus, Lock } from "lucide-react";
-import { useTheme } from '../../context/ThemeContext';
 
-/* ─── Apple system colour language ───────────────────────────────────────── */
-const APPLE = {
-  blue:   "#0A84FF",
-  purple: "#BF5AF2",
-  red:    "#FF453A",
-  orange: "#FF9F0A",
-  green:  "#32D74B",
-  gray:   "#8E8E93",
-};
-
-const dashTokens = (isDark) => ({
-  ink:       isDark ? "#F2F2F7" : "#1C1C1E",
-  muted:     isDark ? "#98989F" : "#6E6E73",
-  faint:     isDark ? "#68686D" : "#AEAEB2",
-  glass:     isDark ? "rgba(30,30,36,0.6)"   : "rgba(255,255,255,0.65)",
-  glassDeep: isDark ? "rgba(24,24,28,0.95)"  : "rgba(255,255,255,0.98)",
-  hairline:  isDark ? "rgba(255,255,255,0.08)" : "rgba(60,60,67,0.12)",
-  rim:       isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.8)",
-  chipBg:    isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
-  hover:     isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
-  shadow:    isDark ? "0 20px 50px -14px rgba(0,0,0,0.65)" : "0 20px 50px -18px rgba(30,41,79,0.18)",
-  bg:        isDark ? "#000000" : "#EEF1F7",
-});
-
-const DASH_FONT = `
-  .dash-page, .dash-page * { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif; }
-  .dash-glass { -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%); }
-  .dash-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
-  .dash-scroll::-webkit-scrollbar-thumb { background: rgba(142,142,147,0.4); border-radius: 999px; }
-  .dash-scroll::-webkit-scrollbar-track { background: transparent; }
-  @keyframes dash-pop { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-  .dash-pop { animation: dash-pop 0.2s cubic-bezier(0.16,1,0.3,1); }
-`;
+/* ── Design system ──────────────────────────────────────────────── */
+import { PALETTE, useTokens } from '../../design-system';
 
 const RangeModal = ({
   isOpen,
@@ -48,9 +16,7 @@ const RangeModal = ({
   selectedFrequency = "",
   access,
 }) => {
-  const { theme } = useTheme();
-  const isDark = theme === 'dark';
-  const K = dashTokens(isDark);
+  const { isDark, K } = useTokens();
 
   const canEdit = !!access?.canEdit;
 
@@ -227,31 +193,17 @@ const RangeModal = ({
   if (!isOpen || !customer) return null;
 
   return (
-    <div className="dash-page fixed inset-0 flex items-center justify-center z-50 p-4"
-      style={{
-        backgroundColor: isDark ? "rgba(10,10,14,0.65)" : "rgba(0,0,0,0.4)",
-        backdropFilter: "blur(16px)",
-        WebkitBackdropFilter: "blur(16px)",
-      }}>
-      <style>{DASH_FONT}</style>
+    <div
+      className={`fixed inset-0 flex items-center justify-center z-50 p-4 backdrop-blur-2xl ${
+        isDark ? 'bg-[rgba(10,10,14,0.65)]' : 'bg-black/40'
+      }`}
+    >
+      <div className="ds-glass ds-pop rounded-[28px] w-[95%] max-w-7xl max-h-[90vh] overflow-hidden flex flex-col bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] shadow-[var(--ds-shadow)]">
 
-      <div
-        className="dash-glass dash-pop rounded-[28px] w-[95%] max-w-7xl max-h-[90vh] overflow-hidden flex flex-col"
-        style={{ background: K.glassDeep, border: `1px solid ${K.rim}`, boxShadow: K.shadow }}
-      >
         {/* Header */}
-        <div
-          className="flex items-center justify-between px-6 py-5 border-b flex-shrink-0"
-          style={{ borderColor: K.hairline }}
-        >
+        <div className="flex items-center justify-between px-6 py-5 border-b flex-shrink-0 border-[var(--ds-hairline)]">
           <div className="flex items-center gap-3">
-            <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center"
-              style={{
-                background: `linear-gradient(155deg, ${APPLE.green} 0%, #1D9E3F 100%)`,
-                boxShadow: `0 4px 12px -4px ${APPLE.green}88`,
-              }}
-            >
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-[#32D74B] to-[#1D9E3F] shadow-[0_4px_12px_-4px_rgba(50,215,75,0.53)]">
               <TrendingUp className="w-5 h-5 text-white" />
             </div>
             <div className="space-y-1">
@@ -266,18 +218,14 @@ const RangeModal = ({
           <div className="flex items-center gap-2">
             {!canEdit && (
               <span
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
-                style={{ background: `${APPLE.red}1c`, color: APPLE.red, border: `1px solid ${APPLE.red}33` }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-[#FF453A]/11 text-[#FF453A] border border-[#FF453A]/20"
               >
                 <Lock className="w-3.5 h-3.5" /> View Only
               </span>
             )}
             <button
               onClick={onClose}
-              className="w-9 h-9 rounded-full flex items-center justify-center transition-all"
-              style={{ background: K.chipBg, color: K.muted }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hairline; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = K.chipBg; }}
+              className="w-9 h-9 rounded-full flex items-center justify-center transition-all bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] hover:bg-[var(--ds-hairline)] hover:text-[var(--ds-ink)]"
             >
               <X className="w-5 h-5" />
             </button>
@@ -286,10 +234,7 @@ const RangeModal = ({
 
         {/* Period Tabs */}
         {displayPeriods.length > 1 && (
-          <div
-            className="px-6 py-3 border-b flex-shrink-0"
-            style={{ borderColor: K.hairline }}
-          >
+          <div className="px-6 py-3 border-b flex-shrink-0 border-[var(--ds-hairline)]">
             <div className="flex flex-wrap gap-2">
               {displayPeriods.map((period, index) => {
                 const isActive = activePeriod === index;
@@ -297,17 +242,11 @@ const RangeModal = ({
                   <button
                     key={index}
                     onClick={() => setActivePeriod(index)}
-                    className="px-4 py-2 rounded-full text-sm font-semibold transition-all"
-                    style={{
-                      background: isActive
-                        ? `linear-gradient(155deg, ${APPLE.green} 0%, #1D9E3F 100%)`
-                        : K.chipBg,
-                      color: isActive ? "#FFFFFF" : K.muted,
-                      border: `1px solid ${isActive ? "transparent" : K.hairline}`,
-                      boxShadow: isActive ? `0 4px 12px -4px ${APPLE.green}88` : "none",
-                    }}
-                    onMouseEnter={(e) => { if (!isActive) { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hover; } }}
-                    onMouseLeave={(e) => { if (!isActive) { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = K.chipBg; } }}
+                    className={`px-4 py-2 rounded-full text-sm font-semibold transition-all ${
+                      isActive
+                        ? 'bg-gradient-to-br from-[#32D74B] to-[#1D9E3F] text-white shadow-[0_4px_12px_-4px_rgba(50,215,75,0.53)]'
+                        : 'bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] border border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)] hover:text-[var(--ds-ink)]'
+                    }`}
                   >
                     {period.period}
                   </button>
@@ -318,24 +257,15 @@ const RangeModal = ({
         )}
 
         {/* Body */}
-        <div className="p-6 flex-1 overflow-y-auto dash-scroll">
+        <div className="p-6 flex-1 overflow-y-auto ds-scroll">
           {/* Period info banner */}
-          <div
-            className="mb-6 p-4 rounded-2xl flex items-center justify-between gap-4 flex-wrap"
-            style={{
-              background: `${APPLE.green}14`,
-              border: `1px solid ${APPLE.green}33`,
-            }}
-          >
+          <div className="mb-6 p-4 rounded-2xl flex items-center justify-between gap-4 flex-wrap bg-[#32D74B]/8 border border-[#32D74B]/20">
             <div className="flex items-center gap-3 min-w-0">
-              <div
-                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-                style={{ background: `${APPLE.green}1c`, color: APPLE.green }}
-              >
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-[#32D74B]/11 text-[#32D74B]">
                 <TrendingUp className="w-5 h-5" />
               </div>
               <div className="min-w-0">
-                <h4 className="font-semibold text-sm" style={{ color: APPLE.green }}>
+                <h4 className="font-semibold text-sm text-[#32D74B]">
                   {displayPeriods[activePeriod]?.period} : {displayPeriods[activePeriod]?.dates}
                 </h4>
                 <p className="text-xs mt-0.5" style={{ color: K.muted }}>
@@ -352,19 +282,13 @@ const RangeModal = ({
                     const target = (activePeriod + 1) % displayPeriods.length;
                     copyRangesToPeriod(source, target);
                   }}
-                  className="px-3 py-1.5 text-xs rounded-full font-medium transition-colors"
-                  style={{ background: `${APPLE.blue}1c`, color: APPLE.blue, border: `1px solid ${APPLE.blue}33` }}
-                  onMouseEnter={(e) => e.currentTarget.style.opacity = "0.85"}
-                  onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
+                  className="px-3 py-1.5 text-xs rounded-full font-medium transition-opacity bg-[#0A84FF]/11 text-[#0A84FF] border border-[#0A84FF]/20 hover:opacity-85"
                 >
                   Copy to Next
                 </button>
                 <button
                   onClick={() => copyRangesToAllPeriods(activePeriod)}
-                  className="px-3 py-1.5 text-xs rounded-full font-medium transition-colors"
-                  style={{ background: `${APPLE.purple}1c`, color: APPLE.purple, border: `1px solid ${APPLE.purple}33` }}
-                  onMouseEnter={(e) => e.currentTarget.style.opacity = "0.85"}
-                  onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
+                  className="px-3 py-1.5 text-xs rounded-full font-medium transition-opacity bg-[#BF5AF2]/11 text-[#BF5AF2] border border-[#BF5AF2]/20 hover:opacity-85"
                 >
                   Copy to All Future
                 </button>
@@ -377,21 +301,12 @@ const RangeModal = ({
             {localRanges[activePeriod]?.map((range, rangeIndex) => (
               <div
                 key={rangeIndex}
-                className="rounded-2xl p-5 transition-all duration-200 dash-glass"
-                style={{
-                  background: K.glass,
-                  border: `1px solid ${K.hairline}`,
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.borderColor = `${APPLE.green}55`; }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = K.hairline; }}
+                className="ds-glass rounded-2xl p-5 transition-all duration-200 bg-[var(--ds-glass)] border border-[var(--ds-hairline)] hover:border-[#32D74B]/33"
               >
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <span
-                      className="w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold text-white shrink-0"
-                      style={{
-                        background: `linear-gradient(155deg, ${APPLE.green} 0%, #1D9E3F 100%)`,
-                      }}
+                      className="w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold text-white shrink-0 bg-gradient-to-br from-[#32D74B] to-[#1D9E3F]"
                     >
                       {rangeIndex + 1}
                     </span>
@@ -402,10 +317,7 @@ const RangeModal = ({
                   {localRanges[activePeriod].length > 1 && canEdit && (
                     <button
                       onClick={() => removeRange(activePeriod, rangeIndex)}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center transition-all"
-                      style={{ color: APPLE.red, background: `${APPLE.red}14` }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = `${APPLE.red}28`}
-                      onMouseLeave={(e) => e.currentTarget.style.background = `${APPLE.red}14`}
+                      className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors text-[#FF453A] bg-[#FF453A]/8 hover:bg-[#FF453A]/16"
                     >
                       <Minus className="w-4 h-4" />
                     </button>
@@ -423,8 +335,8 @@ const RangeModal = ({
                       onChange={(e) => handleRangeChange(activePeriod, rangeIndex, 'min', e.target.value)}
                       placeholder="Min"
                       disabled={!canEdit}
-                      className="w-full px-4 py-3 rounded-xl text-sm font-medium focus:outline-none transition-all dash-glass"
-                      style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink, opacity: !canEdit ? 0.6 : 1 }}
+                      className="ds-glass w-full px-4 py-3 rounded-xl text-sm font-medium focus:outline-none focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.15)] transition-all bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)]"
+                      style={{ opacity: !canEdit ? 0.6 : 1 }}
                     />
                   </div>
 
@@ -438,8 +350,8 @@ const RangeModal = ({
                       onChange={(e) => handleRangeChange(activePeriod, rangeIndex, 'max', e.target.value)}
                       placeholder="Max"
                       disabled={!canEdit}
-                      className="w-full px-4 py-3 rounded-xl text-sm font-medium focus:outline-none transition-all dash-glass"
-                      style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink, opacity: !canEdit ? 0.6 : 1 }}
+                      className="ds-glass w-full px-4 py-3 rounded-xl text-sm font-medium focus:outline-none focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.15)] transition-all bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)]"
+                      style={{ opacity: !canEdit ? 0.6 : 1 }}
                     />
                   </div>
 
@@ -453,16 +365,13 @@ const RangeModal = ({
                       onChange={(e) => handleRangeChange(activePeriod, rangeIndex, 'rebate', e.target.value)}
                       placeholder="Rebate amount"
                       disabled={!canEdit}
-                      className="w-full px-4 py-3 rounded-xl text-sm font-medium focus:outline-none transition-all dash-glass"
-                      style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink, opacity: !canEdit ? 0.6 : 1 }}
+                      className="ds-glass w-full px-4 py-3 rounded-xl text-sm font-medium focus:outline-none focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.15)] transition-all bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)]"
+                      style={{ opacity: !canEdit ? 0.6 : 1 }}
                     />
                   </div>
                 </div>
 
-                <div
-                  className="mt-3 text-xs px-3 py-2 rounded-lg inline-block"
-                  style={{ background: `${APPLE.green}14`, color: APPLE.green, border: `1px solid ${APPLE.green}33` }}
-                >
+                <div className="mt-3 text-xs px-3 py-2 rounded-lg inline-block bg-[#32D74B]/8 text-[#32D74B] border border-[#32D74B]/20">
                   Range: <strong>{range.min}</strong> – <strong>{range.max}</strong> bags → Rebate: <strong>₱{range.rebate || "0"}</strong>/bag
                 </div>
               </div>
@@ -474,13 +383,7 @@ const RangeModal = ({
             <div className="mt-6 flex justify-center">
               <button
                 onClick={() => addRange(activePeriod)}
-                className="flex items-center gap-2 px-6 py-3 rounded-full font-semibold transition-all text-white"
-                style={{
-                  background: `linear-gradient(155deg, ${APPLE.green} 0%, #1D9E3F 100%)`,
-                  boxShadow: `0 4px 16px -6px ${APPLE.green}88`,
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.9'; e.currentTarget.style.transform = "translateY(-1px)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = "translateY(0)"; }}
+                className="flex items-center gap-2 px-6 py-3 rounded-full font-semibold transition-all text-white bg-gradient-to-br from-[#32D74B] to-[#1D9E3F] shadow-[0_4px_16px_-6px_rgba(50,215,75,0.53)] hover:brightness-110 hover:-translate-y-0.5"
               >
                 <Plus className="w-4 h-4" />
                 Add Another Range for {displayPeriods[activePeriod]?.period}
@@ -490,34 +393,24 @@ const RangeModal = ({
         </div>
 
         {/* Footer */}
-        <div
-          className="flex justify-between items-center px-6 py-4 border-t flex-shrink-0"
-          style={{ borderColor: K.hairline, background: K.glassDeep }}
-        >
+        <div className="flex justify-between items-center px-6 py-4 border-t flex-shrink-0 border-[var(--ds-hairline)] bg-[var(--ds-glass-deep)]">
           <div className="text-sm" style={{ color: K.muted }}>
-            <strong style={{ color: K.ink }}>{localRanges[activePeriod]?.length || 0}</strong> range{(localRanges[activePeriod]?.length || 0) !== 1 ? 's' : ''} configured for {displayPeriods[activePeriod]?.period}
+            <strong style={{ color: K.ink }}>{localRanges[activePeriod]?.length || 0}</strong>{' '}
+            range{(localRanges[activePeriod]?.length || 0) !== 1 ? 's' : ''} configured for{' '}
+            {displayPeriods[activePeriod]?.period}
           </div>
 
           <div className="flex gap-3">
             <button
               onClick={onClose}
-              className="px-6 py-2.5 rounded-full text-sm font-medium transition-all"
-              style={{ border: `1px solid ${K.hairline}`, color: K.muted }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hover; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = 'transparent'; }}
+              className="px-6 py-2.5 rounded-full text-sm font-medium transition-colors border border-[var(--ds-hairline)] text-[var(--ds-muted)] hover:text-[var(--ds-ink)] hover:bg-[var(--ds-hover)]"
             >
               {canEdit ? 'Cancel' : 'Close'}
             </button>
             {canEdit ? (
               <button
                 onClick={handleSave}
-                className="px-6 py-2.5 rounded-full text-sm font-semibold flex items-center gap-2 text-white transition-all"
-                style={{
-                  background: `linear-gradient(155deg, ${APPLE.green} 0%, #1D9E3F 100%)`,
-                  boxShadow: `0 4px 16px -6px ${APPLE.green}88`,
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.9'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.opacity = '1'; }}
+                className="px-6 py-2.5 rounded-full text-sm font-semibold flex items-center gap-2 text-white transition-all bg-gradient-to-br from-[#32D74B] to-[#1D9E3F] shadow-[0_4px_16px_-6px_rgba(50,215,75,0.53)] hover:brightness-110"
               >
                 <Save className="w-4 h-4" />
                 Save All Ranges
@@ -526,8 +419,7 @@ const RangeModal = ({
               <button
                 disabled
                 title="You do not have permission to edit ranges"
-                className="px-6 py-2.5 rounded-full text-sm font-semibold flex items-center gap-2 cursor-not-allowed"
-                style={{ background: K.chipBg, color: K.faint }}
+                className="px-6 py-2.5 rounded-full text-sm font-semibold flex items-center gap-2 cursor-not-allowed bg-[var(--ds-chip-bg)] text-[var(--ds-faint)]"
               >
                 <Lock className="w-4 h-4" />
                 Save All Ranges

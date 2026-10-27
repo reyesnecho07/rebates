@@ -73,7 +73,7 @@ const VanQuotaPerformance = ({
     setLoading(true);
     try {
       const response = await fetch(
-        `http://192.168.100.193:3009/api/van/dashboard/customer/${modalCustomer.code}/daily-transactions?` +
+        `/api/van/dashboard/customer/${modalCustomer.code}/daily-transactions?` +
         `db=VAN&rebateCode=${modalCustomer.rebateCode}&rebateType=${modalCustomer.rebateType}&` +
         `periodFrom=${periodFrom}&periodTo=${periodTo}`
       );

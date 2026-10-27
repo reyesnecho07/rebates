@@ -1,8 +1,11 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { startAutoRefresh } from './jobs/autoRefreshPayouts.js';
+import { initWebSocket } from './services/websocketService.js';
 
 // Import routes
 import authRoutes from './routes/authRoutes.js';
@@ -42,14 +45,12 @@ import databaseRoutes from './routes/databaseRoutes.js';
 // Nav Items routes
 import navItemsRoutes from './routes/navItemsRoutes.js';
 
-// Nav Items Group routes ← NEW
+// Nav Items Group routes
 import navItemsGroupRoutes from './routes/navItemsGroupRoutes.js';
 
 import accessControlRoutes from './routes/accessControlRoutes.js';
 
-
 import vcpReportRoutes from './routes/Vcp_reportRoutes.js';
-
 
 // Import services and config
 import { initializePools } from './services/databaseService.js';
@@ -58,17 +59,15 @@ import { config } from './config/environment.js';
 import { requestLogger } from './middleware/logger.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
-dotenv.config();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 
+// 1. CORS (origins come from .env -> CORS_ORIGINS, comma-separated)
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3008').split(',');
+
 app.use(cors({
-  origin: [
-    'http://192.168.100.193:3008',
-    'http://localhost:3008',
-    'http://127.0.0.1:3008',
-  ],
-  credentials: false,
+  origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: [
     'Content-Type',
@@ -80,11 +79,8 @@ app.use(cors({
     'Accept',
   ],
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
 }));
-
-// Handle preflight requests
-app.options('*', cors());
 
 // 2. Request logging
 app.use(requestLogger);
@@ -132,7 +128,7 @@ app.use('/api/databases', databaseRoutes);
 // Nav Items routes
 app.use('/api/nav-items', navItemsRoutes);
 
-// Nav Items Group routes ← NEW
+// Nav Items Group routes
 app.use('/api/nav-groups', navItemsGroupRoutes);
 
 app.use('/api/access-control', accessControlRoutes);
@@ -186,11 +182,11 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-
-app.listen(3009, () => {
-  console.log('Server running on 3009');
-  startAutoRefresh();
-});
+// Serve the built frontend (same origin as the API, so the frontend can use relative /api URLs)
+// Folder is relative to this file. Use FRONTEND_BUILD_PATH in .env to override (e.g. ../frontend/dist for Vite).
+const buildPath = path.resolve(__dirname, process.env.FRONTEND_BUILD_PATH || '../frontend/build');
+app.use(express.static(buildPath));
+app.get(/^(?!\/api).*/, (req, res) => res.sendFile(path.join(buildPath, 'index.html')));
 
 // 5. Error handling (must be last)
 app.use(errorHandler);
@@ -208,7 +204,9 @@ const startServer = async () => {
     await initializePools();
     console.log('✅ All database pools initialized');
 
-    app.listen(config.PORT, config.HOST, () => {
+    const server = app.listen(config.PORT, config.HOST, () => {
+      initWebSocket(server);
+      startAutoRefresh();
       console.log(`\n🎉 Server running on ${config.HOST}:${config.PORT}`);
       console.log('='.repeat(50));
       console.log('🔐 AUTHENTICATION SYSTEM');

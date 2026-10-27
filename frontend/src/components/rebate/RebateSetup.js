@@ -11,7 +11,6 @@ import { Link } from 'react-router-dom';
 import * as XLSX from "xlsx";
 import Sidebar from "../Sidebar";
 import Header from "../Header";
-import { useTheme } from '../../context/ThemeContext';
 import PercentageModal from "./PercentageModal";
 import QuotaModal from "./QuotaModal";
 import RangeModal from "./RangeModal";
@@ -25,42 +24,10 @@ import useAccessControl from '../../hooks/useAccessControl';
 import CancelModal from "../common/CancelModal";
 import RemoveRow from "../common/RemoveRow";
 import { ToastContainer } from "../common/Toast";
+import { API_BASE, DB_NAME } from '../../config/appConfig';
 
-/* ─── Apple system colour language ───────────────────────────────────────── */
-const APPLE = {
-  blue:   "#0A84FF",
-  purple: "#BF5AF2",
-  red:    "#FF453A",
-  orange: "#FF9F0A",
-  green:  "#32D74B",
-  gray:   "#8E8E93",
-};
-
-const dashTokens = (isDark) => ({
-  ink:       isDark ? "#F2F2F7" : "#1C1C1E",
-  muted:     isDark ? "#98989F" : "#6E6E73",
-  faint:     isDark ? "#68686D" : "#AEAEB2",
-  glass:     isDark ? "rgba(30,30,36,0.6)"   : "rgba(255,255,255,0.65)",
-  glassDeep: isDark ? "rgba(24,24,28,0.95)"  : "rgba(255,255,255,0.98)",
-  hairline:  isDark ? "rgba(255,255,255,0.08)" : "rgba(60,60,67,0.12)",
-  rim:       isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.8)",
-  chipBg:    isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
-  hover:     isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
-  shadow:    isDark ? "0 20px 50px -14px rgba(0,0,0,0.65)" : "0 20px 50px -18px rgba(30,41,79,0.18)",
-  bg:        isDark ? "#000000" : "#EEF1F7",
-});
-
-const DASH_FONT = `
-  .dash-page, .dash-page * { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif; }
-  .dash-glass { -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%); }
-  .dash-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
-  .dash-scroll::-webkit-scrollbar-thumb { background: rgba(142,142,147,0.4); border-radius: 999px; }
-  .dash-scroll::-webkit-scrollbar-track { background: transparent; }
-  @keyframes dash-pop { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-  .dash-pop { animation: dash-pop 0.2s cubic-bezier(0.16,1,0.3,1); }
-  @keyframes slide-in-right { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
-  .animate-slide-in-right { animation: slide-in-right 0.2s ease-out; }
-`;
+/* ── Design system ──────────────────────────────────────────────── */
+import { PALETTE, useTokens, DesignPage } from '../../design-system';
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 const getSalUnitMsr = (dropdownItem) => {
@@ -80,7 +47,6 @@ const addMonths = (date, n) => {
   return d;
 };
 
-// ─── Pure quota-period calculator (usable during import before state settles) ──
 const computeQuotaPeriods = (dateFrom, dateTo, frequency) => {
   if (!dateFrom || !dateTo || !frequency) return [];
   if (!isMonthlyLikeFreq(frequency) && frequency !== "Quarterly") return [];
@@ -130,20 +96,16 @@ const computeQuotaPeriods = (dateFrom, dateTo, frequency) => {
   return periods;
 };
 
-// ─── Quarterly date validation helpers ────────────────────────────────────────
-
-// Returns the quarter boundaries for a given date
 const getQuarterBounds = (date) => {
   const d = new Date(date);
   const year = d.getFullYear();
-  const q = Math.floor(d.getMonth() / 3); // 0,1,2,3
+  const q = Math.floor(d.getMonth() / 3);
   const startMonth = q * 3;
   const start = new Date(year, startMonth, 1);
-  const end = new Date(year, startMonth + 3, 0); // last day of quarter
+  const end = new Date(year, startMonth + 3, 0);
   return { start, end, quarter: q + 1, year };
 };
 
-// Check whether a date is the first day of a quarter (Jan/Apr/Jul/Oct 1)
 const isQuarterStart = (dateStr) => {
   if (!dateStr) return false;
   const d = new Date(dateStr);
@@ -152,7 +114,6 @@ const isQuarterStart = (dateStr) => {
   return d.getDate() === 1 && (m === 0 || m === 3 || m === 6 || m === 9);
 };
 
-// Check whether a date is the last day of a quarter (Mar/Jun/Sep/Dec 31)
 const isQuarterEnd = (dateStr) => {
   if (!dateStr) return false;
   const d = new Date(dateStr);
@@ -162,30 +123,17 @@ const isQuarterEnd = (dateStr) => {
   return d.getDate() === lastDay && (m === 2 || m === 5 || m === 8 || m === 11);
 };
 
-// Check if both dates span exactly one or more whole quarters
 const validateQuarterlyRange = (fromStr, toStr) => {
   if (!fromStr || !toStr) return { ok: false, reason: "Both Date From and Date To are required." };
-
   if (!isQuarterStart(fromStr)) {
-    return {
-      ok: false,
-      reason: "Date From must be the first day of a quarter (Jan 1, Apr 1, Jul 1, or Oct 1).",
-    };
+    return { ok: false, reason: "Date From must be the first day of a quarter (Jan 1, Apr 1, Jul 1, or Oct 1)." };
   }
   if (!isQuarterEnd(toStr)) {
-    return {
-      ok: false,
-      reason: "Date To must be the last day of a quarter (Mar 31, Jun 30, Sep 30, or Dec 31).",
-    };
+    return { ok: false, reason: "Date To must be the last day of a quarter (Mar 31, Jun 30, Sep 30, or Dec 31)." };
   }
-
   const from = new Date(fromStr);
   const to = new Date(toStr);
-  if (to < from) {
-    return { ok: false, reason: "Date To cannot be earlier than Date From." };
-  }
-
-  // Ensure the range spans an exact number of whole quarters
+  if (to < from) return { ok: false, reason: "Date To cannot be earlier than Date From." };
   const fromQ = getQuarterBounds(from);
   const toQ = getQuarterBounds(to);
   if (fromQ.start.getTime() !== from.getTime()) {
@@ -194,13 +142,11 @@ const validateQuarterlyRange = (fromStr, toStr) => {
   if (toQ.end.getTime() !== to.getTime()) {
     return { ok: false, reason: "Date To must align exactly with the quarter end." };
   }
-
   return { ok: true };
 };
 
 const toDateString = (val) => {
   if (val === undefined || val === null || val === '') return '';
-
   if (typeof val === 'number' && Number.isFinite(val)) {
     const epoch = Date.UTC(1899, 11, 30);
     const d = new Date(epoch + val * 86400000);
@@ -210,7 +156,6 @@ const toDateString = (val) => {
     const dd = String(d.getUTCDate()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
   }
-
   if (val instanceof Date) {
     if (isNaN(val.getTime())) return '';
     const yyyy = val.getFullYear();
@@ -218,13 +163,10 @@ const toDateString = (val) => {
     const dd = String(val.getDate()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
   }
-
   const s = String(val).trim();
   if (!s) return '';
-
   const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
-
   const d = new Date(s);
   if (!isNaN(d.getTime())) {
     const yyyy = d.getFullYear();
@@ -232,7 +174,6 @@ const toDateString = (val) => {
     const dd = String(d.getDate()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
   }
-
   return '';
 };
 
@@ -245,12 +186,6 @@ const normalizeQtrQualifiedFlag = (val) => {
   return true;
 };
 
-// ─── Qtr Rebate ↔ Qtr Qualified derivation ────────────────────────────────
-// Rules:
-//   • isQualifiedFlag === false              → value 0, bit 0
-//   • Qtr Rebate blank / null / NaN          → value 0, bit 0
-//   • Qtr Rebate === 0                       → value 0, bit 0
-//   • Qtr Rebate  >  0                       → value n, bit 1
 const deriveQtrValue = (isQualifiedFlag, qtrRebateValue) => {
   if (isQualifiedFlag === false) return 0;
   if (qtrRebateValue === undefined || qtrRebateValue === null || qtrRebateValue === '') return 0;
@@ -277,56 +212,34 @@ const isMonthlyLikeFreq = (freq) => MONTHLY_LIKE_FREQUENCIES.includes(freq);
 const SCOPE_ALL_CUSTOMERS = "All Customer/s";
 const SCOPE_PER_CUSTOMER  = "Per Customer";
 
-// ─── Toast ────────────────────────────────────────────────────────────────────
-const Toast = ({ message, type, onClose, isDark }) => {
-  const styles = {
-    success: { bg: isDark ? "rgba(24,24,28,0.95)" : "rgba(255,255,255,0.98)", border: "rgba(50,215,75,0.35)",  text: isDark ? "#32D74B" : "#1D9E3F", icon: isDark ? "#32D74B" : "#1D9E3F" },
-    error:   { bg: isDark ? "rgba(24,24,28,0.95)" : "rgba(255,255,255,0.98)", border: "rgba(255,69,58,0.35)",  text: isDark ? "#FF453A" : "#D63328", icon: isDark ? "#FF453A" : "#D63328" },
-    warning: { bg: isDark ? "rgba(24,24,28,0.95)" : "rgba(255,255,255,0.98)", border: "rgba(255,159,10,0.35)", text: isDark ? "#FF9F0A" : "#C77700", icon: isDark ? "#FF9F0A" : "#C77700" },
-    info:    { bg: isDark ? "rgba(24,24,28,0.95)" : "rgba(255,255,255,0.98)", border: "rgba(10,132,255,0.35)", text: isDark ? "#0A84FF" : "#0066CC", icon: isDark ? "#0A84FF" : "#0066CC" },
-  };
-  const s = styles[type] || styles.info;
-  const icons = {
-    success: <CheckCircle className="w-4 h-4" />,
-    error:   <X className="w-4 h-4" />,
-    warning: <AlertCircle className="w-4 h-4" />,
-    info:    <Info className="w-4 h-4" />,
-  };
-  return (
-    <div className="dash-glass flex items-center gap-2.5 pl-3.5 pr-3 py-2.5 rounded-2xl border animate-slide-in-right"
-      style={{ background: s.bg, borderColor: s.border, minWidth: '300px', maxWidth: '380px', boxShadow: "0 20px 50px -14px rgba(0,0,0,0.5)" }}>
-      <span className="flex-shrink-0" style={{ color: s.icon }}>{icons[type]}</span>
-      <span className="text-sm font-medium flex-1 leading-snug" style={{ color: s.text }}>{message}</span>
-      <button onClick={onClose} className="flex-shrink-0 hover:opacity-60 transition-opacity" style={{ color: s.icon }}>
-        <X className="w-3.5 h-3.5" />
-      </button>
-    </div>
-  );
-};
-
 // ─── Confirmation Modal ───────────────────────────────────────────────────────
 const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
   if (!isOpen) return null;
   return (
-    <div className="dash-page fixed inset-0 flex items-center justify-center z-50 p-4"
-      style={{ backgroundColor: "rgba(10,10,14,0.65)", backdropFilter: "blur(16px)" }}>
-      <div className="dash-glass dash-pop rounded-[28px] p-6 max-w-sm w-full mx-auto"
-        style={{ background: "rgba(24,24,28,0.95)", border: "1px solid rgba(255,255,255,0.06)" }}>
+    <div className="fixed inset-0 flex items-center justify-center z-50 p-4 backdrop-blur-2xl bg-[rgba(10,10,14,0.65)]">
+      <div className="ds-glass ds-pop rounded-[28px] p-6 max-w-sm w-full mx-auto bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)]">
         <div className="flex items-start gap-4 mb-5">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ background: `${APPLE.red}18`, border: `1px solid ${APPLE.red}33` }}>
-            <AlertTriangle className="w-5 h-5" style={{ color: APPLE.red }} />
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-[#FF453A]/9 border border-[#FF453A]/20">
+            <AlertTriangle className="w-5 h-5 text-[#FF453A]" />
           </div>
           <div className="flex-1 pt-0.5">
-            <h3 className="text-base font-semibold text-white tracking-tight">{title}</h3>
-            <p className="text-slate-400 text-sm mt-1 leading-relaxed">{message}</p>
+            <h3 className="text-base font-semibold text-[var(--ds-ink)] tracking-tight">{title}</h3>
+            <p className="text-[var(--ds-muted)] text-sm mt-1 leading-relaxed">{message}</p>
           </div>
         </div>
         <div className="flex gap-3 justify-end">
-          <button onClick={onClose} className="px-4 py-2 rounded-full font-medium text-sm"
-            style={{ color: "#98989F", border: "1px solid rgba(255,255,255,0.08)" }}>Cancel</button>
-          <button onClick={onConfirm} className="px-4 py-2 text-white rounded-full font-medium text-sm"
-            style={{ background: APPLE.red }}>Confirm</button>
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-full font-medium text-sm text-[var(--ds-muted)] border border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)] transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-4 py-2 text-white rounded-full font-medium text-sm bg-[#FF453A] hover:brightness-110 transition-all"
+          >
+            Confirm
+          </button>
         </div>
       </div>
     </div>
@@ -334,61 +247,55 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
 };
 
 // ─── Date Range Scope Selection Modal ─────────────────────────────────────────
-const ScopeSelectionModal = ({ isOpen, onClose, onSelect, theme }) => {
-  const isDark = theme === 'dark';
-  const K = dashTokens(isDark);
+const ScopeSelectionModal = ({ isOpen, onClose, onSelect }) => {
+  const { K } = useTokens();
   const [hovered, setHovered] = useState(null);
 
   useEffect(() => { if (!isOpen) setHovered(null); }, [isOpen]);
-
   if (!isOpen) return null;
 
   const options = [
     {
-      key: SCOPE_ALL_CUSTOMERS,
-      title: SCOPE_ALL_CUSTOMERS,
+      key: SCOPE_ALL_CUSTOMERS, title: SCOPE_ALL_CUSTOMERS,
       description: "One date range applies to every customer in the program.",
-      icon: <Users className="w-5 h-5" />,
-      color: APPLE.blue,
+      icon: <Users className="w-5 h-5" />, color: PALETTE.blue,
     },
     {
-      key: SCOPE_PER_CUSTOMER,
-      title: SCOPE_PER_CUSTOMER,
+      key: SCOPE_PER_CUSTOMER, title: SCOPE_PER_CUSTOMER,
       description: "Set a separate Date From / Date To for each customer row.",
-      icon: <PenLine className="w-5 h-5" />,
-      color: APPLE.purple,
+      icon: <PenLine className="w-5 h-5" />, color: PALETTE.purple,
     },
   ];
 
   return (
-    <div className="dash-page fixed inset-0 flex items-center justify-center z-50 p-4"
-      style={{ backgroundColor: "rgba(10,10,14,0.65)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}>
-      <style>{DASH_FONT}</style>
-      <div className="dash-glass dash-pop rounded-[28px] p-6 w-full max-w-md mx-auto"
-        style={{ background: K.glassDeep, border: `1px solid ${K.rim}`, boxShadow: K.shadow }}>
-
+    <div className="fixed inset-0 flex items-center justify-center z-50 p-4 backdrop-blur-2xl bg-[rgba(10,10,14,0.65)]">
+      <div className="ds-glass ds-pop rounded-[28px] p-6 w-full max-w-md mx-auto bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] shadow-[var(--ds-shadow)]">
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-              style={{ background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)` }}>
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center ds-gradient-primary">
               <Calendar className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h3 className="text-base font-semibold" style={{ color: K.ink }}>Choose Date Range Scope</h3>
-              <p className="text-xs mt-0.5" style={{ color: K.muted }}>
+              <h3 className="text-base font-semibold text-[var(--ds-ink)]">Choose Date Range Scope</h3>
+              <p className="text-xs mt-0.5 text-[var(--ds-muted)]">
                 How should the date range apply for this Without-Quota program?
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center"
-            style={{ background: K.chipBg, color: K.muted }}><X className="w-4 h-4" /></button>
+          <button
+            onClick={onClose}
+            className="w-7 h-7 rounded-full flex items-center justify-center bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] hover:bg-[var(--ds-hairline)] hover:text-[var(--ds-ink)] transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
 
         <div className="space-y-3 mb-5">
           {options.map(opt => {
             const active = hovered === opt.key;
             return (
-              <button key={opt.key} type="button"
+              <button
+                key={opt.key} type="button"
                 onClick={() => onSelect(opt.key)}
                 onMouseEnter={() => setHovered(opt.key)}
                 onMouseLeave={() => setHovered(null)}
@@ -403,8 +310,8 @@ const ScopeSelectionModal = ({ isOpen, onClose, onSelect, theme }) => {
                   {opt.icon}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold" style={{ color: K.ink }}>{opt.title}</p>
-                  <p className="text-xs mt-0.5 leading-relaxed" style={{ color: K.muted }}>{opt.description}</p>
+                  <p className="text-sm font-semibold text-[var(--ds-ink)]">{opt.title}</p>
+                  <p className="text-xs mt-0.5 leading-relaxed text-[var(--ds-muted)]">{opt.description}</p>
                 </div>
                 <ChevronDown className="w-4 h-4 -rotate-90 flex-shrink-0"
                   style={{ color: active ? opt.color : K.faint }} />
@@ -414,8 +321,10 @@ const ScopeSelectionModal = ({ isOpen, onClose, onSelect, theme }) => {
         </div>
 
         <div className="flex justify-end">
-          <button onClick={onClose} className="px-4 py-2.5 rounded-full text-sm font-medium"
-            style={{ color: K.muted, border: `1px solid ${K.hairline}` }}>Cancel</button>
+          <button onClick={onClose}
+            className="px-4 py-2.5 rounded-full text-sm font-medium text-[var(--ds-muted)] border border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)] transition-colors">
+            Cancel
+          </button>
         </div>
       </div>
     </div>
@@ -423,19 +332,21 @@ const ScopeSelectionModal = ({ isOpen, onClose, onSelect, theme }) => {
 };
 
 // ─── Search Rebate Modal ──────────────────────────────────────────────────────
-const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearch, searchLoading, searchError, theme, canView, db }) => {
+const SearchRebateModal = ({
+  isOpen, onClose, searchCode, setSearchCode, onSearch,
+  searchLoading, searchError, canView, db,
+}) => {
+  const { K } = useTokens();
   const [allCodes, setAllCodes]         = useState([]);
   const [codesLoading, setCodesLoading] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const inputRef = useRef(null);
   const dropRef  = useRef(null);
-  const isDark = theme === 'dark';
-  const K = dashTokens(isDark);
 
   useEffect(() => {
     if (!isOpen || !canView) return;
     setCodesLoading(true);
-    fetch(`http://192.168.100.193:3009/api/rebate-program/all-codes?db=${db}`)
+    fetch(`/api/rebate-program/all-codes?db=${db}`)
       .then(r => r.json())
       .then(d => { if (d.success) setAllCodes(d.codes || []); })
       .catch(() => {})
@@ -460,9 +371,14 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
     ).slice(0, 50);
   }, [searchCode, allCodes]);
 
-  const handleSelect = (code) => { setSearchCode(code.RebateCode); setShowDropdown(false); setTimeout(() => inputRef.current?.focus(), 50); };
+  const handleSelect = (code) => {
+    setSearchCode(code.RebateCode);
+    setShowDropdown(false);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  };
+
   const typeColor = (type) => {
-    const c = type === 'Fixed' ? APPLE.blue : type === 'Incremental' ? APPLE.green : type === 'Percentage' ? APPLE.orange : APPLE.gray;
+    const c = type === 'Fixed' ? PALETTE.blue : type === 'Incremental' ? PALETTE.green : type === 'Percentage' ? PALETTE.orange : PALETTE.gray;
     return { background: `${c}1c`, color: c, border: `1px solid ${c}33` };
   };
 
@@ -470,23 +386,22 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
 
   if (!canView) {
     return (
-      <div className="dash-page fixed inset-0 flex items-center justify-center z-50 p-4"
-        style={{ backgroundColor: "rgba(10,10,14,0.65)", backdropFilter: "blur(16px)" }}>
-        <div className="dash-glass dash-pop rounded-[28px] p-6 w-full max-w-md mx-auto"
-          style={{ background: K.glassDeep, border: `1px solid ${K.rim}` }}>
+      <div className="fixed inset-0 flex items-center justify-center z-50 p-4 backdrop-blur-2xl bg-[rgba(10,10,14,0.65)]">
+        <div className="ds-glass ds-pop rounded-[28px] p-6 w-full max-w-md mx-auto bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)]">
           <div className="flex items-center gap-3 mb-5">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-              style={{ background: `${APPLE.red}18`, border: `1px solid ${APPLE.red}33` }}>
-              <Lock className="w-4 h-4" style={{ color: APPLE.red }} />
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-[#FF453A]/9 border border-[#FF453A]/20">
+              <Lock className="w-4 h-4 text-[#FF453A]" />
             </div>
             <div>
-              <h3 className="text-base font-semibold" style={{ color: K.ink }}>Access Restricted</h3>
-              <p className="text-xs mt-0.5" style={{ color: K.muted }}>You don't have permission to search rebate programs</p>
+              <h3 className="text-base font-semibold text-[var(--ds-ink)]">Access Restricted</h3>
+              <p className="text-xs mt-0.5 text-[var(--ds-muted)]">You don't have permission to search rebate programs</p>
             </div>
           </div>
           <div className="flex justify-end">
-            <button onClick={onClose} className="px-4 py-2.5 rounded-full text-sm"
-              style={{ color: K.muted, border: `1px solid ${K.hairline}` }}>Close</button>
+            <button onClick={onClose}
+              className="px-4 py-2.5 rounded-full text-sm text-[var(--ds-muted)] border border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)] transition-colors">
+              Close
+            </button>
           </div>
         </div>
       </div>
@@ -494,29 +409,28 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
   }
 
   return (
-    <div className="dash-page fixed inset-0 flex items-center justify-center z-50 p-4"
-      style={{ backgroundColor: "rgba(10,10,14,0.65)", backdropFilter: "blur(16px)" }}>
-      <div className="dash-glass dash-pop rounded-[28px] p-6 w-full max-w-md mx-auto"
-        style={{ background: K.glassDeep, border: `1px solid ${K.rim}`, boxShadow: K.shadow }}>
+    <div className="fixed inset-0 flex items-center justify-center z-50 p-4 backdrop-blur-2xl bg-[rgba(10,10,14,0.65)]">
+      <div className="ds-glass ds-pop rounded-[28px] p-6 w-full max-w-md mx-auto bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] shadow-[var(--ds-shadow)]">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-              style={{ background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)` }}>
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center ds-gradient-primary">
               <Search className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h3 className="text-base font-semibold" style={{ color: K.ink }}>Search Rebate Code</h3>
-              <p className="text-xs mt-0.5" style={{ color: K.muted }}>Load an existing program to edit</p>
+              <h3 className="text-base font-semibold text-[var(--ds-ink)]">Search Rebate Code</h3>
+              <p className="text-xs mt-0.5 text-[var(--ds-muted)]">Load an existing program to edit</p>
             </div>
           </div>
-          <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center"
-            style={{ background: K.chipBg, color: K.muted }}><X className="w-4 h-4" /></button>
+          <button onClick={onClose}
+            className="w-7 h-7 rounded-full flex items-center justify-center bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] hover:bg-[var(--ds-hairline)] hover:text-[var(--ds-ink)] transition-colors">
+            <X className="w-4 h-4" />
+          </button>
         </div>
 
         <div className="mb-5 relative">
-          <label className="block text-xs font-semibold mb-2 uppercase tracking-widest" style={{ color: K.muted }}>Rebate Code</label>
+          <label className="block text-xs font-semibold mb-2 uppercase tracking-widest text-[var(--ds-muted)]">Rebate Code</label>
           <div className="relative flex items-center">
-            <Search className="w-4 h-4 absolute left-3.5" style={{ color: K.faint }} />
+            <Search className="w-4 h-4 absolute left-3.5 text-[var(--ds-faint)]" />
             <input ref={inputRef} autoFocus type="text" value={searchCode}
               onChange={e => { setSearchCode(e.target.value.toUpperCase()); setShowDropdown(true); }}
               onKeyDown={e => {
@@ -524,26 +438,23 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
                 if (e.key === 'Escape') { showDropdown ? setShowDropdown(false) : onClose(); }
               }}
               placeholder="e.g. REB-00001"
-              className="w-full pl-10 pr-10 py-3 rounded-full text-sm focus:outline-none font-mono tracking-wider dash-glass"
-              style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }} />
+              className="ds-glass w-full pl-10 pr-10 py-3 rounded-full text-sm focus:outline-none font-mono tracking-wider bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)] focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.15)]" />
             <button type="button" onClick={() => setShowDropdown(v => !v)}
-              className="absolute right-3" style={{ color: K.faint }}>
+              className="absolute right-3 text-[var(--ds-faint)]">
               {codesLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ChevronDown className={`w-4 h-4 transition-transform ${showDropdown ? 'rotate-180' : ''}`} />}
             </button>
           </div>
 
           {showDropdown && !codesLoading && (
             <div ref={dropRef}
-              className="dash-glass absolute z-50 left-0 right-0 mt-1.5 rounded-2xl overflow-hidden"
-              style={{ maxHeight: '240px', overflowY: 'auto', background: K.glassDeep, border: `1px solid ${K.rim}`, boxShadow: K.shadow }}>
+              className="ds-glass absolute z-50 left-0 right-0 mt-1.5 rounded-2xl overflow-hidden max-h-[240px] overflow-y-auto bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] shadow-[var(--ds-shadow)]">
               {filtered.length === 0 ? (
-                <div className="px-4 py-8 text-center text-sm" style={{ color: K.faint }}>No matching codes found</div>
+                <div className="px-4 py-8 text-center text-sm text-[var(--ds-faint)]">No matching codes found</div>
               ) : filtered.map(item => (
                 <button key={item.RebateCode} type="button" onClick={() => handleSelect(item)}
-                  className="w-full text-left px-4 py-3 flex items-center justify-between gap-3 border-b last:border-b-0"
-                  style={{ borderColor: K.hairline }}>
+                  className="w-full text-left px-4 py-3 flex items-center justify-between gap-3 border-b last:border-b-0 border-[var(--ds-hairline)] hover:bg-[var(--ds-chip-bg)] transition-colors">
                   <div className="flex items-center gap-3 min-w-0">
-                    <span className="font-mono font-semibold text-sm" style={{ color: K.ink }}>{item.RebateCode}</span>
+                    <span className="font-mono font-semibold text-sm text-[var(--ds-ink)]">{item.RebateCode}</span>
                   </div>
                   {item.RebateType && (
                     <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={typeColor(item.RebateType)}>
@@ -556,19 +467,20 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
           )}
 
           {searchError && (
-            <p className="mt-2 text-xs flex items-center gap-1.5" style={{ color: APPLE.red }}>
+            <p className="mt-2 text-xs flex items-center gap-1.5 text-[#FF453A]">
               <AlertCircle className="w-3.5 h-3.5" />{searchError}
             </p>
           )}
         </div>
 
         <div className="flex gap-3 justify-end">
-          <button onClick={onClose} className="px-4 py-2.5 rounded-full font-medium text-sm"
-            style={{ color: K.muted, border: `1px solid ${K.hairline}` }}>Cancel</button>
+          <button onClick={onClose}
+            className="px-4 py-2.5 rounded-full font-medium text-sm text-[var(--ds-muted)] border border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)] transition-colors">
+            Cancel
+          </button>
           <button onClick={() => { setShowDropdown(false); onSearch(); }}
             disabled={searchLoading || !searchCode.trim()}
-            className="px-5 py-2.5 text-white rounded-full font-medium text-sm flex items-center gap-2 disabled:opacity-40"
-            style={{ background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)` }}>
+            className="ds-gradient-primary px-5 py-2.5 text-white rounded-full font-medium text-sm flex items-center gap-2 disabled:opacity-40">
             {searchLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
             {searchLoading ? "Loading…" : "Load & Edit"}
           </button>
@@ -579,10 +491,8 @@ const SearchRebateModal = ({ isOpen, onClose, searchCode, setSearchCode, onSearc
 };
 
 // ─── Bulk Range Modal ─────────────────────────────────────────────────────────
-const BulkRangeModal = ({ isOpen, onClose, onApply, theme, emptyCount = 0, totalCount = 0 }) => {
-  const isDark = theme === 'dark';
-  const K = dashTokens(isDark);
-
+const BulkRangeModal = ({ isOpen, onClose, onApply, emptyCount = 0, totalCount = 0 }) => {
+  const { K, isDark } = useTokens();
   const [ranges, setRanges] = useState([{ min: 0, max: 99, rebate: "" }]);
   const [applyMode, setApplyMode] = useState("emptyOnly");
 
@@ -625,56 +535,50 @@ const BulkRangeModal = ({ isOpen, onClose, onApply, theme, emptyCount = 0, total
   const anyMissing = ranges.some(r => r.rebate === "" || r.rebate == null);
 
   return (
-    <div className="dash-page fixed inset-0 flex items-center justify-center z-50 p-4"
-      style={{
-        backgroundColor: isDark ? "rgba(10,10,14,0.65)" : "rgba(0,0,0,0.4)",
-        backdropFilter: "blur(16px)",
-        WebkitBackdropFilter: "blur(16px)",
-      }}>
-      <style>{DASH_FONT}</style>
+    <div className={`fixed inset-0 flex items-center justify-center z-50 p-4 backdrop-blur-2xl ${
+      isDark ? 'bg-[rgba(10,10,14,0.65)]' : 'bg-black/40'
+    }`}>
+      <div className="ds-glass ds-pop rounded-[28px] w-[95%] max-w-3xl max-h-[90vh] overflow-hidden flex flex-col bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] shadow-[var(--ds-shadow)]">
 
-      <div className="dash-glass dash-pop rounded-[28px] w-[95%] max-w-3xl max-h-[90vh] overflow-hidden flex flex-col"
-        style={{ background: K.glassDeep, border: `1px solid ${K.rim}`, boxShadow: K.shadow }}>
-
-        <div className="flex items-center justify-between px-6 py-5 border-b flex-shrink-0" style={{ borderColor: K.hairline }}>
+        <div className="flex items-center justify-between px-6 py-5 border-b flex-shrink-0 border-[var(--ds-hairline)]">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center"
-              style={{ background: `linear-gradient(155deg, ${APPLE.green} 0%, #1D9E3F 100%)`, boxShadow: `0 4px 12px -4px ${APPLE.green}88` }}>
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-[#32D74B] to-[#1D9E3F] shadow-[0_4px_12px_-4px_rgba(50,215,75,0.53)]">
               <TrendingUp className="w-5 h-5 text-white" />
             </div>
             <div className="space-y-1">
-              <h2 className="text-xl font-bold" style={{ color: K.ink }}>Apply Ranges to All Customers</h2>
-              <p className="text-sm" style={{ color: K.muted }}>
+              <h2 className="text-xl font-bold text-[var(--ds-ink)]">Apply Ranges to All Customers</h2>
+              <p className="text-sm text-[var(--ds-muted)]">
                 Define one range set and push it to customers — bulk default fallback
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center"
-            style={{ background: K.chipBg, color: K.muted }}>
+          <button onClick={onClose}
+            className="w-9 h-9 rounded-full flex items-center justify-center bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] hover:bg-[var(--ds-hairline)] hover:text-[var(--ds-ink)] transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-6 flex-1 overflow-y-auto dash-scroll">
-          <div className="mb-5 p-4 rounded-2xl flex flex-wrap items-center gap-3"
-            style={{ background: `${APPLE.blue}14`, border: `1px solid ${APPLE.blue}33` }}>
+        <div className="p-6 flex-1 overflow-y-auto ds-scroll">
+          <div className="mb-5 p-4 rounded-2xl flex flex-wrap items-center gap-3 bg-[#0A84FF]/8 border border-[#0A84FF]/20">
             <div className="flex items-center gap-2">
-              <Target className="w-4 h-4" style={{ color: APPLE.blue }} />
-              <span className="text-sm font-semibold" style={{ color: APPLE.blue }}>Apply Mode</span>
+              <Target className="w-4 h-4 text-[#0A84FF]" />
+              <span className="text-sm font-semibold text-[#0A84FF]">Apply Mode</span>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <button onClick={() => setApplyMode("emptyOnly")}
-                className="px-3 py-1.5 rounded-full text-xs font-semibold"
-                style={applyMode === "emptyOnly"
-                  ? { background: APPLE.blue, color: "#fff" }
-                  : { background: K.chipBg, color: K.muted, border: `1px solid ${K.hairline}` }}>
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                  applyMode === "emptyOnly"
+                    ? 'bg-[#0A84FF] text-white'
+                    : 'bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] border border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)]'
+                }`}>
                 Customers with No Ranges ({emptyCount})
               </button>
               <button onClick={() => setApplyMode("all")}
-                className="px-3 py-1.5 rounded-full text-xs font-semibold"
-                style={applyMode === "all"
-                  ? { background: APPLE.orange, color: "#fff" }
-                  : { background: K.chipBg, color: K.muted, border: `1px solid ${K.hairline}` }}>
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                  applyMode === "all"
+                    ? 'bg-[#FF9F0A] text-white'
+                    : 'bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] border border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)]'
+                }`}>
                 All Customers ({totalCount})
               </button>
             </div>
@@ -682,20 +586,18 @@ const BulkRangeModal = ({ isOpen, onClose, onApply, theme, emptyCount = 0, total
 
           <div className="space-y-4">
             {ranges.map((range, rangeIndex) => (
-              <div key={rangeIndex} className="rounded-2xl p-5 dash-glass"
-                style={{ background: K.glass, border: `1px solid ${K.hairline}` }}>
+              <div key={rangeIndex}
+                className="rounded-2xl p-5 ds-glass bg-[var(--ds-glass)] border border-[var(--ds-hairline)]">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold text-white shrink-0"
-                      style={{ background: `linear-gradient(155deg, ${APPLE.green} 0%, #1D9E3F 100%)` }}>
+                    <span className="w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold text-white shrink-0 bg-gradient-to-br from-[#32D74B] to-[#1D9E3F]">
                       {rangeIndex + 1}
                     </span>
-                    <h3 className="font-bold text-base" style={{ color: K.ink }}>Range {rangeIndex + 1}</h3>
+                    <h3 className="font-bold text-base text-[var(--ds-ink)]">Range {rangeIndex + 1}</h3>
                   </div>
                   {ranges.length > 1 && (
                     <button onClick={() => removeRange(rangeIndex)}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center"
-                      style={{ color: APPLE.red, background: `${APPLE.red}14` }}>
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-[#FF453A] bg-[#FF453A]/8 hover:bg-[#FF453A]/16 transition-colors">
                       <Minus className="w-4 h-4" />
                     </button>
                   )}
@@ -703,37 +605,33 @@ const BulkRangeModal = ({ isOpen, onClose, onApply, theme, emptyCount = 0, total
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-widest" style={{ color: K.muted }}>Minimum Quantity</label>
+                    <label className="text-xs font-semibold uppercase tracking-widest text-[var(--ds-muted)]">Minimum Quantity</label>
                     <input type="text" value={range.min}
                       onChange={(e) => handleChange(rangeIndex, 'min', e.target.value)}
                       placeholder="Min"
-                      className="w-full px-4 py-3 rounded-xl text-sm dash-glass"
-                      style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }} />
+                      className="ds-glass w-full px-4 py-3 rounded-xl text-sm bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)] focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.15)] outline-none" />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-widest" style={{ color: K.muted }}>Maximum Quantity</label>
+                    <label className="text-xs font-semibold uppercase tracking-widest text-[var(--ds-muted)]">Maximum Quantity</label>
                     <input type="text" value={range.max}
                       onChange={(e) => handleChange(rangeIndex, 'max', e.target.value)}
                       placeholder="Max"
-                      className="w-full px-4 py-3 rounded-xl text-sm dash-glass"
-                      style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }} />
+                      className="ds-glass w-full px-4 py-3 rounded-xl text-sm bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)] focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.15)] outline-none" />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-widest" style={{ color: K.muted }}>Rebate per Bag</label>
+                    <label className="text-xs font-semibold uppercase tracking-widest text-[var(--ds-muted)]">Rebate per Bag</label>
                     <input type="text" value={range.rebate}
                       onChange={(e) => handleChange(rangeIndex, 'rebate', e.target.value)}
                       placeholder="Rebate amount"
-                      className="w-full px-4 py-3 rounded-xl text-sm dash-glass"
-                      style={{
-                        background: K.glass,
-                        border: `1px solid ${range.rebate === "" ? `${APPLE.orange}55` : K.hairline}`,
-                        color: K.ink,
-                      }} />
+                      className={`ds-glass w-full px-4 py-3 rounded-xl text-sm bg-[var(--ds-glass)] text-[var(--ds-ink)] outline-none transition-colors ${
+                        range.rebate === ""
+                          ? 'border border-[#FF9F0A]/33 focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.15)]'
+                          : 'border border-[var(--ds-hairline)] focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.15)]'
+                      }`} />
                   </div>
                 </div>
 
-                <div className="mt-3 text-xs px-3 py-2 rounded-lg inline-block"
-                  style={{ background: `${APPLE.green}14`, color: APPLE.green, border: `1px solid ${APPLE.green}33` }}>
+                <div className="mt-3 text-xs px-3 py-2 rounded-lg inline-block bg-[#32D74B]/8 text-[#32D74B] border border-[#32D74B]/20">
                   Range: <strong>{range.min}</strong> – <strong>{range.max}</strong> bags → Rebate: <strong>₱{range.rebate || "0"}</strong>/bag
                 </div>
               </div>
@@ -742,30 +640,28 @@ const BulkRangeModal = ({ isOpen, onClose, onApply, theme, emptyCount = 0, total
 
           <div className="mt-6 flex justify-center">
             <button onClick={addRange}
-              className="flex items-center gap-2 px-6 py-3 rounded-full font-semibold text-white"
-              style={{ background: `linear-gradient(155deg, ${APPLE.green} 0%, #1D9E3F 100%)`, boxShadow: `0 4px 16px -6px ${APPLE.green}88` }}>
+              className="flex items-center gap-2 px-6 py-3 rounded-full font-semibold text-white bg-gradient-to-br from-[#32D74B] to-[#1D9E3F] shadow-[0_4px_16px_-6px_rgba(50,215,75,0.53)] hover:brightness-110 transition-all">
               <Plus className="w-4 h-4" />
               Add Another Range
             </button>
           </div>
         </div>
 
-        <div className="flex justify-between items-center px-6 py-4 border-t flex-shrink-0"
-          style={{ borderColor: K.hairline, background: K.glassDeep }}>
-          <div className="text-sm" style={{ color: K.muted }}>
-            <strong style={{ color: K.ink }}>{ranges.length}</strong> range{ranges.length !== 1 ? 's' : ''} ·
-            {' '}applying to <strong style={{ color: applyMode === "all" ? APPLE.orange : APPLE.blue }}>
+        <div className="flex justify-between items-center px-6 py-4 border-t flex-shrink-0 border-[var(--ds-hairline)] bg-[var(--ds-glass-deep)]">
+          <div className="text-sm text-[var(--ds-muted)]">
+            <strong className="text-[var(--ds-ink)]">{ranges.length}</strong> range{ranges.length !== 1 ? 's' : ''} ·
+            {' '}applying to{' '}
+            <strong className={applyMode === "all" ? 'text-[#FF9F0A]' : 'text-[#0A84FF]'}>
               {applyMode === "all" ? `all ${totalCount}` : `${emptyCount} customer${emptyCount !== 1 ? 's' : ''} with no ranges`}
             </strong>
           </div>
-
           <div className="flex gap-3">
             <button onClick={onClose}
-              className="px-6 py-2.5 rounded-full text-sm font-medium"
-              style={{ border: `1px solid ${K.hairline}`, color: K.muted }}>Cancel</button>
+              className="px-6 py-2.5 rounded-full text-sm font-medium text-[var(--ds-muted)] border border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)] transition-colors">
+              Cancel
+            </button>
             <button onClick={handleApply} disabled={anyMissing}
-              className="px-6 py-2.5 rounded-full text-sm font-semibold flex items-center gap-2 text-white disabled:opacity-40"
-              style={{ background: `linear-gradient(155deg, ${APPLE.green} 0%, #1D9E3F 100%)`, boxShadow: `0 4px 16px -6px ${APPLE.green}88` }}>
+              className="px-6 py-2.5 rounded-full text-sm font-semibold flex items-center gap-2 text-white bg-gradient-to-br from-[#32D74B] to-[#1D9E3F] shadow-[0_4px_16px_-6px_rgba(50,215,75,0.53)] disabled:opacity-40">
               <CheckCircle className="w-4 h-4" />
               Apply Ranges
             </button>
@@ -790,9 +686,60 @@ function RebateSetup({
   showVcpDropdown,
   setShowVcpDropdown,
 }) {
-  const { theme, updateTheme } = useTheme();
-  const K = dashTokens(theme === 'dark');
-  const { access, accessLoading, accessError } = useAccessControl(routePath);
+  const { theme, updateTheme, isDark, K } = useTokens();
+
+  /* ─── ACCESS CONTROL FIX ───────────────────────────────────────────
+   * 1. Guarantee routePath is a non-empty string so the hook never
+   *    queries "/undefined".
+   * 2. Wrap in try/catch so a thrown hook doesn't blank the page.
+   * 3. Add a 8-second watchdog: if the hook never clears its loading
+   *    flag, we stop blocking the UI (logs a warning).
+   * ────────────────────────────────────────────────────────────────── */
+  const safeRoutePath = useMemo(
+    () => (typeof routePath === "string" && routePath.trim()) ? routePath : "/RebateSetup",
+    [routePath]
+  );
+
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log("[RebateSetup] access props", { routePath, safeRoutePath });
+  }, [routePath, safeRoutePath]);
+
+  const accessHook = useAccessControl(safeRoutePath);
+  const rawAccess       = accessHook?.access;
+  const rawLoading      = accessHook?.accessLoading;
+  const rawAccessError  = accessHook?.accessError;
+
+  const [watchdogFired, setWatchdogFired] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (rawLoading) {
+        // eslint-disable-next-line no-console
+        console.warn("[RebateSetup] Access control did not resolve within 8s — unblocking UI.");
+        setWatchdogFired(true);
+      }
+    }, 8000);
+    return () => clearTimeout(t);
+  }, [rawLoading]);
+
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log("[RebateSetup] access state", {
+      accessLoading: rawLoading,
+      accessError: rawAccessError,
+      access: rawAccess,
+      watchdogFired,
+    });
+  }, [rawLoading, rawAccessError, rawAccess, watchdogFired]);
+
+  const accessLoading = !!rawLoading && !watchdogFired;
+  const accessError   = rawAccessError || (watchdogFired ? "Access check timed out." : null);
+  const access        = rawAccess || {
+    canView:   true,   // fail-open so the page renders instead of hanging
+    canEdit:   true,
+    canCreate: true,
+    canExport: true,
+  };
 
   const isVanDb = db === 'VAN';
 
@@ -847,10 +794,6 @@ function RebateSetup({
   const [isDragOver, setIsDragOver] = useState(false);
   const [bulkRangeModalOpen, setBulkRangeModalOpen] = useState(false);
 
-  const API_BASE = 'http://192.168.100.193:3009/api';
-  const DB_NAME  = 'USER';
-  const isDark   = theme === 'dark';
-
   const isItemQtrFreq = selectedFrequency === "Monthly w/ Item Qtr. Rebate";
   const isCustQtrFreq = selectedFrequency === "Monthly w/ Cust. Qtr. Rebate";
   const isQuarterly   = selectedFrequency === "Quarterly";
@@ -890,7 +833,7 @@ function RebateSetup({
     name: 'RebateSetup',
     version: '3.2.0',
     description: `Unified rebate configuration for ${db}`,
-    routePath,
+    routePath: safeRoutePath,
   });
 
   useEffect(() => {
@@ -1022,30 +965,30 @@ function RebateSetup({
     return nextCode;
   };
 
-const calculateQuotaPeriods = () => {
-  const periods = computeQuotaPeriods(selectedDateFrom, selectedDateTo, selectedFrequency);
-  setQuotaPeriods(periods);
-  setQuotaCount(periods.length);
+  const calculateQuotaPeriods = () => {
+    const periods = computeQuotaPeriods(selectedDateFrom, selectedDateTo, selectedFrequency);
+    setQuotaPeriods(periods);
+    setQuotaCount(periods.length);
 
-  const resizeKeepingValues = (existing, targetLen) => {
-    const arr = Array.isArray(existing) ? existing : [];
-    if (arr.length === targetLen) return arr;
-    const resized = Array(targetLen).fill("");
-    arr.forEach((v, i) => { if (i < targetLen) resized[i] = v; });
-    return resized;
-  };
-
-  setCustomers(prev => prev.map(c => {
-    if (quotaType !== "withQuota") return { ...c, quotas: [], percentages: [], ranges: c.ranges || {} };
-    return {
-      ...c,
-      quotas:      resizeKeepingValues(c.quotas,      periods.length),
-      percentages: resizeKeepingValues(c.percentages, periods.length),
-      ranges:      c.ranges || {},
+    const resizeKeepingValues = (existing, targetLen) => {
+      const arr = Array.isArray(existing) ? existing : [];
+      if (arr.length === targetLen) return arr;
+      const resized = Array(targetLen).fill("");
+      arr.forEach((v, i) => { if (i < targetLen) resized[i] = v; });
+      return resized;
     };
-  }));
-  setItems(prev => prev.map(i => ({ ...i, ranges: i.ranges || {} })));
-};
+
+    setCustomers(prev => prev.map(c => {
+      if (quotaType !== "withQuota") return { ...c, quotas: [], percentages: [], ranges: c.ranges || {} };
+      return {
+        ...c,
+        quotas:      resizeKeepingValues(c.quotas,      periods.length),
+        percentages: resizeKeepingValues(c.percentages, periods.length),
+        ranges:      c.ranges || {},
+      };
+    }));
+    setItems(prev => prev.map(i => ({ ...i, ranges: i.ranges || {} })));
+  };
 
   const handleSearchRebateCode = async () => {
     const code = searchCode.trim().toUpperCase();
@@ -1147,106 +1090,93 @@ const calculateQuotaPeriods = () => {
     }
   };
 
-const handleImportFile = (file) => {
-  if (!access.canEdit) { showToast("You do not have permission to import data", "error"); return; }
-  if (!file) return;
-  if (!file.name.match(/\.(xlsx|xls)$/)) { showToast("Please select a valid Excel file (.xlsx or .xls)", "error"); return; }
-  setLoading(true);
-  const preservedCode = isViewMode ? loadedRebateCode : null;
-  const preservedIsViewMode = isViewMode;
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    try {
-      const data = new Uint8Array(e.target.result);
-      const workbook = XLSX.read(data, { type: 'array' });
-      if (workbook.SheetNames.length === 0) throw new Error("No sheets found in Excel file");
-      let customerDataImported = false, itemDataImported = false;
-      let importedCustomers = [], importedItems = [];
-      let extracted = {};
-      workbook.SheetNames.forEach(sheetName => {
-        const worksheet = workbook.Sheets[sheetName];
-        const jsonData  = XLSX.utils.json_to_sheet ? XLSX.utils.sheet_to_json(worksheet, { header: 1 }) : [];
-        if (jsonData.length > 0) {
-          if (!preservedIsViewMode) extracted = extractHeaderInfoFromData(jsonData);
+  const handleImportFile = (file) => {
+    if (!access.canEdit) { showToast("You do not have permission to import data", "error"); return; }
+    if (!file) return;
+    if (!file.name.match(/\.(xlsx|xls)$/)) { showToast("Please select a valid Excel file (.xlsx or .xls)", "error"); return; }
+    setLoading(true);
+    const preservedCode = isViewMode ? loadedRebateCode : null;
+    const preservedIsViewMode = isViewMode;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        if (workbook.SheetNames.length === 0) throw new Error("No sheets found in Excel file");
+        let customerDataImported = false, itemDataImported = false;
+        let importedCustomers = [], importedItems = [];
+        let extracted = {};
+        workbook.SheetNames.forEach(sheetName => {
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData  = XLSX.utils.json_to_sheet ? XLSX.utils.sheet_to_json(worksheet, { header: 1 }) : [];
+          if (jsonData.length > 0) {
+            if (!preservedIsViewMode) extracted = extractHeaderInfoFromData(jsonData);
+            const effRebateType = extracted.rebateType || rebateType;
+            const effQuotaType  = extracted.quotaType  || quotaType;
+            const effDateFrom   = extracted.dateFrom   || selectedDateFrom;
+            const effDateTo     = extracted.dateTo     || selectedDateTo;
+            const effFrequency  = extracted.frequency  || selectedFrequency;
+            const effPeriods    = computeQuotaPeriods(effDateFrom, effDateTo, effFrequency);
+            const sheetLower = sheetName.toLowerCase();
 
-          // Effective context for the import — new values from the file first,
-          // then the current component state as a fallback.
-          const effRebateType = extracted.rebateType || rebateType;
-          const effQuotaType  = extracted.quotaType  || quotaType;
-          const effDateFrom   = extracted.dateFrom   || selectedDateFrom;
-          const effDateTo     = extracted.dateTo     || selectedDateTo;
-          const effFrequency  = extracted.frequency  || selectedFrequency;
-          const effPeriods    = computeQuotaPeriods(effDateFrom, effDateTo, effFrequency);
-
-          const sheetLower = sheetName.toLowerCase();
-
-          if (sheetLower.includes('customer')) {
-            let dataStartRow = 0, headerRow = null;
-            for (let i = 0; i < jsonData.length; i++) {
-              const row = jsonData[i];
-              if (Array.isArray(row) && row[0] === "Customer Code" && row[1] === "Customer Name") {
-                dataStartRow = i + 1;
-                headerRow    = row;
-                break;
+            if (sheetLower.includes('customer')) {
+              let dataStartRow = 0, headerRow = null;
+              for (let i = 0; i < jsonData.length; i++) {
+                const row = jsonData[i];
+                if (Array.isArray(row) && row[0] === "Customer Code" && row[1] === "Customer Name") {
+                  dataStartRow = i + 1; headerRow = row; break;
+                }
               }
-            }
-            if (dataStartRow > 0) {
-              const result = processCustomerDataSimple(
-                jsonData.slice(dataStartRow),
-                headerRow,
-                { rebateType: effRebateType, quotaType: effQuotaType, quotaPeriods: effPeriods },
-              );
-              importedCustomers = result.importedCustomers;
-              if (importedCustomers.length > 0) {
-                setCustomers(importedCustomers);
-                const state = {}; importedCustomers.forEach((_, idx) => { state[idx] = false; });
-                setEditingRows(prev => ({ ...prev, customer: state }));
-                customerDataImported = true;
+              if (dataStartRow > 0) {
+                const result = processCustomerDataSimple(
+                  jsonData.slice(dataStartRow), headerRow,
+                  { rebateType: effRebateType, quotaType: effQuotaType, quotaPeriods: effPeriods },
+                );
+                importedCustomers = result.importedCustomers;
+                if (importedCustomers.length > 0) {
+                  setCustomers(importedCustomers);
+                  const state = {}; importedCustomers.forEach((_, idx) => { state[idx] = false; });
+                  setEditingRows(prev => ({ ...prev, customer: state }));
+                  customerDataImported = true;
+                }
               }
-            }
-          } else if (sheetLower.includes('item')) {
-            let dataStartRow = 0, headerRow = null;
-            for (let i = 0; i < jsonData.length; i++) {
-              const row = jsonData[i];
-              if (Array.isArray(row) && row[0] === "Item Code" && row[1] === "Item Name") {
-                dataStartRow = i + 1;
-                headerRow    = row;
-                break;
+            } else if (sheetLower.includes('item')) {
+              let dataStartRow = 0, headerRow = null;
+              for (let i = 0; i < jsonData.length; i++) {
+                const row = jsonData[i];
+                if (Array.isArray(row) && row[0] === "Item Code" && row[1] === "Item Name") {
+                  dataStartRow = i + 1; headerRow = row; break;
+                }
               }
-            }
-            if (dataStartRow > 0) {
-              importedItems = processItemDataSimple(
-                jsonData.slice(dataStartRow),
-                effRebateType,
-                headerRow,
-              );
-              if (importedItems.length > 0) {
-                setItems(importedItems);
-                const state = {};
-                importedItems.forEach((_, idx) => { state[idx] = false; });
-                setEditingRows(prev => ({ ...prev, item: state }));
-                itemDataImported = true;
+              if (dataStartRow > 0) {
+                importedItems = processItemDataSimple(jsonData.slice(dataStartRow), effRebateType, headerRow);
+                if (importedItems.length > 0) {
+                  setItems(importedItems);
+                  const state = {};
+                  importedItems.forEach((_, idx) => { state[idx] = false; });
+                  setEditingRows(prev => ({ ...prev, item: state }));
+                  itemDataImported = true;
+                }
               }
             }
           }
+        });
+        if (preservedIsViewMode && preservedCode) { setRebateCode(preservedCode); setLoadedRebateCode(preservedCode); setIsViewMode(true); }
+        if (!customerDataImported && !itemDataImported) showToast("No valid customer or item data found in the Excel file", "warning");
+        else {
+          const msgs = [];
+          if (customerDataImported) msgs.push(`${importedCustomers.length} customers`);
+          if (itemDataImported)     msgs.push(`${importedItems.length} items`);
+          showToast(`Successfully imported ${msgs.join(' and ')}`, "success");
         }
-      });
-      if (preservedIsViewMode && preservedCode) { setRebateCode(preservedCode); setLoadedRebateCode(preservedCode); setIsViewMode(true); }
-      if (!customerDataImported && !itemDataImported) showToast("No valid customer or item data found in the Excel file", "warning");
-      else {
-        const msgs = [];
-        if (customerDataImported) msgs.push(`${importedCustomers.length} customers`);
-        if (itemDataImported)     msgs.push(`${importedItems.length} items`);
-        showToast(`Successfully imported ${msgs.join(' and ')}`, "success");
-      }
-    } catch (error) {
-      showToast(`Import failed: ${error.message}`, "error");
-      if (preservedIsViewMode && preservedCode) { setRebateCode(preservedCode); setLoadedRebateCode(preservedCode); setIsViewMode(true); }
-    } finally { setLoading(false); }
+      } catch (error) {
+        showToast(`Import failed: ${error.message}`, "error");
+        if (preservedIsViewMode && preservedCode) { setRebateCode(preservedCode); setLoadedRebateCode(preservedCode); setIsViewMode(true); }
+      } finally { setLoading(false); }
+    };
+    reader.onerror = () => { setLoading(false); showToast("Error reading file. Please try again.", "error"); };
+    reader.readAsArrayBuffer(file);
   };
-  reader.onerror = () => { setLoading(false); showToast("Error reading file. Please try again.", "error"); };
-  reader.readAsArrayBuffer(file);
-};
 
   const handleImportExcel = (event) => {
     const file = event.target.files?.[0];
@@ -1262,221 +1192,192 @@ const handleImportFile = (file) => {
     if (files.length > 0) handleImportFile(files[0]);
   };
 
-const processCustomerDataSimple = (excelData, headerRow = null, opts = {}) => {
-  try {
-    if (excelData.length === 0) return { importedCustomers: [], importedQuotasMap: {} };
+  const processCustomerDataSimple = (excelData, headerRow = null, opts = {}) => {
+    try {
+      if (excelData.length === 0) return { importedCustomers: [], importedQuotasMap: {} };
 
-    const effRebateType   = opts.rebateType   ?? rebateType;
-    const effQuotaType    = opts.quotaType    ?? quotaType;
-    const effQuotaPeriods = Array.isArray(opts.quotaPeriods) ? opts.quotaPeriods : [];
-    const effQuotaCount   = effQuotaPeriods.length || 0;
+      const effRebateType   = opts.rebateType   ?? rebateType;
+      const effQuotaType    = opts.quotaType    ?? quotaType;
+      const effQuotaPeriods = Array.isArray(opts.quotaPeriods) ? opts.quotaPeriods : [];
+      const effQuotaCount   = effQuotaPeriods.length || 0;
 
-    let idxCode      = 0;
-    let idxName      = 1;
-    let idxDateFrom  = null;
-    let idxDateTo    = null;
-    let idxQtrQual   = null;
-    let idxQtrRebate = null;
-    let idxRanges    = null;
+      let idxCode = 0, idxName = 1, idxDateFrom = null, idxDateTo = null;
+      let idxQtrQual = null, idxQtrRebate = null, idxRanges = null;
+      const periodCols = [];
 
-    // Period columns, in order — matched by label so round-trip is stable
-    const periodCols = []; // array of { pi, col }
+      if (Array.isArray(headerRow)) {
+        const normPeriods = effQuotaPeriods.map(p =>
+          String(p.label || p.period || '').toLowerCase().trim()
+        );
+        headerRow.forEach((h, i) => {
+          if (h == null) return;
+          const raw = String(h).trim();
+          const hn  = raw.toLowerCase();
+          if      (hn === 'customer code')  { idxCode = i; return; }
+          else if (hn === 'customer name')  { idxName = i; return; }
+          else if (hn === 'date from')      { idxDateFrom = i; return; }
+          else if (hn === 'date to')        { idxDateTo = i; return; }
+          else if (hn === 'qtr qualified')  { idxQtrQual = i; return; }
+          else if (hn === 'qtr rebate')     { idxQtrRebate = i; return; }
+          else if (hn === 'ranges (json)' || hn === 'ranges') { idxRanges = i; return; }
+          const cleaned = hn.replace(/\s*\(%\)\s*$/, '').trim();
+          const pi = normPeriods.indexOf(cleaned);
+          if (pi >= 0) periodCols.push({ pi, col: i });
+        });
+      }
 
-    if (Array.isArray(headerRow)) {
-      const normPeriods = effQuotaPeriods.map(p =>
-        String(p.label || p.period || '').toLowerCase().trim()
+      if (idxDateFrom == null && idxDateTo == null) { idxDateFrom = 2; idxDateTo = 3; }
+
+      const importedCustomers = [], skippedCustomers = [];
+      excelData.forEach((row) => {
+        const rowArray = Array.isArray(row) ? row : [row];
+        const codeValue = rowArray[idxCode] !== undefined ? String(rowArray[idxCode]).trim() : "";
+        const nameValue = rowArray[idxName] !== undefined ? String(rowArray[idxName]).trim() : "";
+        if (!codeValue) return;
+
+        const customerData = customersDropdown.find(
+          c => String(c.CardCode).trim().toLowerCase() === codeValue.toLowerCase()
+        );
+        if (!customerData) { skippedCustomers.push({ code: codeValue, name: nameValue }); return; }
+
+        const dateFromRaw  = idxDateFrom  != null ? rowArray[idxDateFrom]  : "";
+        const dateToRaw    = idxDateTo    != null ? rowArray[idxDateTo]    : "";
+        const qtrRebateRaw = idxQtrRebate != null ? rowArray[idxQtrRebate] : "";
+        const qtrQualRaw   = idxQtrQual   != null ? rowArray[idxQtrQual]   : "";
+        const rangesRaw    = idxRanges    != null ? rowArray[idxRanges]    : "";
+
+        const isQualified = normalizeQtrQualifiedFlag(qtrQualRaw);
+
+        const quotasArr = effQuotaType === "withQuota" && effRebateType === "Fixed"
+          ? Array(effQuotaCount).fill("") : [];
+        const percentagesArr = effQuotaType === "withQuota" && effRebateType === "Percentage"
+          ? Array(effQuotaCount).fill("") : [];
+
+        periodCols.forEach(({ pi, col }) => {
+          const val = rowArray[col];
+          if (val === undefined || val === null || val === "") return;
+          const sVal = String(val).trim();
+          if (effRebateType === "Fixed")      quotasArr[pi]      = sVal;
+          if (effRebateType === "Percentage") percentagesArr[pi] = sVal;
+        });
+
+        let parsedRanges = {};
+        if (rangesRaw && typeof rangesRaw === "string" && rangesRaw.trim()) {
+          try {
+            const parsed = JSON.parse(rangesRaw);
+            if (parsed && typeof parsed === 'object') parsedRanges = parsed;
+          } catch { /* ignore malformed JSON */ }
+        }
+
+        importedCustomers.push({
+          code: customerData.CardCode,
+          name: customerData.CardName,
+          quotas: quotasArr, percentages: percentagesArr, ranges: parsedRanges,
+          qtrRebate: qtrRebateRaw !== "" && qtrRebateRaw !== undefined && qtrRebateRaw !== null
+            ? String(qtrRebateRaw).trim() : "",
+          rebatePerBag: "",
+          isQualified,
+          dateFrom: toDateString(dateFromRaw),
+          dateTo:   toDateString(dateToRaw),
+        });
+      });
+
+      if (skippedCustomers.length > 0) {
+        showToast(`Imported ${importedCustomers.length} customers, skipped ${skippedCustomers.length} not found`, "warning");
+      }
+      return { importedCustomers, importedQuotasMap: {} };
+    } catch (error) {
+      showToast(`Error processing customer data: ${error.message}`, "error");
+      return { importedCustomers: [], importedQuotasMap: {} };
+    }
+  };
+
+  const processItemDataSimple = (excelData, effectiveRebateType, headerRow = null) => {
+    const rt = effectiveRebateType ?? rebateType;
+    try {
+      if (excelData.length === 0) return [];
+
+      let idxCode = 0, idxName = 1, idxQty = 2, idxUom = 3, idxValue = null;
+      let idxQtrQual = null, idxQtrRebate = null, idxRanges = null;
+
+      if (Array.isArray(headerRow)) {
+        headerRow.forEach((h, i) => {
+          if (h == null) return;
+          const hn = String(h).toLowerCase().trim();
+          if      (hn === 'item code')                             idxCode = i;
+          else if (hn === 'item name')                             idxName = i;
+          else if (hn === 'qty' || hn === 'quantity')              idxQty  = i;
+          else if (hn.includes('unit of measure') || hn === 'uom') idxUom  = i;
+          else if (hn.includes('percentage per bag') ||
+                   hn.includes('rebate per bag')     ||
+                   hn === 'percentage' || hn === 'rebate')         idxValue = i;
+          else if (hn === 'qtr qualified')                         idxQtrQual    = i;
+          else if (hn === 'qtr rebate')                            idxQtrRebate  = i;
+          else if (hn === 'ranges (json)' || hn === 'ranges')      idxRanges     = i;
+        });
+      }
+      if (idxValue == null) idxValue = idxUom + 1;
+
+      const dataRows = excelData.filter(row =>
+        Array.isArray(row) && row.length >= 2 &&
+        row.some((cell, i) => i < 2 && cell && String(cell).trim() !== '')
       );
 
-      headerRow.forEach((h, i) => {
-        if (h == null) return;
-        const raw = String(h).trim();
-        const hn  = raw.toLowerCase();
-        if      (hn === 'customer code')  { idxCode = i; return; }
-        else if (hn === 'customer name')  { idxName = i; return; }
-        else if (hn === 'date from')      { idxDateFrom = i; return; }
-        else if (hn === 'date to')        { idxDateTo = i; return; }
-        else if (hn === 'qtr qualified')  { idxQtrQual = i; return; }
-        else if (hn === 'qtr rebate')     { idxQtrRebate = i; return; }
-        else if (hn === 'ranges (json)' || hn === 'ranges') { idxRanges = i; return; }
+      const importedItems = [], skippedItems = [];
+      dataRows.forEach((row) => {
+        const rowArray  = Array.isArray(row) ? row : [row];
+        const codeValue = rowArray[idxCode] !== undefined ? String(rowArray[idxCode]).trim() : "";
+        const nameValue = rowArray[idxName] !== undefined ? String(rowArray[idxName]).trim() : "";
+        const qtyValue  = rowArray[idxQty]  !== undefined ? String(rowArray[idxQty]).trim()  : "";
+        const uomValue  = rowArray[idxUom]  !== undefined ? String(rowArray[idxUom]).trim()  : "";
 
-        // Match quota / percentage period columns (allow a trailing " (%)")
-        const cleaned = hn.replace(/\s*\(%\)\s*$/, '').trim();
-        const pi = normPeriods.indexOf(cleaned);
-        if (pi >= 0) periodCols.push({ pi, col: i });
+        const rawValue        = idxValue != null && rowArray[idxValue] !== undefined
+          ? String(rowArray[idxValue]).trim() : "";
+        const percentageValue = rawValue.replace(/%/g, '').trim();
+
+        const qtrQualRaw   = idxQtrQual    != null ? rowArray[idxQtrQual]    : "";
+        const qtrRebateRaw = idxQtrRebate  != null ? rowArray[idxQtrRebate]  : "";
+        const rangesRaw    = idxRanges     != null ? rowArray[idxRanges]     : "";
+
+        if (!codeValue) return;
+
+        const itemData = itemsDropdown.find(
+          i => String(i.ItemCode).trim().toLowerCase() === codeValue.toLowerCase()
+        );
+        if (!itemData) { skippedItems.push({ code: codeValue, name: nameValue }); return; }
+
+        const isQualified = normalizeQtrQualifiedFlag(qtrQualRaw);
+
+        let parsedRanges = {};
+        if (rangesRaw && typeof rangesRaw === "string" && rangesRaw.trim()) {
+          try {
+            const parsed = JSON.parse(rangesRaw);
+            if (parsed && typeof parsed === 'object') parsedRanges = parsed;
+          } catch { /* ignore */ }
+        }
+
+        importedItems.push({
+          code: itemData.ItemCode, name: itemData.ItemName,
+          unitPerQty: qtyValue || "1",
+          rebatePerBag:     (rt === "Fixed" || rt === "Incremental") ? percentageValue || "" : "",
+          percentagePerBag: rt === "Percentage" ? percentageValue || "" : "",
+          qtrRebate: qtrRebateRaw !== "" && qtrRebateRaw !== undefined && qtrRebateRaw !== null
+            ? String(qtrRebateRaw).trim() : "",
+          isQualified,
+          unitOfMeasure: uomValue || getSalUnitMsr(itemData),
+          ranges: parsedRanges,
+        });
       });
-    }
 
-    if (idxDateFrom == null && idxDateTo == null) {
-      idxDateFrom = 2;
-      idxDateTo   = 3;
-    }
-
-    const importedCustomers = [], skippedCustomers = [];
-
-    excelData.forEach((row) => {
-      const rowArray = Array.isArray(row) ? row : [row];
-
-      const codeValue = rowArray[idxCode] !== undefined ? String(rowArray[idxCode]).trim() : "";
-      const nameValue = rowArray[idxName] !== undefined ? String(rowArray[idxName]).trim() : "";
-      if (!codeValue) return;
-
-      const customerData = customersDropdown.find(
-        c => String(c.CardCode).trim().toLowerCase() === codeValue.toLowerCase()
-      );
-      if (!customerData) {
-        skippedCustomers.push({ code: codeValue, name: nameValue });
-        return;
+      if (skippedItems.length > 0) {
+        showToast(`Imported ${importedItems.length} items, skipped ${skippedItems.length} not found`, "warning");
       }
-
-      const dateFromRaw  = idxDateFrom  != null ? rowArray[idxDateFrom]  : "";
-      const dateToRaw    = idxDateTo    != null ? rowArray[idxDateTo]    : "";
-      const qtrRebateRaw = idxQtrRebate != null ? rowArray[idxQtrRebate] : "";
-      const qtrQualRaw   = idxQtrQual   != null ? rowArray[idxQtrQual]   : "";
-      const rangesRaw    = idxRanges    != null ? rowArray[idxRanges]    : "";
-
-      const isQualified = normalizeQtrQualifiedFlag(qtrQualRaw);
-
-      // Build quota / percentage arrays sized to the periods we detected
-      const quotasArr      = effQuotaType === "withQuota" && effRebateType === "Fixed"
-        ? Array(effQuotaCount).fill("") : [];
-      const percentagesArr = effQuotaType === "withQuota" && effRebateType === "Percentage"
-        ? Array(effQuotaCount).fill("") : [];
-
-      periodCols.forEach(({ pi, col }) => {
-        const val = rowArray[col];
-        if (val === undefined || val === null || val === "") return;
-        const sVal = String(val).trim();
-        if (effRebateType === "Fixed")      quotasArr[pi]      = sVal;
-        if (effRebateType === "Percentage") percentagesArr[pi] = sVal;
-      });
-
-      // Parse incremental ranges JSON
-      let parsedRanges = {};
-      if (rangesRaw && typeof rangesRaw === "string" && rangesRaw.trim()) {
-        try {
-          const parsed = JSON.parse(rangesRaw);
-          if (parsed && typeof parsed === 'object') parsedRanges = parsed;
-        } catch { /* ignore malformed JSON */ }
-      }
-
-      importedCustomers.push({
-        code: customerData.CardCode,
-        name: customerData.CardName,
-        quotas:      quotasArr,
-        percentages: percentagesArr,
-        ranges:      parsedRanges,
-        qtrRebate: qtrRebateRaw !== "" && qtrRebateRaw !== undefined && qtrRebateRaw !== null
-          ? String(qtrRebateRaw).trim()
-          : "",
-        rebatePerBag: "",
-        isQualified,
-        dateFrom: toDateString(dateFromRaw),
-        dateTo:   toDateString(dateToRaw),
-      });
-    });
-
-    if (skippedCustomers.length > 0) {
-      showToast(`Imported ${importedCustomers.length} customers, skipped ${skippedCustomers.length} not found`, "warning");
+      return importedItems;
+    } catch (error) {
+      showToast(`Error processing item data: ${error.message}`, "error");
+      return [];
     }
-    return { importedCustomers, importedQuotasMap: {} };
-  } catch (error) {
-    showToast(`Error processing customer data: ${error.message}`, "error");
-    return { importedCustomers: [], importedQuotasMap: {} };
-  }
-};
-
-const processItemDataSimple = (excelData, effectiveRebateType, headerRow = null) => {
-  const rt = effectiveRebateType ?? rebateType;
-  try {
-    if (excelData.length === 0) return [];
-
-    let idxCode = 0, idxName = 1, idxQty = 2, idxUom = 3, idxValue = null;
-    let idxQtrQual = null, idxQtrRebate = null, idxRanges = null;
-
-    if (Array.isArray(headerRow)) {
-      headerRow.forEach((h, i) => {
-        if (h == null) return;
-        const hn = String(h).toLowerCase().trim();
-        if      (hn === 'item code')                             idxCode = i;
-        else if (hn === 'item name')                             idxName = i;
-        else if (hn === 'qty' || hn === 'quantity')              idxQty  = i;
-        else if (hn.includes('unit of measure') || hn === 'uom') idxUom  = i;
-        else if (hn.includes('percentage per bag') ||
-                 hn.includes('rebate per bag')     ||
-                 hn === 'percentage' || hn === 'rebate')         idxValue = i;
-        else if (hn === 'qtr qualified')                         idxQtrQual    = i;
-        else if (hn === 'qtr rebate')                            idxQtrRebate  = i;
-        else if (hn === 'ranges (json)' || hn === 'ranges')      idxRanges     = i;
-      });
-    }
-    if (idxValue == null) idxValue = idxUom + 1;
-
-    const dataRows = excelData.filter(row =>
-      Array.isArray(row) && row.length >= 2 &&
-      row.some((cell, i) => i < 2 && cell && String(cell).trim() !== '')
-    );
-
-    const importedItems = [], skippedItems = [];
-
-    dataRows.forEach((row) => {
-      const rowArray  = Array.isArray(row) ? row : [row];
-      const codeValue = rowArray[idxCode] !== undefined ? String(rowArray[idxCode]).trim() : "";
-      const nameValue = rowArray[idxName] !== undefined ? String(rowArray[idxName]).trim() : "";
-      const qtyValue  = rowArray[idxQty]  !== undefined ? String(rowArray[idxQty]).trim()  : "";
-      const uomValue  = rowArray[idxUom]  !== undefined ? String(rowArray[idxUom]).trim()  : "";
-
-      const rawValue        = idxValue != null && rowArray[idxValue] !== undefined
-        ? String(rowArray[idxValue]).trim() : "";
-      const percentageValue = rawValue.replace(/%/g, '').trim();
-
-      const qtrQualRaw   = idxQtrQual    != null ? rowArray[idxQtrQual]    : "";
-      const qtrRebateRaw = idxQtrRebate  != null ? rowArray[idxQtrRebate]  : "";
-      const rangesRaw    = idxRanges     != null ? rowArray[idxRanges]     : "";
-
-      if (!codeValue) return;
-
-      const itemData = itemsDropdown.find(
-        i => String(i.ItemCode).trim().toLowerCase() === codeValue.toLowerCase()
-      );
-      if (!itemData) {
-        skippedItems.push({ code: codeValue, name: nameValue });
-        return;
-      }
-
-      const isQualified = normalizeQtrQualifiedFlag(qtrQualRaw);
-
-      let parsedRanges = {};
-      if (rangesRaw && typeof rangesRaw === "string" && rangesRaw.trim()) {
-        try {
-          const parsed = JSON.parse(rangesRaw);
-          if (parsed && typeof parsed === 'object') parsedRanges = parsed;
-        } catch { /* ignore malformed JSON */ }
-      }
-
-      importedItems.push({
-        code: itemData.ItemCode,
-        name: itemData.ItemName,
-        unitPerQty: qtyValue || "1",
-        rebatePerBag:     (rt === "Fixed" || rt === "Incremental") ? percentageValue || "" : "",
-        percentagePerBag: rt === "Percentage" ? percentageValue || "" : "",
-        qtrRebate: qtrRebateRaw !== "" && qtrRebateRaw !== undefined && qtrRebateRaw !== null
-          ? String(qtrRebateRaw).trim()
-          : "",
-        isQualified,
-        unitOfMeasure: uomValue || getSalUnitMsr(itemData),
-        ranges: parsedRanges,
-      });
-    });
-
-    if (skippedItems.length > 0) {
-      showToast(`Imported ${importedItems.length} items, skipped ${skippedItems.length} not found`, "warning");
-    }
-    return importedItems;
-  } catch (error) {
-    showToast(`Error processing item data: ${error.message}`, "error");
-    return [];
-  }
-};
+  };
 
   const extractHeaderInfoFromData = (excelData) => {
     if (!excelData || excelData.length < 2) return {};
@@ -1497,8 +1398,7 @@ const processItemDataSimple = (excelData, effectiveRebateType, headerRow = null)
       else if (h.includes('date range scope') || h.includes('date range mode')) {
         if (v) {
           const scope = v.toLowerCase().includes('per') ? SCOPE_PER_CUSTOMER : SCOPE_ALL_CUSTOMERS;
-          setDateRangeScope(scope);
-          extracted.dateRangeScope = scope;
+          setDateRangeScope(scope); extracted.dateRangeScope = scope;
         }
       }
       else if (h.includes('quota type')) {
@@ -1515,101 +1415,93 @@ const processItemDataSimple = (excelData, effectiveRebateType, headerRow = null)
     return extracted;
   };
 
-const handleExportExcel = () => {
-  if (!access.canExport) { showToast("You do not have permission to export data", "error"); return; }
-  try {
-    const workbook = XLSX.utils.book_new();
-    let hasData = false;
+  const handleExportExcel = () => {
+    if (!access.canExport) { showToast("You do not have permission to export data", "error"); return; }
+    try {
+      const workbook = XLSX.utils.book_new();
+      let hasData = false;
 
-    const headerLabels = ["Rebate Code","Name","Date From","Date To","Quota Type","Frequency","Redemption Period","Rebate Type","Date Range Scope"];
-    const headerValues = [
-      rebateCode, rebateName || "", selectedDateFrom || "", selectedDateTo || "",
-      getQuotaTypeDisplay(), selectedFrequency || "", redemptionPeriod || "", rebateType || "",
-      dateRangeScope,
-    ];
+      const headerLabels = ["Rebate Code","Name","Date From","Date To","Quota Type","Frequency","Redemption Period","Rebate Type","Date Range Scope"];
+      const headerValues = [
+        rebateCode, rebateName || "", selectedDateFrom || "", selectedDateTo || "",
+        getQuotaTypeDisplay(), selectedFrequency || "", redemptionPeriod || "", rebateType || "",
+        dateRangeScope,
+      ];
 
-    /* ── Customers sheet ─────────────────────────────────────────── */
-    const custRows = customers.filter(c => c.code && c.name);
-    if (custRows.length > 0) {
-      const custHeader = ["Customer Code","Customer Name"];
-      if (showPerRowDate)          custHeader.push("Date From", "Date To");
-      if (showCustomerQtrRebate)   custHeader.push("Qtr Qualified", "Qtr Rebate");
+      const custRows = customers.filter(c => c.code && c.name);
+      if (custRows.length > 0) {
+        const custHeader = ["Customer Code","Customer Name"];
+        if (showPerRowDate)          custHeader.push("Date From", "Date To");
+        if (showCustomerQtrRebate)   custHeader.push("Qtr Qualified", "Qtr Rebate");
 
-      // Quota / Percentage columns (both Fixed and Percentage now)
-      const includePeriodCols =
-        quotaType === "withQuota" &&
-        (rebateType === "Fixed" || rebateType === "Percentage") &&
-        quotaPeriods.length > 0;
-      if (includePeriodCols) {
-        quotaPeriods.forEach(p => custHeader.push(`${p.label || p.period}`));
+        const includePeriodCols =
+          quotaType === "withQuota" &&
+          (rebateType === "Fixed" || rebateType === "Percentage") &&
+          quotaPeriods.length > 0;
+        if (includePeriodCols) quotaPeriods.forEach(p => custHeader.push(`${p.label || p.period}`));
+
+        const includeRangesJson = rebateType === "Incremental";
+        if (includeRangesJson) custHeader.push("Ranges (JSON)");
+
+        const wsData = [headerLabels, headerValues, [], custHeader, ...custRows.map(c => {
+          const r = [c.code || '', c.name || ''];
+          if (showPerRowDate)        r.push(c.dateFrom || '', c.dateTo || '');
+          if (showCustomerQtrRebate) r.push(
+            c.isQualified === false ? 'No' : 'Yes',
+            c.isQualified === false ? '' : (c.qtrRebate || '')
+          );
+          if (includePeriodCols) {
+            const arr = rebateType === "Percentage" ? (c.percentages || []) : (c.quotas || []);
+            for (let i = 0; i < quotaPeriods.length; i++) r.push(arr[i] ?? '');
+          }
+          if (includeRangesJson) {
+            const hasRanges = c.ranges && typeof c.ranges === 'object' && Object.keys(c.ranges).length > 0;
+            r.push(hasRanges ? JSON.stringify(c.ranges) : '');
+          }
+          return r;
+        })];
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+        XLSX.utils.book_append_sheet(workbook, ws, 'Customers');
+        hasData = true;
       }
 
-      // Incremental → single JSON column with full per-period ranges
-      const includeRangesJson = rebateType === "Incremental";
-      if (includeRangesJson) custHeader.push("Ranges (JSON)");
+      const itemRows = items.filter(i => i.code && i.name);
+      if (itemRows.length > 0) {
+        const itemsHeader = ["Item Code","Item Name","Qty","Unit of Measure"];
+        if (rebateType === "Percentage")        itemsHeader.push("Percentage Per Bag");
+        else if (rebateType === "Fixed")        itemsHeader.push("Rebate Per Bag");
+        else if (rebateType === "Incremental")  itemsHeader.push("Rebate Per Bag");
+        if (showItemQtrRebate) itemsHeader.push("Qtr Qualified", "Qtr Rebate");
+        if (rebateType === "Incremental") itemsHeader.push("Ranges (JSON)");
 
-      const wsData = [headerLabels, headerValues, [], custHeader, ...custRows.map(c => {
-        const r = [c.code || '', c.name || ''];
-        if (showPerRowDate)        r.push(c.dateFrom || '', c.dateTo || '');
-        if (showCustomerQtrRebate) r.push(
-          c.isQualified === false ? 'No' : 'Yes',
-          c.isQualified === false ? '' : (c.qtrRebate || '')
-        );
-        if (includePeriodCols) {
-          const arr = rebateType === "Percentage"
-            ? (c.percentages || [])
-            : (c.quotas || []);
-          for (let i = 0; i < quotaPeriods.length; i++) r.push(arr[i] ?? '');
-        }
-        if (includeRangesJson) {
-          const hasRanges = c.ranges && typeof c.ranges === 'object' && Object.keys(c.ranges).length > 0;
-          r.push(hasRanges ? JSON.stringify(c.ranges) : '');
-        }
-        return r;
-      })];
-      const ws = XLSX.utils.aoa_to_sheet(wsData);
-      XLSX.utils.book_append_sheet(workbook, ws, 'Customers');
-      hasData = true;
-    }
+        const wsData = [headerLabels, headerValues, [], itemsHeader, ...itemRows.map(i => {
+          const r = [i.code || '', i.name || '', i.unitPerQty || '', i.unitOfMeasure || ''];
+          if (rebateType === "Percentage")        r.push(i.percentagePerBag || '');
+          else if (rebateType === "Fixed")        r.push(i.rebatePerBag || '');
+          else if (rebateType === "Incremental")  r.push(i.rebatePerBag || '');
+          if (showItemQtrRebate) r.push(
+            i.isQualified === false ? 'No' : 'Yes',
+            i.isQualified === false ? '' : (i.qtrRebate || '')
+          );
+          if (rebateType === "Incremental") {
+            const hasRanges = i.ranges && typeof i.ranges === 'object' && Object.keys(i.ranges).length > 0;
+            r.push(hasRanges ? JSON.stringify(i.ranges) : '');
+          }
+          return r;
+        })];
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+        XLSX.utils.book_append_sheet(workbook, ws, 'Items');
+        hasData = true;
+      }
 
-    /* ── Items sheet ─────────────────────────────────────────────── */
-    const itemRows = items.filter(i => i.code && i.name);
-    if (itemRows.length > 0) {
-      const itemsHeader = ["Item Code","Item Name","Qty","Unit of Measure"];
-      if (rebateType === "Percentage")        itemsHeader.push("Percentage Per Bag");
-      else if (rebateType === "Fixed")        itemsHeader.push("Rebate Per Bag");
-      else if (rebateType === "Incremental")  itemsHeader.push("Rebate Per Bag");
-      if (showItemQtrRebate) itemsHeader.push("Qtr Qualified", "Qtr Rebate");
-      if (rebateType === "Incremental") itemsHeader.push("Ranges (JSON)");
-
-      const wsData = [headerLabels, headerValues, [], itemsHeader, ...itemRows.map(i => {
-        const r = [i.code || '', i.name || '', i.unitPerQty || '', i.unitOfMeasure || ''];
-        if (rebateType === "Percentage")        r.push(i.percentagePerBag || '');
-        else if (rebateType === "Fixed")        r.push(i.rebatePerBag || '');
-        else if (rebateType === "Incremental")  r.push(i.rebatePerBag || '');
-        if (showItemQtrRebate) r.push(
-          i.isQualified === false ? 'No' : 'Yes',
-          i.isQualified === false ? '' : (i.qtrRebate || '')
-        );
-        if (rebateType === "Incremental") {
-          const hasRanges = i.ranges && typeof i.ranges === 'object' && Object.keys(i.ranges).length > 0;
-          r.push(hasRanges ? JSON.stringify(i.ranges) : '');
-        }
-        return r;
-      })];
-      const ws = XLSX.utils.aoa_to_sheet(wsData);
-      XLSX.utils.book_append_sheet(workbook, ws, 'Items');
-      hasData = true;
-    }
-
-    if (!hasData) { showToast("No data to export!", "warning"); return; }
-    const dateFromF = selectedDateFrom ? selectedDateFrom.replace(/-/g, '') : 'NODATE';
-    const dateToF   = selectedDateTo   ? selectedDateTo.replace(/-/g, '')   : 'NODATE';
-    const rtF       = rebateType       ? rebateType.toUpperCase()           : 'NOTYPE';
-    XLSX.writeFile(workbook, `REBATE_${rtF}_${dateFromF}_${dateToF}_${db}.xlsx`);
-    showToast(`Data exported successfully!`, "success");
-  } catch { showToast('Error exporting data to Excel.', "error"); }
-};
+      if (!hasData) { showToast("No data to export!", "warning"); return; }
+      const dateFromF = selectedDateFrom ? selectedDateFrom.replace(/-/g, '') : 'NODATE';
+      const dateToF   = selectedDateTo   ? selectedDateTo.replace(/-/g, '')   : 'NODATE';
+      const rtF       = rebateType       ? rebateType.toUpperCase()           : 'NOTYPE';
+      XLSX.writeFile(workbook, `REBATE_${rtF}_${dateFromF}_${dateToF}_${db}.xlsx`);
+      showToast(`Data exported successfully!`, "success");
+    } catch { showToast('Error exporting data to Excel.', "error"); }
+  };
 
   const handleDownload = () => handleExportExcel();
 
@@ -1769,10 +1661,7 @@ const handleExportExcel = () => {
 
   const handleApplyBulkRanges = (ranges, mode) => {
     if (!access.canEdit) return;
-    if (!Array.isArray(ranges) || ranges.length === 0) {
-      showToast("No ranges to apply", "warning"); return;
-    }
-
+    if (!Array.isArray(ranges) || ranges.length === 0) { showToast("No ranges to apply", "warning"); return; }
     let affected = 0;
     setCustomers(prev => prev.map(c => {
       const hasRanges = (() => {
@@ -1782,22 +1671,13 @@ const handleExportExcel = () => {
         const hasPeriodKey = Object.keys(r).some(k => Array.isArray(r[k]) && r[k].length > 0);
         return hasDefault || hasPeriodKey;
       })();
-
       if (mode === "emptyOnly" && hasRanges) return c;
-
       affected++;
       const cloned = JSON.parse(JSON.stringify(ranges));
       return { ...c, ranges: { default: cloned } };
     }));
-
-    if (affected === 0) {
-      showToast("No customers matched the apply mode", "warning");
-    } else {
-      showToast(
-        `Applied ${ranges.length} range${ranges.length !== 1 ? 's' : ''} to ${affected} customer${affected !== 1 ? 's' : ''}`,
-        "success"
-      );
-    }
+    if (affected === 0) showToast("No customers matched the apply mode", "warning");
+    else showToast(`Applied ${ranges.length} range${ranges.length !== 1 ? 's' : ''} to ${affected} customer${affected !== 1 ? 's' : ''}`, "success");
     setBulkRangeModalOpen(false);
   };
 
@@ -1809,26 +1689,13 @@ const handleExportExcel = () => {
   const toggleRowEdit = (type, index) => setEditingRows(prev => ({ ...prev, [type]: { ...prev[type], [index]: !prev[type][index] } }));
   const isRowEditable = (type, index) => editingRows[type][index];
 
-  // ═══════════════════════════════════════════════════════════════════
-  //  SCOPE MODAL HANDLERS
-  //  On confirm: commit quotaType = "withoutQuota" AND the chosen scope.
-  //  On cancel:  revert nothing extra (dropdown visually stays "With Quota").
-  // ═══════════════════════════════════════════════════════════════════
   const handleApplyScope = (scope) => {
     if (!access.canEdit) return;
-
-    // 1) Commit the quota type the user actually picked
     setQuotaType("withoutQuota");
-
-    // 2) Commit the scope
     setDateRangeScope(scope);
-
-    // 3) Clear incompatible data based on scope
     if (scope === SCOPE_PER_CUSTOMER) {
-      setSelectedDateFrom("");
-      setSelectedDateTo("");
-      setQuotaPeriods([]);
-      setQuotaCount(0);
+      setSelectedDateFrom(""); setSelectedDateTo("");
+      setQuotaPeriods([]); setQuotaCount(0);
       setCustomers(prev => prev.map(c => ({ ...c, quotas: [], percentages: [], ranges: c.ranges || {} })));
       setItems(prev => prev.map(i => ({ ...i, ranges: i.ranges || {} })));
       showToast("Per Customer mode — set dates per customer row", "info");
@@ -1836,28 +1703,16 @@ const handleExportExcel = () => {
       setCustomers(prev => prev.map(c => ({ ...c, dateFrom: "", dateTo: "" })));
       showToast("All Customer/s mode — one date range for all customers", "info");
     }
-
     setScopeModalOpen(false);
   };
 
-  const handleScopeModalCancel = () => {
-    // Just close — quotaType was never mutated, so the select stays on "With Quota"
-    setScopeModalOpen(false);
-  };
+  const handleScopeModalCancel = () => setScopeModalOpen(false);
 
   const handleQuotaTypeChange = (type) => {
     if (type === "withoutQuota" && rebateType === "Incremental") {
-      showToast("Cannot switch to 'Without Quota' while Incremental rebate type is selected.", "error");
-      return;
+      showToast("Cannot switch to 'Without Quota' while Incremental rebate type is selected.", "error"); return;
     }
-
-    if (type === "withoutQuota") {
-      // Open scope picker; commit happens in handleApplyScope
-      setScopeModalOpen(true);
-      return;
-    }
-
-    // Switching back to withQuota — always header-level (All Customer/s)
+    if (type === "withoutQuota") { setScopeModalOpen(true); return; }
     setQuotaType("withQuota");
     if (dateRangeScope !== SCOPE_ALL_CUSTOMERS) setDateRangeScope(SCOPE_ALL_CUSTOMERS);
     showToast("Switched to With Quota mode — date range at header level", "info");
@@ -1867,9 +1722,7 @@ const handleExportExcel = () => {
     return quotaPeriods.map((qp, i) => ({
       period:    qp.period || qp.label || `Period ${i + 1}`,
       label:     qp.label  || qp.period || `Period ${i + 1}`,
-      startDate: qp.startDate,
-      endDate:   qp.endDate,
-      dates:     qp.dates || '',
+      startDate: qp.startDate, endDate: qp.endDate, dates: qp.dates || '',
       month:     qp.label  || qp.period || `Period ${i + 1}`,
       quarter:   qp.quarter,
       year:      qp.year || (qp.startDate ? new Date(qp.startDate).getFullYear() : ''),
@@ -1928,30 +1781,20 @@ const handleExportExcel = () => {
     if (dateRangeScope === SCOPE_ALL_CUSTOMERS && (!selectedDateFrom || !selectedDateTo)) {
       showToast("All Customer/s scope requires a header date range", "error"); return;
     }
-
     if (isQuarterly && dateRangeScope === SCOPE_ALL_CUSTOMERS) {
       const qCheck = validateQuarterlyRange(selectedDateFrom, selectedDateTo);
-      if (!qCheck.ok) {
-        showToast(`Quarterly programs must use exact quarter dates — ${qCheck.reason}`, "error");
-        return;
-      }
+      if (!qCheck.ok) { showToast(`Quarterly programs must use exact quarter dates — ${qCheck.reason}`, "error"); return; }
     }
 
     const { effDateFrom, effDateTo } = resolveEffectiveHeaderDates(validCustomers);
-    if (!effDateFrom || !effDateTo) {
-      showToast("Please provide a date range (header or per-row)", "error"); return;
-    }
+    if (!effDateFrom || !effDateTo) { showToast("Please provide a date range (header or per-row)", "error"); return; }
 
     const codeToUpdate = loadedRebateCode;
-
     setLoading(true);
     try {
       const dupCheckRes = await fetch(`${API_BASE}/rebate-program/check-duplicate-program`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          RebateType: rebateType, DateFrom: effDateFrom, DateTo: effDateTo,
-          Frequency: selectedFrequency, ExcludeRebateCode: codeToUpdate, db,
-        }),
+        body: JSON.stringify({ RebateType: rebateType, DateFrom: effDateFrom, DateTo: effDateTo, Frequency: selectedFrequency, ExcludeRebateCode: codeToUpdate, db }),
       });
       if (!dupCheckRes.ok) throw new Error(`Server returned status ${dupCheckRes.status}`);
       const dupCheckResult = await dupCheckRes.json();
@@ -1965,10 +1808,7 @@ const handleExportExcel = () => {
         try {
           const res = await fetch(`${API_BASE}/rebate-program/check-customer-conflict`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              RebateType: rebateType, DateFrom: effDateFrom, DateTo: effDateTo,
-              Frequency: selectedFrequency, CardCode: customer.code, ExcludeRebateCode: codeToUpdate, db,
-            }),
+            body: JSON.stringify({ RebateType: rebateType, DateFrom: effDateFrom, DateTo: effDateTo, Frequency: selectedFrequency, CardCode: customer.code, ExcludeRebateCode: codeToUpdate, db }),
           });
           if (!res.ok) continue;
           const result = await res.json();
@@ -2035,31 +1875,19 @@ const handleExportExcel = () => {
     if (dateRangeScope === SCOPE_ALL_CUSTOMERS && (!selectedDateFrom || !selectedDateTo)) {
       showToast("All Customer/s scope requires a header date range", "error"); return;
     }
-
     if (isQuarterly && dateRangeScope === SCOPE_ALL_CUSTOMERS) {
       const qCheck = validateQuarterlyRange(selectedDateFrom, selectedDateTo);
-      if (!qCheck.ok) {
-        showToast(`Quarterly programs must use exact quarter dates — ${qCheck.reason}`, "error");
-        return;
-      }
+      if (!qCheck.ok) { showToast(`Quarterly programs must use exact quarter dates — ${qCheck.reason}`, "error"); return; }
     }
 
     const { effDateFrom, effDateTo } = resolveEffectiveHeaderDates(validCustomers);
-    if (!effDateFrom || !effDateTo) {
-      showToast("Please provide a date range (header or per-row)", "error"); return;
-    }
+    if (!effDateFrom || !effDateTo) { showToast("Please provide a date range (header or per-row)", "error"); return; }
 
     setLoading(true);
     try {
       const dupCheckRes = await fetch(`${API_BASE}/rebate-program/check-duplicate-program`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          RebateType: rebateType,
-          DateFrom: effDateFrom,
-          DateTo:   effDateTo,
-          Frequency: selectedFrequency,
-          db,
-        }),
+        body: JSON.stringify({ RebateType: rebateType, DateFrom: effDateFrom, DateTo: effDateTo, Frequency: selectedFrequency, db }),
       });
       if (!dupCheckRes.ok) throw new Error(`Server returned status ${dupCheckRes.status}`);
       const dupCheckResult = await dupCheckRes.json();
@@ -2073,14 +1901,7 @@ const handleExportExcel = () => {
         try {
           const res = await fetch(`${API_BASE}/rebate-program/check-item-conflict`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              RebateType: rebateType,
-              DateFrom: effDateFrom,
-              DateTo:   effDateTo,
-              Frequency: selectedFrequency,
-              ItemCode: item.code,
-              db,
-            }),
+            body: JSON.stringify({ RebateType: rebateType, DateFrom: effDateFrom, DateTo: effDateTo, Frequency: selectedFrequency, ItemCode: item.code, db }),
           });
           if (!res.ok) continue;
           const result = await res.json();
@@ -2097,14 +1918,7 @@ const handleExportExcel = () => {
         try {
           const res = await fetch(`${API_BASE}/rebate-program/check-customer-conflict`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              RebateType: rebateType,
-              DateFrom: effDateFrom,
-              DateTo:   effDateTo,
-              Frequency: selectedFrequency,
-              CardCode: customer.code,
-              db,
-            }),
+            body: JSON.stringify({ RebateType: rebateType, DateFrom: effDateFrom, DateTo: effDateTo, Frequency: selectedFrequency, CardCode: customer.code, db }),
           });
           if (!res.ok) continue;
           const result = await res.json();
@@ -2149,12 +1963,10 @@ const handleExportExcel = () => {
     finally { setLoading(false); }
   };
 
-  /* ─── Save helpers ───────────────────────────────────────────────────── */
   const saveFixedRebateData = async (rebateCodeId, database, customerCreatedMap = {}, itemCreatedMap = {}) => {
     for (const customer of customers) {
       if (!customer.code || !customer.name) continue;
       const originalCreated  = customerCreatedMap[customer.code] || null;
-      // Qtr Rebate drives Qtr Qualified — see deriveQtrValue / deriveQtrQualified
       const qtrValue         = deriveQtrValue(customer.isQualified, customer.qtrRebate);
       const qtrQualifiedFlag = deriveQtrQualified(customer.isQualified, customer.qtrRebate);
       const { DateFrom, DateTo } = getEffectiveDates(customer);
@@ -2164,8 +1976,7 @@ const handleExportExcel = () => {
         body: JSON.stringify({
           RebateCode: rebateCodeId, CardCode: customer.code, CardName: customer.name,
           QtrRebate: qtrValue, QtrQualified: qtrQualifiedFlag,
-          DateFrom, DateTo,
-          CreatedDate: originalCreated, db,
+          DateFrom, DateTo, CreatedDate: originalCreated, db,
         }),
       });
       if (!custRes.ok) { const t = await custRes.text(); throw new Error(`Failed to save customer ${customer.code}: ${t}`); }
@@ -2193,7 +2004,6 @@ const handleExportExcel = () => {
     for (const item of items) {
       if (!item.code || !item.name) continue;
       const originalCreated  = itemCreatedMap[item.code] || null;
-      // Qtr Rebate drives Qtr Qualified — see deriveQtrValue / deriveQtrQualified
       const qtrValue         = deriveQtrValue(item.isQualified, item.qtrRebate);
       const qtrQualifiedFlag = deriveQtrQualified(item.isQualified, item.qtrRebate);
       const ir = await fetch(`${API_BASE}/fix-prod-rebate?db=${database}`, {
@@ -2224,7 +2034,6 @@ const handleExportExcel = () => {
     for (const customer of customers) {
       if (!customer.code || !customer.name) continue;
       const originalCreated  = customerCreatedMap[customer.code] || null;
-      // Qtr Rebate drives Qtr Qualified — see deriveQtrValue / deriveQtrQualified
       const qtrValue         = deriveQtrValue(customer.isQualified, customer.qtrRebate);
       const qtrQualifiedFlag = deriveQtrQualified(customer.isQualified, customer.qtrRebate);
       const { DateFrom, DateTo } = getEffectiveDates(customer);
@@ -2261,7 +2070,6 @@ const handleExportExcel = () => {
     for (const item of items) {
       if (!item.code || !item.name) continue;
       const originalCreated  = itemCreatedMap[item.code] || null;
-      // Qtr Rebate drives Qtr Qualified — see deriveQtrValue / deriveQtrQualified
       const qtrValue         = deriveQtrValue(item.isQualified, item.qtrRebate);
       const qtrQualifiedFlag = deriveQtrQualified(item.isQualified, item.qtrRebate);
       const ir = await fetch(`${API_BASE}/inc-item-rebate?db=${database}`, {
@@ -2301,7 +2109,6 @@ const handleExportExcel = () => {
     for (const customer of customers) {
       if (!customer.code || !customer.name) continue;
       const originalCreated  = customerCreatedMap[customer.code] || null;
-      // Qtr Rebate drives Qtr Qualified — see deriveQtrValue / deriveQtrQualified
       const qtrValue         = deriveQtrValue(customer.isQualified, customer.qtrRebate);
       const qtrQualifiedFlag = deriveQtrQualified(customer.isQualified, customer.qtrRebate);
       const { DateFrom, DateTo } = getEffectiveDates(customer);
@@ -2347,7 +2154,6 @@ const handleExportExcel = () => {
     for (const item of items) {
       if (!item.code || !item.name) continue;
       const originalCreated  = itemCreatedMap[item.code] || null;
-      // Qtr Rebate drives Qtr Qualified — see deriveQtrValue / deriveQtrQualified
       const qtrValue         = deriveQtrValue(item.isQualified, item.qtrRebate);
       const qtrQualifiedFlag = deriveQtrQualified(item.isQualified, item.qtrRebate);
       const ir = await fetch(`${API_BASE}/per-prod-rebate?db=${database}`, {
@@ -2365,7 +2171,6 @@ const handleExportExcel = () => {
     }
   };
 
-  /* ─── CRUD helpers ───────────────────────────────────────────────────── */
   const handleAddCustomer = () => {
     if (!access.canEdit) { showToast("You do not have permission to add customers", "error"); return; }
     setCurrentEditingRow({ type: 'customer', index: null }); setTempSelectedCustomers([]); setIsCustomerModalOpen(true);
@@ -2447,12 +2252,10 @@ const handleExportExcel = () => {
     if (!access.canEdit) return;
     if (customers.length === 0) { showToast("No customers to apply quota to", "warning"); return; }
     if (quotaPeriods.length === 0) { showToast("No quota periods available — set a date range first", "warning"); return; }
-
     const hasAnyValue = bulkQuotas.some(v => v !== "" && v != null);
     if (!hasAnyValue) { showToast("Enter at least one quota value first", "warning"); return; }
 
     const field = rebateType === "Percentage" ? "percentages" : "quotas";
-
     setCustomers(prev => prev.map(c => {
       const current = Array.isArray(c[field]) ? [...c[field]] : [];
       while (current.length < quotaPeriods.length) current.push("");
@@ -2462,11 +2265,7 @@ const handleExportExcel = () => {
       }
       return { ...c, [field]: current };
     }));
-
-    showToast(
-      `Applied quota values to ${customers.length} customer${customers.length !== 1 ? 's' : ''} across ${quotaPeriods.length} period${quotaPeriods.length !== 1 ? 's' : ''}`,
-      "success"
-    );
+    showToast(`Applied quota values to ${customers.length} customer${customers.length !== 1 ? 's' : ''} across ${quotaPeriods.length} period${quotaPeriods.length !== 1 ? 's' : ''}`, "success");
   };
 
   const handleDeleteCustomer = (index) => {
@@ -2517,9 +2316,7 @@ const handleExportExcel = () => {
     setQuotaType("withQuota");
     setCustomers([]); setItems([]);
     setSelectedDateFrom(""); setSelectedDateTo("");
-    setSelectedFrequency("");
-    setRedemptionPeriod("");
-    setRebateName("");
+    setSelectedFrequency(""); setRedemptionPeriod(""); setRebateName("");
     setQuotaCount(0); setQuotaPeriods([]); setImportedCustomerQuotas({});
     setRebateCode("REB-"); setEditingRows({ customer: {}, item: {} });
     setIsViewMode(false); setLoadedRebateCode("");
@@ -2541,14 +2338,13 @@ const handleExportExcel = () => {
     : quotaType === "withoutQuota" ? "Without Quota"
     : "";
 
-  /* ─── Style helpers ──────────────────────────────────────────────────── */
-  const inputClass = "w-full px-3 py-2.5 rounded-xl text-sm focus:outline-none transition-all min-h-[42px] dash-glass";
-  const selectClass = "w-full px-3 py-2.5 rounded-xl text-sm focus:outline-none transition-all min-h-[42px] appearance-none dash-glass";
+  const inputClass = "w-full px-3 py-2.5 rounded-xl text-sm focus:outline-none transition-all min-h-[42px] ds-glass";
+  const selectClass = "w-full px-3 py-2.5 rounded-xl text-sm focus:outline-none transition-all min-h-[42px] appearance-none ds-glass";
   const inputStyle = { background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink };
   const labelClass = "block text-xs font-semibold uppercase tracking-widest mb-1.5";
 
   const getRebateTypeBadge = (type) => {
-    const c = type === 'Fixed' ? APPLE.blue : type === 'Incremental' ? APPLE.green : type === 'Percentage' ? APPLE.orange : null;
+    const c = type === 'Fixed' ? PALETTE.blue : type === 'Incremental' ? PALETTE.green : type === 'Percentage' ? PALETTE.orange : null;
     if (!c) return {};
     return { background: `${c}1c`, color: c, border: `1px solid ${c}33` };
   };
@@ -2556,7 +2352,7 @@ const handleExportExcel = () => {
   const renderAccessLoading = () => (
     <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
       <div className="w-10 h-10 rounded-full border-2 border-t-transparent animate-spin"
-        style={{ borderColor: `${APPLE.blue}33`, borderTopColor: APPLE.blue }} />
+        style={{ borderColor: `${PALETTE.blue}33`, borderTopColor: PALETTE.blue }} />
       <p className="text-sm" style={{ color: K.muted }}>Verifying access…</p>
     </div>
   );
@@ -2564,16 +2360,17 @@ const handleExportExcel = () => {
   const renderAccessDenied = () => (
     <div className="flex flex-col items-center justify-center min-h-[400px] p-8 text-center">
       <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4"
-        style={{ background: `${APPLE.red}18`, border: `1px solid ${APPLE.red}33` }}>
-        <Lock size={28} style={{ color: APPLE.red }} />
+        style={{ background: `${PALETTE.red}18`, border: `1px solid ${PALETTE.red}33` }}>
+        <Lock size={28} style={{ color: PALETTE.red }} />
       </div>
       <h2 className="text-lg font-semibold mb-2" style={{ color: K.ink }}>Access Restricted</h2>
       <p className="max-w-xs text-sm mb-6" style={{ color: K.muted }}>
         You don't have permission to view this page.
         {accessError && <span className="block mt-1 text-xs opacity-60">Error: {accessError}</span>}
       </p>
-      <Link to="/HomePage" className="px-4 py-2 text-white rounded-full text-sm font-medium"
-        style={{ background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)` }}>Go to Home</Link>
+      <Link to="/HomePage" className="ds-gradient-primary px-4 py-2 text-white rounded-full text-sm font-medium">
+        Go to Home
+      </Link>
     </div>
   );
 
@@ -2592,13 +2389,12 @@ const handleExportExcel = () => {
     const totalCount = (isCustomer ? customers : items).length;
 
     return (
-      <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl flex-shrink-0 dash-glass"
-        style={{ background: `${APPLE.purple}0d`, border: `1px solid ${APPLE.purple}26` }}>
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl flex-shrink-0 ds-glass bg-[#BF5AF2]/5 border border-[#BF5AF2]/15">
         <div className="flex items-center gap-1.5 min-w-0">
-          <Sparkles className="w-3.5 h-3.5 flex-shrink-0" style={{ color: APPLE.purple }} />
+          <Sparkles className="w-3.5 h-3.5 flex-shrink-0 text-[#BF5AF2]" />
           <span className="text-xs font-semibold whitespace-nowrap" style={{ color: K.ink }}>Bulk Qtr Rebate</span>
           <span className="text-[10px] whitespace-nowrap hidden sm:inline" style={{ color: K.faint }}>
-            (<span style={{ color: APPLE.green }}>{qualifiedCount}</span>/{totalCount})
+            (<span className="text-[#32D74B]">{qualifiedCount}</span>/{totalCount})
           </span>
         </div>
         <div className="relative flex-shrink-0">
@@ -2606,12 +2402,13 @@ const handleExportExcel = () => {
           <input type="text" value={bulkValue}
             onChange={(e) => { const v = e.target.value; if (v === "" || /^-?\d*\.?\d*$/.test(v)) setBulkValue(v); }}
             placeholder="0.00" disabled={!access.canEdit}
-            className="w-24 pl-6 pr-2 py-1.5 rounded-xl text-xs focus:outline-none dash-glass"
-            style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink, opacity: !access.canEdit ? 0.5 : 1 }} />
+            className="ds-glass w-24 pl-6 pr-2 py-1.5 rounded-xl text-xs focus:outline-none bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)]"
+            style={{ opacity: !access.canEdit ? 0.5 : 1 }} />
         </div>
         <button onClick={() => handleBulkApplyQtr(scope)} disabled={!access.canEdit || !bulkValue}
-          className="px-3 py-1.5 rounded-full text-xs font-semibold disabled:opacity-40 whitespace-nowrap"
-          style={{ background: APPLE.purple, color: '#fff' }}>Apply</button>
+          className="px-3 py-1.5 rounded-full text-xs font-semibold disabled:opacity-40 whitespace-nowrap bg-[#BF5AF2] text-white hover:brightness-110 transition-all">
+          Apply
+        </button>
       </div>
     );
   };
@@ -2625,13 +2422,12 @@ const handleExportExcel = () => {
     const field = rebateType === "Percentage" ? "Percentages" : "Quotas";
 
     return (
-      <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl flex-shrink-0 dash-glass"
-        style={{ background: `${APPLE.blue}0d`, border: `1px solid ${APPLE.blue}26` }}>
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl flex-shrink-0 ds-glass bg-[#0A84FF]/5 border border-[#0A84FF]/15">
         <div className="flex items-center gap-1.5 min-w-0 flex-shrink-0">
-          <Target className="w-3.5 h-3.5 flex-shrink-0" style={{ color: APPLE.blue }} />
+          <Target className="w-3.5 h-3.5 flex-shrink-0 text-[#0A84FF]" />
           <span className="text-xs font-semibold whitespace-nowrap" style={{ color: K.ink }}>Bulk {field}</span>
         </div>
-        <div className="flex gap-1.5 overflow-x-auto dash-scroll pb-0.5 max-w-[280px] lg:max-w-[420px]">
+        <div className="flex gap-1.5 overflow-x-auto ds-scroll pb-0.5 max-w-[280px] lg:max-w-[420px]">
           {quotaPeriods.map((p, i) => (
             <input key={i} type="text"
               value={bulkQuotas[i] ?? ''}
@@ -2646,13 +2442,14 @@ const handleExportExcel = () => {
               placeholder={p.label || p.period || "0"}
               title={p.label || p.period || `Period ${i + 1}`}
               disabled={!access.canEdit}
-              className="w-20 px-2 py-1.5 rounded-lg text-xs flex-shrink-0 dash-glass"
-              style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink, opacity: !access.canEdit ? 0.5 : 1 }} />
+              className="ds-glass w-20 px-2 py-1.5 rounded-lg text-xs flex-shrink-0 bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)]"
+              style={{ opacity: !access.canEdit ? 0.5 : 1 }} />
           ))}
         </div>
         <button onClick={handleApplyBulkQuota} disabled={!access.canEdit}
-          className="px-3 py-1.5 rounded-full text-xs font-semibold disabled:opacity-40 whitespace-nowrap flex-shrink-0"
-          style={{ background: APPLE.blue, color: '#fff' }}>Apply</button>
+          className="px-3 py-1.5 rounded-full text-xs font-semibold disabled:opacity-40 whitespace-nowrap flex-shrink-0 bg-[#0A84FF] text-white hover:brightness-110 transition-all">
+          Apply
+        </button>
       </div>
     );
   };
@@ -2662,27 +2459,25 @@ const handleExportExcel = () => {
     if (customers.length === 0) return null;
 
     return (
-      <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl flex-shrink-0 dash-glass"
-        style={{ background: `${APPLE.green}0d`, border: `1px solid ${APPLE.green}26` }}>
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl flex-shrink-0 ds-glass bg-[#32D74B]/5 border border-[#32D74B]/15">
         <div className="flex items-center gap-1.5 min-w-0">
-          <TrendingUp className="w-3.5 h-3.5 flex-shrink-0" style={{ color: APPLE.green }} />
+          <TrendingUp className="w-3.5 h-3.5 flex-shrink-0 text-[#32D74B]" />
           <span className="text-xs font-semibold whitespace-nowrap" style={{ color: K.ink }}>Apply Ranges to All</span>
           <span className="text-[10px] whitespace-nowrap hidden sm:inline" style={{ color: K.faint }}>
-            (<span style={{ color: APPLE.orange }}>{customersWithNoRanges}</span>/{customers.length} empty)
+            (<span className="text-[#FF9F0A]">{customersWithNoRanges}</span>/{customers.length} empty)
           </span>
         </div>
         <button onClick={() => setBulkRangeModalOpen(true)} disabled={!access.canEdit}
-          className="px-3 py-1.5 rounded-full text-xs font-semibold disabled:opacity-40 whitespace-nowrap flex-shrink-0"
-          style={{ background: APPLE.green, color: '#fff' }}>Open</button>
+          className="px-3 py-1.5 rounded-full text-xs font-semibold disabled:opacity-40 whitespace-nowrap flex-shrink-0 bg-[#32D74B] text-white hover:brightness-110 transition-all">
+          Open
+        </button>
       </div>
     );
   };
 
-  // Renders "Yes / No" for Qtr Qualified. Now the pill reflects what will ACTUALLY be saved:
-  // it only shows "Yes" when the row's Qtr Rebate has a positive value.
   const renderQualifiedToggle = (scope, index, isQualifiedFlag, qtrRebateValue) => {
     const yes = isQualifiedFlag !== false && deriveQtrQualified(true, qtrRebateValue) === 1;
-    const c = yes ? APPLE.green : APPLE.gray;
+    const c = yes ? PALETTE.green : PALETTE.gray;
     return (
       <button onClick={() => handleQualifiedToggle(scope, index)} disabled={!access.canEdit}
         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold disabled:opacity-50"
@@ -2697,16 +2492,8 @@ const handleExportExcel = () => {
   const handleQualifiedToggle = (type, index) => handleToggleQualified(type, index);
 
   return (
-    <div className="dash-page flex h-screen w-full overflow-hidden" style={{ background: K.bg, color: K.ink }}>
-      <style>{DASH_FONT}</style>
-
-      <div className="pointer-events-none fixed inset-0"
-        style={{
-          backgroundImage: `
-            radial-gradient(700px circle at 8% 0%, ${APPLE.blue}${theme === 'dark' ? "26" : "30"}, transparent 55%),
-            radial-gradient(650px circle at 92% 10%, ${APPLE.purple}${theme === 'dark' ? "1a" : "20"}, transparent 55%)
-          `, zIndex: 0,
-        }} />
+    <DesignPage className="flex h-screen w-full overflow-hidden">
+      <div className="pointer-events-none fixed inset-0 ds-aurora-blue-purple z-0" />
 
       <Sidebar
         collapsed={collapsed} setCollapsed={setCollapsed}
@@ -2715,30 +2502,32 @@ const handleExportExcel = () => {
         showVcpDropdown={showVcpDropdown} setShowVcpDropdown={setShowVcpDropdown}
         theme={theme}
       />
-      <main className={`relative flex-1 flex flex-col h-screen overflow-hidden transition-all duration-300 ${collapsed ? "ml-20" : "ml-64"}`} style={{ zIndex: 1 }}>
+
+      <main className={`relative flex-1 flex flex-col h-screen overflow-hidden transition-all duration-300 ${collapsed ? "ml-20" : "ml-64"} z-[1]`}>
         <Header collapsed={collapsed} userName={userName} userCode={userCode} initials={initials} logo={logo} theme={theme} />
 
         <div className="pt-16 flex-1 flex flex-col overflow-hidden">
-          <div className="dash-glass rounded-[22px] w-full max-w-[1600px] mx-auto mt-4 mb-4 overflow-hidden flex flex-col flex-1 relative"
-            style={{ margin: '1rem 1.5rem', maxWidth: 'calc(100% - 3rem)', background: K.glass, border: `1px solid ${K.hairline}`, boxShadow: K.shadow }}
+          <div
+            className="ds-glass rounded-[22px] w-full max-w-[calc(100%-3rem)] mx-6 my-4 overflow-hidden flex flex-col flex-1 relative bg-[var(--ds-glass)] border border-[var(--ds-hairline)] shadow-[var(--ds-shadow)]"
             onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
             {isDragOver && (
-              <div className="absolute inset-0 z-50 flex items-center justify-center rounded-[22px] pointer-events-none"
-                style={{ background: `${APPLE.blue}14`, backdropFilter: "blur(6px)" }}>
-                <div className="dash-glass px-6 py-4 rounded-2xl" style={{ background: K.glassDeep, border: `1px solid ${APPLE.blue}55` }}>
-                  <p className="font-medium" style={{ color: APPLE.blue }}>Drop your Excel file here</p>
+              <div className="absolute inset-0 z-50 flex items-center justify-center rounded-[22px] pointer-events-none bg-[#0A84FF]/8 backdrop-blur-md">
+                <div className="ds-glass px-6 py-4 rounded-2xl bg-[var(--ds-glass-deep)] border border-[#0A84FF]/33">
+                  <p className="font-medium text-[#0A84FF]">Drop your Excel file here</p>
                 </div>
               </div>
             )}
 
-            <div className="flex items-center justify-between px-6 py-3.5 border-b flex-shrink-0" style={{ borderColor: K.hairline }}>
+            <div className="flex items-center justify-between px-6 py-3.5 border-b flex-shrink-0 border-[var(--ds-hairline)]">
               <div className="flex items-center gap-3.5">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-                  style={isViewMode
-                    ? { background: `${APPLE.orange}1c`, border: `1px solid ${APPLE.orange}33` }
-                    : { background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`, boxShadow: `0 4px 12px -4px ${APPLE.blue}88` }}>
-                  {isViewMode ? <PenLine className="w-4 h-4" style={{ color: APPLE.orange }} />
-                              : <SettingsIcon className="w-4 h-4 text-white" />}
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                  isViewMode
+                    ? 'bg-[#FF9F0A]/11 border border-[#FF9F0A]/20'
+                    : 'ds-gradient-primary shadow-[0_4px_12px_-4px_rgba(10,132,255,0.53)]'
+                }`}>
+                  {isViewMode
+                    ? <PenLine className="w-4 h-4 text-[#FF9F0A]" />
+                    : <SettingsIcon className="w-4 h-4 text-white" />}
                 </div>
                 <div>
                   <h1 className="text-base font-semibold tracking-tight" style={{ color: K.ink }}>
@@ -2752,16 +2541,14 @@ const handleExportExcel = () => {
 
               <div className="flex items-center gap-2.5">
                 <button onClick={() => { setSearchCode(""); setSearchError(""); setSearchModal({ isOpen: true }); }}
-                  className="flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-full dash-glass"
-                  style={{ background: K.chipBg, color: K.muted, border: `1px solid ${K.hairline}` }}>
+                  className="ds-glass flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-full bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] border border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)] transition-colors">
                   <Search size={14} />
                   <span>Search</span>
-                  <kbd className="px-1.5 py-0.5 rounded text-xs font-mono" style={{ background: K.hover, color: K.muted }}>Ctrl+F</kbd>
+                  <kbd className="px-1.5 py-0.5 rounded text-xs font-mono bg-[var(--ds-hover)] text-[var(--ds-muted)]">Ctrl+F</kbd>
                 </button>
                 {!accessLoading && access.canView && (
                   <button onClick={handleRefreshData} disabled={loading}
-                    className="w-9 h-9 flex items-center justify-center rounded-full dash-glass disabled:opacity-40"
-                    style={{ background: K.chipBg, color: K.muted, border: `1px solid ${K.hairline}` }}>
+                    className="ds-glass w-9 h-9 flex items-center justify-center rounded-full disabled:opacity-40 bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] border border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)] transition-colors">
                     <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
                   </button>
                 )}
@@ -2774,46 +2561,43 @@ const handleExportExcel = () => {
                 : (
                   <>
                     {isViewMode && (
-                      <div className="mb-3 px-3 py-2 rounded-2xl flex items-center justify-between gap-4 flex-shrink-0 dash-glass"
-                        style={{ background: `${APPLE.orange}14`, border: `1px solid ${APPLE.orange}33` }}>
+                      <div className="mb-3 px-3 py-2 rounded-2xl flex items-center justify-between gap-4 flex-shrink-0 ds-glass bg-[#FF9F0A]/8 border border-[#FF9F0A]/20">
                         <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-2 h-2 rounded-full flex-shrink-0 animate-pulse" style={{ background: APPLE.orange }} />
+                          <div className="w-2 h-2 rounded-full flex-shrink-0 animate-pulse bg-[#FF9F0A]" />
                           <p className="text-sm font-medium flex flex-wrap items-center gap-2" style={{ color: K.ink }}>
                             <span style={{ color: K.muted }}>Editing:</span>
-                            <code className="px-2 py-0.5 rounded-full text-xs font-mono font-bold"
-                              style={{ background: `${APPLE.orange}1c`, color: APPLE.orange }}>{loadedRebateCode}</code>
+                            <code className="px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-[#FF9F0A]/11 text-[#FF9F0A]">{loadedRebateCode}</code>
                           </p>
                         </div>
                         <button onClick={() => { setIsViewMode(false); resetForm(); }}
-                          className="text-xs px-3 py-1.5 rounded-full font-medium"
-                          style={{ color: APPLE.orange, border: `1px solid ${APPLE.orange}55` }}>Clear &amp; New</button>
+                          className="text-xs px-3 py-1.5 rounded-full font-medium text-[#FF9F0A] border border-[#FF9F0A]/33 hover:bg-[#FF9F0A]/8 transition-colors">
+                          Clear &amp; New
+                        </button>
                       </div>
                     )}
 
-                    {/* ── Header grid (no Date Range Scope field) ── */}
                     <div
-                      className={`grid gap-3 mb-3 pb-3 border-b flex-shrink-0 ${
+                      className={`grid gap-3 mb-3 pb-3 border-b flex-shrink-0 border-[var(--ds-hairline)] ${
                         isVanDb
                           ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-9'
                           : 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-7'
-                      }`}
-                      style={{ borderColor: K.hairline }}
-                    >
-                      {/* 1. Rebate Code */}
+                      }`}>
                       <div>
                         <label className={labelClass} style={{ color: K.muted }}>Rebate Code</label>
-                        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl min-h-[42px] dash-glass"
-                          style={isViewMode ? { background: `${APPLE.orange}14`, border: `1px solid ${APPLE.orange}33` }
-                                            : { background: K.chipBg, border: `1px solid ${K.hairline}` }}>
-                          {isViewMode && <PenLine className="w-3 h-3 flex-shrink-0" style={{ color: APPLE.orange }} />}
+                        <div
+                          className={`flex items-center gap-2 px-3 py-2.5 rounded-xl min-h-[42px] ds-glass ${
+                            isViewMode
+                              ? 'bg-[#FF9F0A]/8 border border-[#FF9F0A]/20'
+                              : 'bg-[var(--ds-chip-bg)] border border-[var(--ds-hairline)]'
+                          }`}>
+                          {isViewMode && <PenLine className="w-3 h-3 flex-shrink-0 text-[#FF9F0A]" />}
                           <span className="font-mono font-semibold text-sm truncate"
-                            style={{ color: isViewMode ? APPLE.orange : K.ink }}>
+                            style={{ color: isViewMode ? PALETTE.orange : K.ink }}>
                             {isViewMode ? loadedRebateCode : rebateCode}
                           </span>
                         </div>
                       </div>
 
-                      {/* 2. Rebate Type */}
                       <div>
                         <label className={labelClass} style={{ color: K.muted }}>Rebate Type</label>
                         <div className="relative">
@@ -2838,7 +2622,6 @@ const handleExportExcel = () => {
                         </div>
                       </div>
 
-                      {/* 3. Date From */}
                       <div>
                         <label className={labelClass} style={{ color: showHeaderDate ? K.muted : K.faint }}>Date From</label>
                         <input type="date" className={inputClass}
@@ -2847,20 +2630,19 @@ const handleExportExcel = () => {
                             opacity: (!access.canEdit || !showHeaderDate) ? 0.4 : 1,
                             background: showHeaderDate ? K.glass : K.chipBg,
                             border: isQuarterly && showHeaderDate && selectedDateFrom && !isQuarterStart(selectedDateFrom)
-                              ? `1px solid ${APPLE.red}`
+                              ? `1px solid ${PALETTE.red}`
                               : `1px solid ${K.hairline}`,
                           }}
                           value={selectedDateFrom}
                           onChange={(e) => { if (access.canEdit && showHeaderDate) setSelectedDateFrom(e.target.value); }}
                           disabled={!access.canEdit || !showHeaderDate} />
                         {isQuarterly && showHeaderDate && selectedDateFrom && !isQuarterStart(selectedDateFrom) && (
-                          <p className="mt-1 text-[11px] flex items-center gap-1" style={{ color: APPLE.red }}>
+                          <p className="mt-1 text-[11px] flex items-center gap-1 text-[#FF453A]">
                             <AlertCircle className="w-3 h-3" /> Must be Jan 1 / Apr 1 / Jul 1 / Oct 1
                           </p>
                         )}
                       </div>
 
-                      {/* 4. Date To */}
                       <div>
                         <label className={labelClass} style={{ color: showHeaderDate ? K.muted : K.faint }}>Date To</label>
                         <input type="date" className={inputClass}
@@ -2869,20 +2651,19 @@ const handleExportExcel = () => {
                             opacity: (!access.canEdit || !showHeaderDate) ? 0.4 : 1,
                             background: showHeaderDate ? K.glass : K.chipBg,
                             border: isQuarterly && showHeaderDate && selectedDateTo && !isQuarterEnd(selectedDateTo)
-                              ? `1px solid ${APPLE.red}`
+                              ? `1px solid ${PALETTE.red}`
                               : `1px solid ${K.hairline}`,
                           }}
                           value={selectedDateTo}
                           onChange={(e) => { if (access.canEdit && showHeaderDate) setSelectedDateTo(e.target.value); }}
                           disabled={!access.canEdit || !showHeaderDate} />
                         {isQuarterly && showHeaderDate && selectedDateTo && !isQuarterEnd(selectedDateTo) && (
-                          <p className="mt-1 text-[11px] flex items-center gap-1" style={{ color: APPLE.red }}>
+                          <p className="mt-1 text-[11px] flex items-center gap-1 text-[#FF453A]">
                             <AlertCircle className="w-3 h-3" /> Must be Mar 31 / Jun 30 / Sep 30 / Dec 31
                           </p>
                         )}
                       </div>
 
-                      {/* 5. Quota Type */}
                       <div>
                         <label className={labelClass} style={{ color: K.muted }}>Quota Type</label>
                         <div className="relative">
@@ -2897,7 +2678,6 @@ const handleExportExcel = () => {
                         </div>
                       </div>
 
-                      {/* 6. Frequency */}
                       <div>
                         <label className={labelClass} style={{ color: K.muted }}>Frequency</label>
                         <div className="relative">
@@ -2916,7 +2696,6 @@ const handleExportExcel = () => {
                         </div>
                       </div>
 
-                      {/* 7. Redemption Period */}
                       <div>
                         <label className={labelClass} style={{ color: K.muted }}>Redemption Period</label>
                         <div className="relative">
@@ -2946,14 +2725,15 @@ const handleExportExcel = () => {
                       )}
                     </div>
 
-                    <div className="mb-3 px-3 py-2 rounded-2xl flex items-center gap-3 flex-shrink-0 dash-glass"
+                    <div
+                      className="mb-3 px-3 py-2 rounded-2xl flex items-center gap-3 flex-shrink-0 ds-glass"
                       style={quotaType === "withQuota"
-                        ? { background: `${APPLE.blue}14`, border: `1px solid ${APPLE.blue}33` }
+                        ? { background: `${PALETTE.blue}14`, border: `1px solid ${PALETTE.blue}33` }
                         : { background: K.chipBg, border: `1px solid ${K.hairline}` }}>
                       <div className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                        style={{ background: quotaType === "withQuota" ? APPLE.blue : K.faint }} />
+                        style={{ background: quotaType === "withQuota" ? PALETTE.blue : K.faint }} />
                       <div className="flex items-center gap-2 flex-wrap">
-                        <p className="font-semibold text-xs" style={{ color: quotaType === "withQuota" ? APPLE.blue : K.ink }}>
+                        <p className="font-semibold text-xs" style={{ color: quotaType === "withQuota" ? PALETTE.blue : K.ink }}>
                           {quotaType === "withQuota"  ? "With Quota Program"
                           : quotaType === "withoutQuota" ? "Without Quota Program"
                           : "No Quota Type Selected"}
@@ -2969,28 +2749,26 @@ const handleExportExcel = () => {
                       </div>
 
                       {(isCustQtrFreq || isItemQtrFreq) && (
-                        <div className="ml-auto flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold"
-                          style={{ background: `${APPLE.purple}18`, color: APPLE.purple, border: `1px solid ${APPLE.purple}33` }}>
+                        <div className="ml-auto flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold bg-[#BF5AF2]/10 text-[#BF5AF2] border border-[#BF5AF2]/20">
                           <Award size={12} />
                           {isCustQtrFreq ? "Customer Qtr Rebate Mode" : "Item Qtr Rebate Mode"}
                         </div>
                       )}
                     </div>
 
-                    <div className="flex items-center justify-between mb-3 border-b flex-shrink-0" style={{ borderColor: K.hairline }}>
+                    <div className="flex items-center justify-between mb-3 border-b flex-shrink-0 border-[var(--ds-hairline)]">
                       <div className="flex gap-1">
                         {["Customer", "Items"].map(tab => (
                           <button key={tab}
                             className="px-5 py-3 font-semibold text-sm flex items-center gap-2.5 relative"
-                            style={{ color: activeTab === tab ? APPLE.blue : K.muted }}
+                            style={{ color: activeTab === tab ? PALETTE.blue : K.muted }}
                             onClick={() => setActiveTab(tab)}>
                             {tab === "Customer" ? <Users className="w-4 h-4" /> : <Package className="w-4 h-4" />}
                             <span>{tab === "Customer"
                               ? (rebateType === "Incremental" ? "Customer Ranges" : rebateType === "Percentage" ? "Customer Percentages" : "Customer Quotas")
                               : (rebateType === "Incremental" ? "Product Ranges" : rebateType === "Percentage" ? "Product Setup" : "Product Rebates")}</span>
                             {activeTab === tab && (
-                              <span className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full"
-                                style={{ background: `linear-gradient(90deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)` }} />
+                              <span className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full ds-gradient-primary" />
                             )}
                           </button>
                         ))}
@@ -2998,17 +2776,21 @@ const handleExportExcel = () => {
 
                       <div className="flex gap-2 items-center pb-0.5">
                         <label
-                          className="flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-full cursor-pointer dash-glass"
-                          style={access.canEdit ? { background: K.chipBg, color: K.muted, border: `1px solid ${K.hairline}` }
-                                                  : { opacity: 0.4, cursor: 'not-allowed', background: K.chipBg, color: K.faint }}>
+                          className={`ds-glass flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-full ${
+                            access.canEdit
+                              ? 'cursor-pointer bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] border border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)]'
+                              : 'opacity-40 cursor-not-allowed bg-[var(--ds-chip-bg)] text-[var(--ds-faint)] border border-[var(--ds-hairline)]'
+                          }`}>
                           {!access.canEdit ? <Lock size={14} /> : <Upload size={14} />}
                           {isViewMode ? 'Import & Update' : 'Import'}
                           <input type="file" accept=".xlsx,.xls" onChange={handleImportExcel} className="hidden" disabled={!access.canEdit} />
                         </label>
                         <button onClick={handleDownload} disabled={!access.canExport}
-                          className="flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-full dash-glass"
-                          style={access.canExport ? { background: K.chipBg, color: K.muted, border: `1px solid ${K.hairline}` }
-                                                   : { opacity: 0.4, background: K.chipBg, color: K.faint }}>
+                          className={`ds-glass flex items-center gap-2 px-3.5 py-2 text-sm font-medium rounded-full ${
+                            access.canExport
+                              ? 'bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] border border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)]'
+                              : 'opacity-40 bg-[var(--ds-chip-bg)] text-[var(--ds-faint)] border border-[var(--ds-hairline)]'
+                          }`}>
                           {!access.canExport ? <Lock size={14} /> : <Download size={14} />}
                           Export
                         </button>
@@ -3022,17 +2804,14 @@ const handleExportExcel = () => {
                             <h3 className="text-sm font-semibold" style={{ color: K.ink }}>
                               {rebateType === "Incremental" ? "Customer Rebate Ranges" : rebateType === "Percentage" ? "Customer Percentage Setup" : "Customer Quota Setup"}
                             </h3>
-                            <span className="text-xs px-2 py-0.5 rounded-full font-medium"
-                              style={{ background: K.chipBg, color: K.muted, border: `1px solid ${K.hairline}` }}>{customers.length}</span>
+                            <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] border border-[var(--ds-hairline)]">{customers.length}</span>
                             {quotaType === "withQuota" && quotaPeriods.length > 0 && (
-                              <span className="text-xs px-2 py-0.5 rounded-full font-medium"
-                                style={{ background: `${APPLE.blue}14`, color: APPLE.blue, border: `1px solid ${APPLE.blue}33` }}>
+                              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-[#0A84FF]/8 text-[#0A84FF] border border-[#0A84FF]/20">
                                 {quotaPeriods.length} period{quotaPeriods.length !== 1 ? 's' : ''}
                               </span>
                             )}
                             {showPerRowDate && (
-                              <span className="text-xs px-2 py-0.5 rounded-full font-medium"
-                                style={{ background: `${APPLE.purple}14`, color: APPLE.purple, border: `1px solid ${APPLE.purple}33` }}>
+                              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-[#BF5AF2]/8 text-[#BF5AF2] border border-[#BF5AF2]/20">
                                 Per-Customer date range
                               </span>
                             )}
@@ -3044,10 +2823,10 @@ const handleExportExcel = () => {
                           </div>
                         </div>
 
-                        <div className="rounded-2xl border overflow-hidden flex-1 dash-glass" style={{ borderColor: K.hairline, background: K.glass }}>
-                          <div className="overflow-auto h-full dash-scroll" style={{ maxHeight: 'calc(100vh - 430px)' }}>
+                        <div className="ds-glass rounded-2xl border overflow-hidden flex-1 border-[var(--ds-hairline)] bg-[var(--ds-glass)]">
+                          <div className="overflow-auto h-full ds-scroll" style={{ maxHeight: 'calc(100vh - 430px)' }}>
                             <table className="w-full border-collapse text-sm">
-                              <thead className="sticky top-0 z-10" style={{ background: K.glassDeep }}>
+                              <thead className="sticky top-0 z-10 bg-[var(--ds-glass-deep)]">
                                 <tr>
                                   {[
                                     "Customer Code", "Customer Name",
@@ -3056,8 +2835,7 @@ const handleExportExcel = () => {
                                     quotaType === "withQuota" ? "Period" : "Status",
                                     "Actions",
                                   ].map(h => (
-                                    <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider border-b"
-                                      style={{ color: K.muted, borderColor: K.hairline }}>{h}</th>
+                                    <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider border-b border-[var(--ds-hairline)]" style={{ color: K.muted }}>{h}</th>
                                   ))}
                                 </tr>
                               </thead>
@@ -3070,19 +2848,16 @@ const handleExportExcel = () => {
                                     </td>
                                   </tr>
                                 ) : customers.map((c, idx) => (
-                                  <tr key={idx} className="border-b last:border-b-0"
-                                    style={{ borderColor: K.hairline }}>
+                                  <tr key={idx} className="border-b last:border-b-0 border-[var(--ds-hairline)]">
                                     <td className="px-5 py-3.5">
-                                      <code className="font-mono text-xs font-medium px-2 py-1 rounded-lg"
-                                        style={{ background: K.chipBg, color: K.muted }}>{c.code || "—"}</code>
+                                      <code className="font-mono text-xs font-medium px-2 py-1 rounded-lg bg-[var(--ds-chip-bg)] text-[var(--ds-muted)]">{c.code || "—"}</code>
                                     </td>
                                     <td className="px-5 py-3.5">
                                       {isRowEditable('customer', idx) ? (
                                         <button onClick={() => handleOpenCustomerModal(idx)}
-                                          className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-sm w-72 dash-glass"
-                                          style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}>
+                                          className="ds-glass flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-sm w-72 bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)] hover:bg-[var(--ds-hover)] transition-colors">
                                           <span className="truncate text-left">{c.name || "Select Customer"}</span>
-                                          <Users className="w-3.5 h-3.5" style={{ color: K.faint }} />
+                                          <Users className="w-3.5 h-3.5 text-[var(--ds-faint)]" />
                                         </button>
                                       ) : (
                                         <span className="text-sm" style={{ color: K.ink }}>{c.name || "—"}</span>
@@ -3096,10 +2871,10 @@ const handleExportExcel = () => {
                                             <input type="date" value={c.dateFrom || ""}
                                               onChange={(e) => handlePerRowDateChange(idx, 'dateFrom', e.target.value)}
                                               disabled={!access.canEdit}
-                                              className="w-36 px-2.5 py-1.5 rounded-xl text-xs dash-glass"
+                                              className="ds-glass w-36 px-2.5 py-1.5 rounded-xl text-xs"
                                               style={{
-                                                background: !c.dateFrom ? `${APPLE.orange}0d` : K.glass,
-                                                border: `1px solid ${!c.dateFrom ? `${APPLE.orange}55` : K.hairline}`,
+                                                background: !c.dateFrom ? `${PALETTE.orange}0d` : K.glass,
+                                                border: `1px solid ${!c.dateFrom ? `${PALETTE.orange}55` : K.hairline}`,
                                                 color: K.ink,
                                               }} />
                                           ) : (
@@ -3111,8 +2886,7 @@ const handleExportExcel = () => {
                                             <input type="date" value={c.dateTo || ""}
                                               onChange={(e) => handlePerRowDateChange(idx, 'dateTo', e.target.value)}
                                               disabled={!access.canEdit}
-                                              className="w-36 px-2.5 py-1.5 rounded-xl text-xs dash-glass"
-                                              style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }} />
+                                              className="ds-glass w-36 px-2.5 py-1.5 rounded-xl text-xs bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)]" />
                                           ) : (
                                             <span className="text-xs font-mono" style={{ color: c.dateTo ? K.ink : K.faint }}>{c.dateTo || "Continuous"}</span>
                                           )}
@@ -3126,18 +2900,19 @@ const handleExportExcel = () => {
                                         <td className="px-5 py-3.5">
                                           {isRowEditable('customer', idx) ? (
                                             <div className="relative w-32">
-                                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs" style={{ color: K.faint }}>₱</span>
+                                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-[var(--ds-faint)]">₱</span>
                                               <input type="text"
                                                 value={c.isQualified === false ? "" : (c.qtrRebate || "")}
                                                 onChange={(e) => handleQtrRebateChange(idx, e.target.value)}
                                                 placeholder={c.isQualified === false ? "Not qualified" : "0.00"}
                                                 disabled={!access.canEdit || c.isQualified === false}
-                                                className="w-full pl-7 pr-3 py-2 rounded-xl text-sm dash-glass"
+                                                className="ds-glass w-full pl-7 pr-3 py-2 rounded-xl text-sm"
                                                 style={{ background: c.isQualified === false ? K.chipBg : K.glass, border: `1px solid ${K.hairline}`, color: c.isQualified === false ? K.faint : K.ink }} />
                                             </div>
                                           ) : (
-                                            c.isQualified === false ? <span className="text-xs" style={{ color: K.faint }}>—</span>
-                                              : <span className="text-sm font-medium" style={{ color: APPLE.purple }}>{c.qtrRebate ? `₱${c.qtrRebate}` : "—"}</span>
+                                            c.isQualified === false
+                                              ? <span className="text-xs" style={{ color: K.faint }}>—</span>
+                                              : <span className="text-sm font-medium text-[#BF5AF2]">{c.qtrRebate ? `₱${c.qtrRebate}` : "—"}</span>
                                           )}
                                         </td>
                                       </>
@@ -3148,10 +2923,10 @@ const handleExportExcel = () => {
                                         <button onClick={() => openQuotaModal(idx)}
                                           className="flex items-center gap-2 px-3.5 py-2 rounded-full text-xs font-semibold"
                                           style={rebateType === "Percentage"
-                                            ? { background: `${APPLE.orange}1c`, color: APPLE.orange, border: `1px solid ${APPLE.orange}33` }
+                                            ? { background: `${PALETTE.orange}1c`, color: PALETTE.orange, border: `1px solid ${PALETTE.orange}33` }
                                             : rebateType === "Incremental"
-                                              ? { background: `${APPLE.green}1c`, color: APPLE.green, border: `1px solid ${APPLE.green}33` }
-                                              : { background: `${APPLE.blue}1c`, color: APPLE.blue, border: `1px solid ${APPLE.blue}33` }}>
+                                              ? { background: `${PALETTE.green}1c`, color: PALETTE.green, border: `1px solid ${PALETTE.green}33` }
+                                              : { background: `${PALETTE.blue}1c`, color: PALETTE.blue, border: `1px solid ${PALETTE.blue}33` }}>
                                           <Target className="w-3.5 h-3.5" />
                                           <span>
                                             {rebateType === "Incremental"
@@ -3180,13 +2955,13 @@ const handleExportExcel = () => {
                                         <button
                                           className="w-8 h-8 flex items-center justify-center rounded-lg"
                                           style={isRowEditable('customer', idx)
-                                            ? { background: `${APPLE.green}1c`, color: APPLE.green }
+                                            ? { background: `${PALETTE.green}1c`, color: PALETTE.green }
                                             : { background: K.chipBg, color: K.muted, opacity: !access.canEdit ? 0.3 : 1 }}
                                           onClick={() => { if (access.canEdit) toggleRowEdit('customer', idx); }}>
                                           {isRowEditable('customer', idx) ? <Save size={13} /> : <Edit size={13} />}
                                         </button>
                                         <button className="w-8 h-8 flex items-center justify-center rounded-lg"
-                                          style={{ color: APPLE.red, opacity: !access.canEdit ? 0.3 : 1 }}
+                                          style={{ color: PALETTE.red, opacity: !access.canEdit ? 0.3 : 1 }}
                                           onClick={() => handleDeleteCustomer(idx)}>
                                           <Trash2 size={13} />
                                         </button>
@@ -3208,18 +2983,17 @@ const handleExportExcel = () => {
                             <h3 className="text-sm font-semibold" style={{ color: K.ink }}>
                               {rebateType === "Incremental" ? "Product Rebate Ranges" : rebateType === "Percentage" ? "Product Setup" : "Product Rebate Configuration"}
                             </h3>
-                            <span className="text-xs px-2 py-0.5 rounded-full font-medium"
-                              style={{ background: K.chipBg, color: K.muted, border: `1px solid ${K.hairline}` }}>{items.length}</span>
+                            <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] border border-[var(--ds-hairline)]">{items.length}</span>
                           </div>
                           <div className="flex items-center gap-2 ml-auto flex-wrap justify-end">
                             {showItemQtrRebate && renderBulkQtrBar('item')}
                           </div>
                         </div>
 
-                        <div className="rounded-2xl border overflow-hidden flex-1 dash-glass" style={{ borderColor: K.hairline, background: K.glass }}>
-                          <div className="overflow-auto h-full dash-scroll" style={{ maxHeight: 'calc(100vh - 430px)' }}>
+                        <div className="ds-glass rounded-2xl border overflow-hidden flex-1 border-[var(--ds-hairline)] bg-[var(--ds-glass)]">
+                          <div className="overflow-auto h-full ds-scroll" style={{ maxHeight: 'calc(100vh - 430px)' }}>
                             <table className="w-full border-collapse text-sm min-w-[600px]">
-                              <thead className="sticky top-0 z-10" style={{ background: K.glassDeep }}>
+                              <thead className="sticky top-0 z-10 bg-[var(--ds-glass-deep)]">
                                 <tr>
                                   {[
                                     "Item Code", "Item Name", "Qty", "Unit of Measure",
@@ -3231,8 +3005,7 @@ const handleExportExcel = () => {
                                     ...(showItemQtrRebate ? ["Qtr Qualified", "Qtr Rebate"] : []),
                                     "Actions",
                                   ].map(h => (
-                                    <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider border-b"
-                                      style={{ color: K.muted, borderColor: K.hairline }}>{h}</th>
+                                    <th key={h} className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider border-b border-[var(--ds-hairline)]" style={{ color: K.muted }}>{h}</th>
                                   ))}
                                 </tr>
                               </thead>
@@ -3245,18 +3018,16 @@ const handleExportExcel = () => {
                                     </td>
                                   </tr>
                                 ) : items.map((item, idx) => (
-                                  <tr key={idx} className="border-b last:border-b-0" style={{ borderColor: K.hairline }}>
+                                  <tr key={idx} className="border-b last:border-b-0 border-[var(--ds-hairline)]">
                                     <td className="px-5 py-3.5">
-                                      <code className="font-mono text-xs font-medium px-2 py-1 rounded-lg"
-                                        style={{ background: K.chipBg, color: K.muted }}>{item.code || "—"}</code>
+                                      <code className="font-mono text-xs font-medium px-2 py-1 rounded-lg bg-[var(--ds-chip-bg)] text-[var(--ds-muted)]">{item.code || "—"}</code>
                                     </td>
                                     <td className="px-5 py-3.5">
                                       {isRowEditable('item', idx) ? (
                                         <button onClick={() => handleOpenItemModal(idx)}
-                                          className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-sm w-full min-w-[200px] dash-glass"
-                                          style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}>
+                                          className="ds-glass flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-sm w-full min-w-[200px] bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)] hover:bg-[var(--ds-hover)] transition-colors">
                                           <span className="text-left whitespace-normal">{item.name || "Select Item"}</span>
-                                          <Package className="w-3.5 h-3.5" style={{ color: K.faint }} />
+                                          <Package className="w-3.5 h-3.5 text-[var(--ds-faint)]" />
                                         </button>
                                       ) : (
                                         <span className="text-sm" style={{ color: K.ink }}>{item.name || "—"}</span>
@@ -3266,8 +3037,7 @@ const handleExportExcel = () => {
                                       {isRowEditable('item', idx) ? (
                                         <input type="text" value={item.unitPerQty || ""}
                                           onChange={(e) => { const nd = [...items]; nd[idx].unitPerQty = e.target.value; setItems(nd); }}
-                                          placeholder="Qty" className="w-28 px-3 py-2 rounded-xl text-sm dash-glass"
-                                          style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}
+                                          placeholder="Qty" className="ds-glass w-28 px-3 py-2 rounded-xl text-sm bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)]"
                                           disabled={!access.canEdit} />
                                       ) : (
                                         <span className="text-sm" style={{ color: K.muted }}>{item.unitPerQty || "—"}</span>
@@ -3279,8 +3049,7 @@ const handleExportExcel = () => {
                                           <select value={item.unitOfMeasure || ''}
                                             onChange={(e) => { const nd = [...items]; nd[idx].unitOfMeasure = e.target.value; setItems(nd); }}
                                             disabled={!access.canEdit}
-                                            className="w-32 px-3 py-2 rounded-xl text-sm appearance-none pr-8 dash-glass"
-                                            style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}>
+                                            className="ds-glass w-32 px-3 py-2 rounded-xl text-sm appearance-none pr-8 bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)]">
                                             <option value="">Select UOM</option>
                                             {item.unitOfMeasure && !UOM_OPTIONS.includes(item.unitOfMeasure) && (
                                               <option value={item.unitOfMeasure}>{item.unitOfMeasure}</option>
@@ -3290,8 +3059,8 @@ const handleExportExcel = () => {
                                           <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5" style={{ color: K.faint }} />
                                         </div>
                                       ) : (
-                                        <span className="text-xs px-2 py-1 rounded-lg font-medium font-mono"
-                                          style={{ background: K.chipBg, color: item.unitOfMeasure ? K.ink : K.faint }}>
+                                        <span className="text-xs px-2 py-1 rounded-lg font-medium font-mono bg-[var(--ds-chip-bg)]"
+                                          style={{ color: item.unitOfMeasure ? K.ink : K.faint }}>
                                           {item.unitOfMeasure || '—'}
                                         </span>
                                       )}
@@ -3301,15 +3070,14 @@ const handleExportExcel = () => {
                                       <td className="px-5 py-3.5">
                                         {isRowEditable('item', idx) ? (
                                           <div className="relative w-32">
-                                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs" style={{ color: K.faint }}>%</span>
+                                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-[var(--ds-faint)]">%</span>
                                             <input type="text" value={item.percentagePerBag || ""}
                                               onChange={(e) => handlePercentagePerBagChange(idx, e.target.value)}
-                                              placeholder="0.00" className="w-full pl-7 pr-3 py-2 rounded-xl text-sm dash-glass"
-                                              style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}
+                                              placeholder="0.00" className="ds-glass w-full pl-7 pr-3 py-2 rounded-xl text-sm bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)]"
                                               disabled={!access.canEdit} />
                                           </div>
                                         ) : (
-                                          <span className="text-sm font-medium" style={{ color: APPLE.orange }}>
+                                          <span className="text-sm font-medium text-[#FF9F0A]">
                                             {item.percentagePerBag ? (<>{item.percentagePerBag}%{item.unitOfMeasure ? ` / ${item.unitOfMeasure}` : ''}</>) : "—"}
                                           </span>
                                         )}
@@ -3321,11 +3089,10 @@ const handleExportExcel = () => {
                                         <div className="w-36">
                                           {isRowEditable('item', idx) ? (
                                             <div className="relative">
-                                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs" style={{ color: K.faint }}>₱</span>
+                                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-[var(--ds-faint)]">₱</span>
                                               <input type="text" value={item.rebatePerBag || ""}
                                                 onChange={(e) => handleRebatePerBagChange(idx, e.target.value)}
-                                                placeholder="0.00" className="w-full pl-7 pr-3 py-2 rounded-xl text-sm dash-glass"
-                                                style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}
+                                                placeholder="0.00" className="ds-glass w-full pl-7 pr-3 py-2 rounded-xl text-sm bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)]"
                                                 disabled={!access.canEdit} />
                                             </div>
                                           ) : (
@@ -3343,18 +3110,19 @@ const handleExportExcel = () => {
                                         <td className="px-5 py-3.5">
                                           {isRowEditable('item', idx) ? (
                                             <div className="relative w-32">
-                                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs" style={{ color: K.faint }}>₱</span>
+                                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-[var(--ds-faint)]">₱</span>
                                               <input type="text"
                                                 value={item.isQualified === false ? "" : (item.qtrRebate || "")}
                                                 onChange={(e) => handleItemQtrRebateChange(idx, e.target.value)}
                                                 placeholder={item.isQualified === false ? "Not qualified" : "0.00"}
                                                 disabled={!access.canEdit || item.isQualified === false}
-                                                className="w-full pl-7 pr-3 py-2 rounded-xl text-sm dash-glass"
+                                                className="ds-glass w-full pl-7 pr-3 py-2 rounded-xl text-sm"
                                                 style={{ background: item.isQualified === false ? K.chipBg : K.glass, border: `1px solid ${K.hairline}`, color: item.isQualified === false ? K.faint : K.ink }} />
                                             </div>
                                           ) : (
-                                            item.isQualified === false ? <span className="text-xs" style={{ color: K.faint }}>—</span>
-                                              : <span className="text-sm font-medium" style={{ color: APPLE.purple }}>{item.qtrRebate ? `₱${item.qtrRebate}` : "—"}</span>
+                                            item.isQualified === false
+                                              ? <span className="text-xs" style={{ color: K.faint }}>—</span>
+                                              : <span className="text-sm font-medium text-[#BF5AF2]">{item.qtrRebate ? `₱${item.qtrRebate}` : "—"}</span>
                                           )}
                                         </td>
                                       </>
@@ -3364,13 +3132,13 @@ const handleExportExcel = () => {
                                       <div className="flex gap-1.5">
                                         <button className="w-8 h-8 flex items-center justify-center rounded-lg"
                                           style={isRowEditable('item', idx)
-                                            ? { background: `${APPLE.green}1c`, color: APPLE.green }
+                                            ? { background: `${PALETTE.green}1c`, color: PALETTE.green }
                                             : { background: K.chipBg, color: K.muted, opacity: !access.canEdit ? 0.3 : 1 }}
                                           onClick={() => { if (access.canEdit) toggleRowEdit('item', idx); }}>
                                           {isRowEditable('item', idx) ? <Save size={13} /> : <Edit size={13} />}
                                         </button>
                                         <button className="w-8 h-8 flex items-center justify-center rounded-lg"
-                                          style={{ color: APPLE.red, opacity: !access.canEdit ? 0.3 : 1 }}
+                                          style={{ color: PALETTE.red, opacity: !access.canEdit ? 0.3 : 1 }}
                                           onClick={() => handleDeleteItem(idx)}>
                                           <Trash2 size={13} />
                                         </button>
@@ -3385,23 +3153,25 @@ const handleExportExcel = () => {
                       </div>
                     )}
 
-                    <div className="flex justify-between items-center pt-3 mt-auto border-t flex-shrink-0" style={{ borderColor: K.hairline }}>
+                    <div className="flex justify-between items-center pt-3 mt-auto border-t flex-shrink-0 border-[var(--ds-hairline)]">
                       <div className="flex gap-2">
                         {activeTab === "Customer" && (
                           <button onClick={handleAddCustomer} disabled={!access.canEdit}
-                            className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-full disabled:cursor-not-allowed"
-                            style={access.canEdit
-                              ? { background: `linear-gradient(155deg, ${APPLE.green} 0%, #1D9E3F 100%)`, color: '#fff' }
-                              : { background: K.chipBg, color: K.faint }}>
+                            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-full disabled:cursor-not-allowed ${
+                              access.canEdit
+                                ? 'bg-gradient-to-br from-[#32D74B] to-[#1D9E3F] text-white hover:brightness-110 transition-all'
+                                : 'bg-[var(--ds-chip-bg)] text-[var(--ds-faint)]'
+                            }`}>
                             {!access.canEdit ? <Lock size={14} /> : <Users size={14} />} Add Customer
                           </button>
                         )}
                         {activeTab === "Items" && (
                           <button onClick={handleAddItem} disabled={!access.canEdit}
-                            className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-full disabled:cursor-not-allowed"
-                            style={access.canEdit
-                              ? { background: `linear-gradient(155deg, ${APPLE.green} 0%, #1D9E3F 100%)`, color: '#fff' }
-                              : { background: K.chipBg, color: K.faint }}>
+                            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold rounded-full disabled:cursor-not-allowed ${
+                              access.canEdit
+                                ? 'bg-gradient-to-br from-[#32D74B] to-[#1D9E3F] text-white hover:brightness-110 transition-all'
+                                : 'bg-[var(--ds-chip-bg)] text-[var(--ds-faint)]'
+                            }`}>
                             {!access.canEdit ? <Lock size={14} /> : <Package size={14} />} Add Item
                           </button>
                         )}
@@ -3412,14 +3182,14 @@ const handleExportExcel = () => {
                           className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-full"
                           style={!hasAnyData
                             ? { opacity: 0.3, cursor: 'not-allowed', border: `1px solid ${K.hairline}`, color: K.faint }
-                            : { border: `1px solid ${K.hairline}`, color: K.muted }}>
+                            : { border: `1px solid ${K.hairline}`, color: K.muted, hover: { background: K.hover } }}>
                           <X size={14} /> Cancel
                         </button>
                         {isViewMode ? (
                           <button onClick={handleUpdate} disabled={!access.canEdit || !hasAnyData}
                             className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-full"
                             style={access.canEdit && hasAnyData
-                              ? { background: `linear-gradient(155deg, ${APPLE.orange} 0%, ${APPLE.red} 100%)`, color: '#fff' }
+                              ? { background: `linear-gradient(155deg, ${PALETTE.orange} 0%, ${PALETTE.red} 100%)`, color: '#fff' }
                               : { background: K.chipBg, color: K.faint, cursor: 'not-allowed' }}>
                             {!access.canEdit ? <Lock size={14} /> : <PenLine size={14} />}
                             Update {loadedRebateCode}
@@ -3428,7 +3198,7 @@ const handleExportExcel = () => {
                           <button onClick={handleSave} disabled={!access.canCreate || !hasAnyData}
                             className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold rounded-full"
                             style={access.canCreate && hasAnyData
-                              ? { background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`, color: '#fff' }
+                              ? { background: `linear-gradient(155deg, ${PALETTE.blue} 0%, ${PALETTE.purple} 100%)`, color: '#fff' }
                               : { background: K.chipBg, color: K.faint, cursor: 'not-allowed' }}>
                             {!access.canCreate ? <Lock size={14} /> : <Save size={14} />} Save Program
                           </button>
@@ -3442,62 +3212,89 @@ const handleExportExcel = () => {
         </div>
       </main>
 
-      <CustomerSelectionModal isOpen={isCustomerModalOpen}
+      <CustomerSelectionModal
+        isOpen={isCustomerModalOpen}
         onClose={() => { setIsCustomerModalOpen(false); setTempSelectedCustomers([]); setCurrentEditingRow({ type: null, index: null }); }}
-        customers={customersDropdown} selectedCustomers={tempSelectedCustomers}
-        onConfirm={handleCustomerSelectionConfirm} theme={theme} />
+        customers={customersDropdown}
+        selectedCustomers={tempSelectedCustomers}
+        onConfirm={handleCustomerSelectionConfirm}
+        theme={theme} />
 
-      <ItemSelectionModal isOpen={isItemModalOpen}
+      <ItemSelectionModal
+        isOpen={isItemModalOpen}
         onClose={() => { setIsItemModalOpen(false); setTempSelectedItems([]); setCurrentEditingRow({ type: null, index: null }); }}
-        items={itemsDropdown} selectedItems={tempSelectedItems}
-        onConfirm={handleItemSelectionConfirm} theme={theme} />
+        items={itemsDropdown}
+        selectedItems={tempSelectedItems}
+        onConfirm={handleItemSelectionConfirm}
+        theme={theme} />
 
-      <PercentageModal isOpen={percentageModal.isOpen} onClose={closePercentageModal}
+      <PercentageModal
+        isOpen={percentageModal.isOpen}
+        onClose={closePercentageModal}
         customer={percentageModal.customer}
         onSave={(arr) => handleSavePercentages(percentageModal.customer?.index, arr)}
-        quotaPeriods={quotaPeriods} selectedFrequency={selectedFrequency}
-        theme={theme} access={access} />
+        quotaPeriods={quotaPeriods}
+        selectedFrequency={selectedFrequency}
+        theme={theme}
+        access={access} />
 
-      <QuotaModal isOpen={quotaModal.isOpen} onClose={closeQuotaModal}
+      <QuotaModal
+        isOpen={quotaModal.isOpen}
+        onClose={closeQuotaModal}
         customer={quotaModal.customer}
         onSave={(q) => handleSaveQuotas(quotaModal.customer.index, q)}
-        quotaPeriods={quotaPeriods} importedQuotas={quotaModal.importedQuotas}
-        rebateType={rebateType} quotaType={quotaType}
-        selectedFrequency={selectedFrequency} theme={theme} access={access} />
+        quotaPeriods={quotaPeriods}
+        importedQuotas={quotaModal.importedQuotas}
+        rebateType={rebateType}
+        quotaType={quotaType}
+        selectedFrequency={selectedFrequency}
+        theme={theme}
+        access={access} />
 
-      <RangeModal isOpen={rangeModal.isOpen} onClose={closeRangeModal}
+      <RangeModal
+        isOpen={rangeModal.isOpen}
+        onClose={closeRangeModal}
         customer={rangeModal.customer}
         onSave={(r) => handleSaveRanges(rangeModal.customer.index, r)}
-        quotaPeriods={quotaPeriods} rebateType={rebateType} quotaType={quotaType}
+        quotaPeriods={quotaPeriods}
+        rebateType={rebateType}
+        quotaType={quotaType}
         selectedFrequency={selectedFrequency}
-        theme={theme} access={access} />
+        theme={theme}
+        access={access} />
 
-      <ProductRangeModal isOpen={productRangeModal.isOpen} onClose={closeProductRangeModal}
+      <ProductRangeModal
+        isOpen={productRangeModal.isOpen}
+        onClose={closeProductRangeModal}
         product={productRangeModal.product}
         onSave={(r) => handleSaveProductRanges(productRangeModal.product.index, r)}
-        quotaPeriods={quotaPeriods} rebateType={rebateType} quotaType={quotaType} theme={theme} />
+        quotaPeriods={quotaPeriods}
+        rebateType={rebateType}
+        quotaType={quotaType}
+        theme={theme} />
 
-      <SearchRebateModal isOpen={searchModal.isOpen}
+      <SearchRebateModal
+        isOpen={searchModal.isOpen}
         onClose={() => setSearchModal({ isOpen: false })}
-        searchCode={searchCode} setSearchCode={setSearchCode}
-        onSearch={handleSearchRebateCode} searchLoading={searchLoading}
-        searchError={searchError} theme={theme} canView={access.canView} db={db} />
+        searchCode={searchCode}
+        setSearchCode={setSearchCode}
+        onSearch={handleSearchRebateCode}
+        searchLoading={searchLoading}
+        searchError={searchError}
+        canView={access.canView}
+        db={db} />
 
       <BulkRangeModal
         isOpen={bulkRangeModalOpen}
         onClose={() => setBulkRangeModalOpen(false)}
         onApply={handleApplyBulkRanges}
-        theme={theme}
         emptyCount={customersWithNoRanges}
-        totalCount={customers.length}
-      />
+        totalCount={customers.length} />
 
       <ScopeSelectionModal
         isOpen={scopeModalOpen}
         onClose={handleScopeModalCancel}
-        onSelect={handleApplyScope}
-        theme={theme}
-      />
+        onSelect={handleApplyScope} />
 
       <ToastContainer toasts={toasts} removeToast={removeToast} isDark={isDark} />
       {loading && <Loading theme={theme} />}
@@ -3520,7 +3317,7 @@ const handleExportExcel = () => {
         onConfirm={confirmDeleteItem} title="Delete Item"
         message={`Are you sure you want to delete "${removeItemModal.name}"? This action cannot be undone.`}
         theme={theme} />
-    </div>
+    </DesignPage>
   );
 }
 

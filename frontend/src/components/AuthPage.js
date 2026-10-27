@@ -1,123 +1,57 @@
-// AuthPage.js — Split-card · Image left panel · Clean right form
-// Converted to the Nexchem / VAN / VCP Apple system design language.
+// src/pages/AuthPage.js
+// Split-card · Image left panel · Clean right form
+// Uses the shared design system in src/design-system.jsx.
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import {
   Eye, EyeOff, Lock, X, KeyRound,
   AlertCircle, CheckCircle, Shield, ShieldCheck, ArrowRight,
-  Sun, Moon, Loader2, User, LayoutDashboard, Users, BarChart3,
+  Loader2, User, LayoutDashboard, Users, BarChart3,
 } from "lucide-react";
-import { useTheme } from "../context/ThemeContext";
+
+/* ── Design system (one import does it all) ──────────────────────── */
+import {
+  PALETTE,
+  useTokens,
+  DesignPage,
+  GlassCard,
+  Field,
+  StrengthMeter,
+  ThemeToggle,
+  PrimaryButton,
+} from "../design-system";
+
 import Rebate from "../assets/Rebate.png";
 
-const API_BASE = "http://192.168.100.193:3009/api";
+const API_BASE = "/api";
 const DB_NAME  = "USER";
 
-/* ─── Apple system colour language (Nexchem / VAN / VCP / Settings) ──────── */
-const APPLE = {
-  blue:   "#0A84FF",
-  purple: "#BF5AF2",
-  red:    "#FF453A",
-  orange: "#FF9F0A",
-  green:  "#32D74B",
-  gray:   "#8E8E93",
-};
-
-const dashTokens = (isDark) => ({
-  ink:       isDark ? "#F2F2F7" : "#1C1C1E",
-  muted:     isDark ? "#98989F" : "#6E6E73",
-  faint:     isDark ? "#68686D" : "#AEAEB2",
-  glass:     isDark ? "rgba(30,30,36,0.6)"   : "rgba(255,255,255,0.65)",
-  glassDeep: isDark ? "rgba(24,24,28,0.95)"  : "rgba(255,255,255,0.98)",
-  hairline:  isDark ? "rgba(255,255,255,0.08)" : "rgba(60,60,67,0.12)",
-  rim:       isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.8)",
-  chipBg:    isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
-  hover:     isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
-  shadow:    isDark ? "0 20px 50px -14px rgba(0,0,0,0.65)" : "0 20px 50px -18px rgba(30,41,79,0.18)",
-  bg:        isDark ? "#000000" : "#EEF1F7",
-  panel:     isDark ? "rgba(22,22,28,0.92)"  : "rgba(255,255,255,0.98)",
-});
-
-/* ─── Global styles & keyframes ─────────────────────────────────────────────── */
-const GLOBAL_STYLES = `
-  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
-  .auth-page, .auth-page * { font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif; }
-  *, *::before, *::after { box-sizing: border-box; }
-  .auth-glass { -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%); }
-  .auth-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
-  .auth-scroll::-webkit-scrollbar-thumb { background: rgba(142,142,147,0.4); border-radius: 999px; }
-  .auth-scroll::-webkit-scrollbar-track { background: transparent; }
-
-  @keyframes floatUp    { 0%,100%{transform:translateY(0)}      50%{transform:translateY(-14px)} }
-  @keyframes spinSlow   { from{transform:rotate(0deg)}          to{transform:rotate(360deg)} }
-  @keyframes pulse2     { 0%,100%{opacity:.5}                   50%{opacity:1} }
-  @keyframes slideIn    { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
-  @keyframes dash-pop   { from{opacity:0;transform:scale(.97) translateY(6px)} to{opacity:1;transform:scale(1) translateY(0)} }
-  .auth-pop { animation: dash-pop .22s cubic-bezier(0.16,1,0.3,1); }
-
-  @keyframes floatBlob  {
-    0%,100% { transform: translate(0,0) scale(1); }
-    33%     { transform: translate(18px,-22px) scale(1.04); }
-    66%     { transform: translate(-14px,16px) scale(.97); }
-  }
-  @keyframes floatBlob2 {
-    0%,100% { transform: translate(0,0) scale(1); }
-    33%     { transform: translate(-20px,18px) scale(1.05); }
-    66%     { transform: translate(16px,-14px) scale(.96); }
-  }
-  @keyframes swirl {
-    0%   { transform: rotate(0deg)   scale(1);    opacity:.90; }
-    50%  { transform: rotate(180deg) scale(1.06); opacity:1;   }
-    100% { transform: rotate(360deg) scale(1);    opacity:.90; }
-  }
-  @keyframes swirlRv {
-    0%   { transform: rotate(0deg)   scale(1.05); }
-    100% { transform: rotate(-360deg) scale(1.05); }
-  }
-  @keyframes carouselFadeIn {
-    from { opacity:0; transform:translateY(18px); }
-    to   { opacity:1; transform:translateY(0); }
-  }
-  @keyframes carouselFadeOut {
-    from { opacity:1; transform:translateY(0); }
-    to   { opacity:0; transform:translateY(-14px); }
-  }
-  @keyframes fillBar {
-    from { width: 0%; }
-    to   { width: 100%; }
-  }
-  @keyframes fadeInScale {
-    from { opacity: 0; transform: scale(0.85); }
-    to   { opacity: 1; transform: scale(1); }
-  }
-`;
-
-/* ─── Carousel slides ────────────────────────────────────────────────────────── */
+/* ─── Carousel slides ─────────────────────────────────────────────── */
 const CAROUSEL_SLIDES = [
   {
     heading:     "Simplify Rebate\nManagement",
     description: "Manage rebate centralized records with flexible configuration and full audit trails.",
-    accent:      APPLE.blue,
+    accent:      PALETTE.blue,
     icon:        <LayoutDashboard size={22} strokeWidth={1.7} />,
   },
   {
     heading:     "Track Customers\nEarned Rebates Instantly",
     description: "Monitor customer earned rebates, payout progress, and rebate balances in real time.",
-    accent:      APPLE.purple,
+    accent:      PALETTE.purple,
     icon:        <Users size={22} strokeWidth={1.7} />,
   },
   {
     heading:     "View Customers\nReports",
     description: "Access detailed customer rebate reports, summaries, and transaction insights easily.",
-    accent:      APPLE.green,
+    accent:      PALETTE.green,
     icon:        <BarChart3 size={22} strokeWidth={1.7} />,
   },
 ];
 const SLIDE_DURATION = 4000;
 
-/* ─── Left decorative panel ──────────────────────────────────────────────────── */
-function BrandPanel({ isDark }) {
+/* ─── Left decorative panel ──────────────────────────────────────── */
+function BrandPanel() {
   const [currentSlide, setCurrentSlide] = useState(0);
   const [animatingOut, setAnimatingOut] = useState(false);
   const [animatingIn,  setAnimatingIn]  = useState(false);
@@ -170,7 +104,7 @@ function BrandPanel({ isDark }) {
     <div className="w-full h-full relative overflow-hidden flex flex-col items-start justify-between p-8"
       style={{ background: "linear-gradient(160deg, #050b18 0%, #0a1730 30%, #0d0a2e 60%, #050b18 100%)" }}>
 
-      {/* Ambient blob 1 — Apple blue */}
+      {/* Ambient blob 1 — blue */}
       <div className="absolute pointer-events-none rounded-full"
         style={{
           top: "10%", left: "5%", width: "70%", height: "65%",
@@ -178,7 +112,7 @@ function BrandPanel({ isDark }) {
           filter: "blur(52px)", animation: "floatBlob 9s ease-in-out infinite",
         }} />
 
-      {/* Ambient blob 2 — Apple purple */}
+      {/* Ambient blob 2 — purple */}
       <div className="absolute pointer-events-none rounded-full"
         style={{
           top: "20%", left: "20%", width: "65%", height: "60%",
@@ -216,13 +150,13 @@ function BrandPanel({ isDark }) {
       <div className="absolute pointer-events-none z-[2]"
         style={{ top: "8%", left: "50%", transform: "translateX(-50%)", width: "300px", height: "300px" }}>
         <div className="absolute rounded-full"
-          style={{ inset: "-10px", background: `radial-gradient(circle, ${APPLE.blue}2e 0%, transparent 70%)`, filter: "blur(16px)" }} />
+          style={{ inset: "-10px", background: `radial-gradient(circle, ${PALETTE.blue}2e 0%, transparent 70%)`, filter: "blur(16px)" }} />
         <div className="absolute rounded-full"
-          style={{ inset: "10px", background: `conic-gradient(from 0deg, ${APPLE.blue}00 0deg, ${APPLE.blue}d9 90deg, ${APPLE.blue}b3 160deg, ${APPLE.blue}00 200deg, ${APPLE.blue}00 360deg)`, filter: "blur(3px)", animation: "swirl 8s linear infinite", opacity: 0.85 }} />
+          style={{ inset: "10px", background: `conic-gradient(from 0deg, ${PALETTE.blue}00 0deg, ${PALETTE.blue}d9 90deg, ${PALETTE.blue}b3 160deg, ${PALETTE.blue}00 200deg, ${PALETTE.blue}00 360deg)`, filter: "blur(3px)", animation: "swirl 8s linear infinite", opacity: 0.85 }} />
         <div className="absolute rounded-full"
-          style={{ inset: "28px", background: `conic-gradient(from 120deg, ${APPLE.purple}00 0deg, ${APPLE.purple}cc 80deg, ${APPLE.purple}99 150deg, ${APPLE.purple}00 200deg, ${APPLE.purple}00 360deg)`, filter: "blur(3.5px)", animation: "swirlRv 10s linear infinite", opacity: 0.80 }} />
+          style={{ inset: "28px", background: `conic-gradient(from 120deg, ${PALETTE.purple}00 0deg, ${PALETTE.purple}cc 80deg, ${PALETTE.purple}99 150deg, ${PALETTE.purple}00 200deg, ${PALETTE.purple}00 360deg)`, filter: "blur(3.5px)", animation: "swirlRv 10s linear infinite", opacity: 0.80 }} />
         <div className="absolute rounded-full"
-          style={{ inset: "52px", background: `conic-gradient(from 240deg, ${APPLE.purple}00 0deg, ${APPLE.purple}a6 70deg, ${APPLE.purple}80 130deg, ${APPLE.purple}00 190deg, ${APPLE.purple}00 360deg)`, filter: "blur(4px)", animation: "swirl 12s linear infinite", opacity: 0.70 }} />
+          style={{ inset: "52px", background: `conic-gradient(from 240deg, ${PALETTE.purple}00 0deg, ${PALETTE.purple}a6 70deg, ${PALETTE.purple}80 130deg, ${PALETTE.purple}00 190deg, ${PALETTE.purple}00 360deg)`, filter: "blur(4px)", animation: "swirl 12s linear infinite", opacity: 0.70 }} />
         <div className="absolute rounded-full"
           style={{ inset: "80px", background: "radial-gradient(circle at 38% 38%, rgba(220,240,255,.22) 0%, rgba(120,180,255,.08) 50%, transparent 75%)", backdropFilter: "blur(1px)" }} />
         <div className="absolute rounded-full bg-white/[0.06]"
@@ -293,248 +227,64 @@ function BrandPanel({ isDark }) {
   );
 }
 
-/* ─── Sign-in loading overlay ──────────────────────────────────────────────── */
-function TransitionOverlay({ visible, displayName }) {
-  const [stage, setStage] = useState(0);
+/* ─── Slim top progress bar ─────────────────────────────────────── */
+/*  active      → bar is rendered
+ *  completing  → grows to 100% (after successful login)
+ *  idle        → slowly grows to ~72% while we wait for the API
+ */
+function TopProgressBar({ active, completing }) {
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    if (!visible) { setStage(0); return; }
-    const t1 = setTimeout(() => setStage(1), 750);
-    const t2 = setTimeout(() => setStage(2), 1500);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [visible]);
+    if (!active) { setMounted(false); return; }
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, [active]);
 
-  if (!visible) return null;
-
-  const messages = [
-    "Verifying credentials…",
-    `Welcome back${displayName ? `, ${displayName}` : ""}!`,
-    "Preparing your dashboard…",
-  ];
+  if (!active) return null;
 
   return (
-    <div className="fixed inset-0 z-[9999] overflow-hidden flex flex-col items-center justify-center auth-page"
+    <div
       style={{
-        background: "linear-gradient(160deg, #050b18 0%, #0a1730 30%, #0d0a2e 60%, #050b18 100%)",
-      }}>
-
-      {/* Ambient blobs */}
-      <div className="absolute pointer-events-none rounded-full"
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        height: "5px",
+        zIndex: 2147483647,   // guaranteed on top
+        pointerEvents: "none",
+      }}
+    >
+      <div
         style={{
-          top: "12%", left: "8%", width: "50%", height: "50%",
-          background: `radial-gradient(ellipse at 40% 40%, ${APPLE.blue}66 0%, ${APPLE.blue}33 35%, transparent 70%)`,
-          filter: "blur(70px)", animation: "floatBlob 9s ease-in-out infinite",
-        }} />
-      <div className="absolute pointer-events-none rounded-full"
-        style={{
-          bottom: "10%", right: "10%", width: "48%", height: "46%",
-          background: `radial-gradient(ellipse at 55% 55%, ${APPLE.purple}60 0%, ${APPLE.purple}33 40%, transparent 72%)`,
-          filter: "blur(70px)", animation: "floatBlob2 11s ease-in-out infinite",
-        }} />
-
-      {/* Grain */}
-      <div className="absolute inset-0 pointer-events-none opacity-50"
-        style={{
-          backgroundImage: "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E\")",
-          backgroundSize: "180px 180px",
-        }} />
-
-      {/* Floating particles */}
-      {[...Array(6)].map((_, i) => (
-        <div key={i} className="absolute rounded-full opacity-50 pointer-events-none"
-          style={{
-            left: `${14 + i * 14}%`, top: `${68 + (i % 3) * 7}%`,
-            width: "4px", height: "4px",
-            background: i % 2 === 0 ? APPLE.blue : APPLE.purple,
-            animation: `floatUp ${3 + i * .4}s ease-in-out infinite`,
-            animationDelay: `${i * .3}s`,
-          }} />
-      ))}
-
-      {/* Centered content */}
-      <div className="relative flex flex-col items-center" style={{ animation: "slideIn .5s cubic-bezier(.2,0,.2,1)" }}>
-
-        {/* Logo + swirl rings */}
-        <div className="relative mb-8" style={{ width: "148px", height: "148px" }}>
-
-          {/* Soft pulsing glow */}
-          <div className="absolute rounded-full pointer-events-none"
-            style={{
-              inset: "-20px",
-              background: `radial-gradient(circle, ${APPLE.blue}59 0%, transparent 70%)`,
-              filter: "blur(20px)", animation: "pulse2 2.2s ease-in-out infinite",
-            }} />
-
-          {/* Ring 1 — Blue */}
-          <div className="absolute rounded-full"
-            style={{
-              inset: 0,
-              background: `conic-gradient(from 0deg, ${APPLE.blue}00 0deg, ${APPLE.blue}e6 90deg, ${APPLE.blue}b3 160deg, ${APPLE.blue}00 200deg, ${APPLE.blue}00 360deg)`,
-              filter: "blur(2px)", animation: "swirl 3.4s linear infinite",
-            }} />
-
-          {/* Ring 2 — Purple */}
-          <div className="absolute rounded-full"
-            style={{
-              inset: "14px",
-              background: `conic-gradient(from 140deg, ${APPLE.purple}00 0deg, ${APPLE.purple}d9 80deg, ${APPLE.purple}99 150deg, ${APPLE.purple}00 200deg, ${APPLE.purple}00 360deg)`,
-              filter: "blur(2.5px)", animation: "swirlRv 4.2s linear infinite",
-            }} />
-
-          {/* Static ring track */}
-          <div className="absolute rounded-full border border-white/[0.08]" style={{ inset: "14px" }} />
-
-          {/* Logo plate */}
-          <div className="absolute rounded-full flex items-center justify-center"
-            style={{
-              inset: "30px",
-              background: "rgba(13,20,40,.85)",
-              border: "1px solid rgba(255,255,255,.12)",
-              backdropFilter: "blur(10px)",
-              boxShadow: "0 8px 28px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.06)",
-            }}>
-            <img src={Rebate} alt="" className="w-[46px] h-[46px] object-contain" />
-          </div>
-        </div>
-
-        {/* Status text */}
-        <div className="relative mb-[22px] min-w-[220px]" style={{ height: "22px" }}>
-          {messages.map((msg, i) => (
-            <p key={i}
-              className="absolute left-1/2 top-0 m-0 whitespace-nowrap font-semibold text-[#f1f5f9] transition-opacity duration-[350ms]"
-              style={{
-                transform: "translateX(-50%)",
-                fontSize: "14px",
-                opacity: stage === i ? 1 : 0,
-              }}>
-              {msg}
-            </p>
-          ))}
-        </div>
-
-        {/* Progress bar */}
-        <div className="rounded-[3px] overflow-hidden" style={{ width: "168px", height: "3px", background: "rgba(255,255,255,.10)" }}>
-          <div className="h-full rounded-[3px]"
-            style={{
-              background: `linear-gradient(90deg, ${APPLE.blue}, ${APPLE.purple})`,
-              animation: "fillBar 2.2s cubic-bezier(.4,0,.2,1) forwards",
-            }} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ─── Floating-label input ───────────────────────────────────────────────────── */
-function Field({ label, icon: Icon, type = "text", value, onChange,
-  disabled, placeholder, right, autoComplete, isDark }) {
-  const [focused, setFocused] = useState(false);
-  const lifted = focused || value.length > 0;
-  const K = dashTokens(isDark);
-
-  const borderColor = focused
-    ? APPLE.blue
-    : K.hairline;
-
-  return (
-    <div className="relative">
-      <div className="absolute left-[14px] top-1/2 -translate-y-1/2 z-[2] pointer-events-none transition-colors duration-150"
-        style={{ color: focused ? APPLE.blue : K.faint }}>
-        <Icon size={14} />
-      </div>
-
-      <label className="absolute left-[42px] z-[2] pointer-events-none transition-all duration-150"
-        style={{
-          top: lifted ? "7px" : "50%",
-          transform: lifted ? "none" : "translateY(-50%)",
-          fontSize: lifted ? "9px" : "13px",
-          fontWeight: lifted ? 600 : 400,
-          letterSpacing: lifted ? ".8px" : "0",
-          textTransform: lifted ? "uppercase" : "none",
-          color: focused ? APPLE.blue : K.muted,
-        }}>
-        {label}
-      </label>
-
-      <input
-        type={type} value={value} onChange={onChange}
-        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-        disabled={disabled} autoComplete={autoComplete}
-        placeholder={focused ? placeholder : ""}
-        className="w-full rounded-xl outline-none transition-all duration-150"
-        style={{
-          height: "54px",
-          paddingLeft: "42px",
-          paddingRight: right ? "44px" : "14px",
-          paddingTop: lifted ? "16px" : "0",
-          fontSize: "13.5px",
-          background: isDark
-            ? (focused ? `${APPLE.blue}10` : K.chipBg)
-            : (focused ? `${APPLE.blue}08` : K.chipBg),
-          color: K.ink,
-          border: `1.5px solid ${borderColor}`,
-          boxShadow: focused ? `0 0 0 3px ${APPLE.blue}22` : "none",
-          opacity: disabled ? 0.45 : 1,
-          cursor: disabled ? "not-allowed" : "text",
+          height: "100%",
+          width: mounted ? (completing ? "100%" : "72%") : "0%",
+          background: `linear-gradient(90deg, ${PALETTE.blue} 0%, ${PALETTE.purple} 100%)`,
+          boxShadow: `0 0 14px 2px ${PALETTE.blue}cc, 0 0 4px ${PALETTE.purple}cc`,
+          borderRadius: "0 4px 4px 0",
+          transition: completing
+            ? "width .55s cubic-bezier(.4,0,.2,1)"
+            : "width 4.5s cubic-bezier(.1,.55,.35,1)",
         }}
       />
-
-      {right && (
-        <div className="absolute right-3 top-1/2 -translate-y-1/2 z-[2]">
-          {right}
-        </div>
-      )}
     </div>
   );
 }
 
-/* ─── Password strength bar ─────────────────────────────────────────────────── */
-function StrengthMeter({ password, isDark }) {
-  if (!password) return null;
-  const K = dashTokens(isDark);
-
-  let score = 0;
-  if (password.length >= 6)           score++;
-  if (password.length >= 10)          score++;
-  if (/[A-Z]/.test(password))         score++;
-  if (/[0-9!@#$%^&*]/.test(password)) score++;
-
-  const levels = [
-    { label: "Weak",   color: APPLE.red },
-    { label: "Fair",   color: APPLE.orange },
-    { label: "Good",   color: APPLE.orange },
-    { label: "Strong", color: APPLE.green },
-  ];
-  const lv = levels[Math.max(0, score - 1)];
-
-  return (
-    <div className="mt-1.5">
-      <div className="flex gap-1 mb-1">
-        {[1, 2, 3, 4].map(i => (
-          <div key={i} className="flex-1 h-[3px] rounded-[3px] transition-all duration-[250ms]"
-            style={{ background: i <= score ? lv.color : K.chipBg }} />
-        ))}
-      </div>
-      <p className="m-0 text-[10px] font-semibold" style={{ color: lv.color }}>{lv.label}</p>
-    </div>
-  );
-}
-
-/* ─── Password-change modal ──────────────────────────────────────────────────── */
+/* ─── Password-change modal ──────────────────────────────────────── */
 function PasswordChangeModal({
-  isDark,
   tempResult, userCode,
   newPwd, setNewPwd, confirmPwd, setConfirmPwd,
   showNewPwd, setShowNewPwd, showConfirmPwd, setShowConfirmPwd,
   pwdError, changing, onSubmit, onClose,
 }) {
-  const K = dashTokens(isDark);
+  const { isDark, K } = useTokens();
 
   return (
     <div className="fixed inset-0 z-[9000] flex items-center justify-center p-4"
       style={{ background: "rgba(8,12,24,0.65)", backdropFilter: "blur(12px)" }}>
       <div
-        className="auth-glass auth-pop w-[min(440px,100%)] rounded-[22px] overflow-hidden"
+        className="ds-glass ds-pop w-[min(440px,100%)] rounded-[22px] overflow-hidden"
         style={{
           background: K.glassDeep,
           border: `1px solid ${K.rim}`,
@@ -543,7 +293,7 @@ function PasswordChangeModal({
       >
         {/* Gradient header banner */}
         <div className="relative overflow-hidden px-6 pt-6 pb-5"
-          style={{ background: `linear-gradient(135deg, ${APPLE.blue} 0%, #6d5be0 55%, ${APPLE.purple} 100%)` }}>
+          style={{ background: `linear-gradient(135deg, ${PALETTE.blue} 0%, #6d5be0 55%, ${PALETTE.purple} 100%)` }}>
           <div className="pointer-events-none absolute -top-[35%] -left-[10%] w-[60%] h-[150%] rounded-full blur-[28px]"
             style={{ background: "radial-gradient(ellipse,rgba(255,255,255,0.22) 0%,transparent 68%)", animation: "floatBlob 8s ease-in-out infinite" }} />
           <div className="pointer-events-none absolute -bottom-[45%] -right-[12%] w-[58%] h-[140%] rounded-full blur-[26px]"
@@ -590,9 +340,9 @@ function PasswordChangeModal({
           style={{ background: K.chipBg, borderColor: K.hairline }}>
           <div className="w-8 h-8 rounded-[10px] flex-shrink-0 flex items-center justify-center text-[13px] font-bold border"
             style={{
-              background: `${APPLE.blue}1c`,
-              borderColor: `${APPLE.blue}33`,
-              color: APPLE.blue,
+              background: `${PALETTE.blue}1c`,
+              borderColor: `${PALETTE.blue}33`,
+              color: PALETTE.blue,
             }}>
             {(tempResult.user?.DisplayName || userCode).charAt(0).toUpperCase()}
           </div>
@@ -606,9 +356,9 @@ function PasswordChangeModal({
           </div>
           <span className="text-[9px] font-bold tracking-[0.4px] uppercase px-2 py-1 rounded-full border"
             style={{
-              color: APPLE.green,
-              background: `${APPLE.green}14`,
-              borderColor: `${APPLE.green}33`,
+              color: PALETTE.green,
+              background: `${PALETTE.green}14`,
+              borderColor: `${PALETTE.green}33`,
             }}>
             First Login
           </span>
@@ -619,9 +369,9 @@ function PasswordChangeModal({
           {pwdError && (
             <div className="flex items-center gap-2 px-3 py-2.5 rounded-[10px] text-xs border"
               style={{
-                background: `${APPLE.red}14`,
-                borderColor: `${APPLE.red}33`,
-                color: APPLE.red,
+                background: `${PALETTE.red}14`,
+                borderColor: `${PALETTE.red}33`,
+                color: PALETTE.red,
               }}>
               <AlertCircle size={12} className="flex-shrink-0" />
               {pwdError}
@@ -631,7 +381,7 @@ function PasswordChangeModal({
           <form onSubmit={onSubmit} className="flex flex-col gap-3">
             <div>
               <Field
-                label="New Password" icon={Lock} isDark={isDark}
+                label="New Password" icon={Lock}
                 type={showNewPwd ? "text" : "password"}
                 value={newPwd} onChange={e => setNewPwd(e.target.value)}
                 disabled={changing} placeholder="Min. 6 characters" autoComplete="new-password"
@@ -645,12 +395,12 @@ function PasswordChangeModal({
                   </button>
                 }
               />
-              <StrengthMeter password={newPwd} isDark={isDark} />
+              <StrengthMeter password={newPwd} />
             </div>
 
             <div>
               <Field
-                label="Confirm Password" icon={KeyRound} isDark={isDark}
+                label="Confirm Password" icon={KeyRound}
                 type={showConfirmPwd ? "text" : "password"}
                 value={confirmPwd} onChange={e => setConfirmPwd(e.target.value)}
                 disabled={changing} placeholder="Repeat password" autoComplete="new-password"
@@ -668,13 +418,13 @@ function PasswordChangeModal({
                 <div className="flex items-center gap-1.5 mt-1.5">
                   {newPwd === confirmPwd ? (
                     <>
-                      <CheckCircle size={11} style={{ color: APPLE.green }} />
-                      <span className="text-[11px] font-medium" style={{ color: APPLE.green }}>Passwords match</span>
+                      <CheckCircle size={11} style={{ color: PALETTE.green }} />
+                      <span className="text-[11px] font-medium" style={{ color: PALETTE.green }}>Passwords match</span>
                     </>
                   ) : (
                     <>
-                      <X size={11} style={{ color: APPLE.red }} />
-                      <span className="text-[11px] font-medium" style={{ color: APPLE.red }}>Passwords don't match</span>
+                      <X size={11} style={{ color: PALETTE.red }} />
+                      <span className="text-[11px] font-medium" style={{ color: PALETTE.red }}>Passwords don't match</span>
                     </>
                   )}
                 </div>
@@ -690,10 +440,10 @@ function PasswordChangeModal({
               ].map(({ ok, label }) => (
                 <div key={label} className="flex items-center gap-2">
                   <div className="w-3.5 h-3.5 rounded-full flex-shrink-0 flex items-center justify-center transition-colors duration-200"
-                    style={{ background: ok ? APPLE.green : (isDark ? "rgba(255,255,255,0.08)" : "#e2e8f0") }}>
+                    style={{ background: ok ? PALETTE.green : (isDark ? "rgba(255,255,255,0.08)" : "#e2e8f0") }}>
                     {ok && <CheckCircle size={9} className="text-white" />}
                   </div>
-                  <span className="text-[11px]" style={{ color: ok ? APPLE.green : K.muted, fontWeight: ok ? 500 : 400 }}>
+                  <span className="text-[11px]" style={{ color: ok ? PALETTE.green : K.muted, fontWeight: ok ? 500 : 400 }}>
                     {label}
                   </span>
                 </div>
@@ -721,8 +471,8 @@ function PasswordChangeModal({
                 disabled={changing}
                 className="flex-1 h-11 rounded-[12px] border-0 text-white text-[12.5px] font-semibold flex items-center justify-center gap-1.5 transition-all"
                 style={{
-                  background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
-                  boxShadow: changing ? "none" : `0 4px 16px -6px ${APPLE.blue}88`,
+                  background: `linear-gradient(155deg, ${PALETTE.blue} 0%, ${PALETTE.purple} 100%)`,
+                  boxShadow: changing ? "none" : `0 4px 16px -6px ${PALETTE.blue}88`,
                   cursor: changing ? "not-allowed" : "pointer",
                   opacity: changing ? 0.7 : 1,
                 }}
@@ -740,13 +490,10 @@ function PasswordChangeModal({
   );
 }
 
-/* ─── Main component ────────────────────────────────────────────────────────── */
+/* ─── Main component ─────────────────────────────────────────────── */
 export default function Login() {
-  const { theme, updateTheme } = useTheme();
-  const isDark  = theme === "dark";
+  const { theme, isDark, updateTheme, K } = useTokens();
   const navigate = useNavigate();
-
-  const K = dashTokens(isDark);
 
   const [userCode,   setUserCode]   = useState("");
   const [password,   setPassword]   = useState("");
@@ -754,7 +501,6 @@ export default function Login() {
   const [rememberMe, setRememberMe] = useState(false);
   const [error,      setError]      = useState("");
   const [transitioning, setTransitioning] = useState(false);
-  const [authedName, setAuthedName] = useState("");
   const [signingIn,  setSigningIn]  = useState(false);
   const [mounted,    setMounted]    = useState(false);
 
@@ -818,9 +564,10 @@ export default function Login() {
           preferenceValue: theme.charAt(0).toUpperCase() + theme.slice(1),
         });
     } catch { /* non-blocking */ }
-    setAuthedName(userData?.DisplayName || userData?.UserName || userCode.trim());
+
+    // Show the slim top bar completing, then navigate.
     setTransitioning(true);
-    await new Promise(resolve => setTimeout(resolve, 2200));
+    await new Promise(resolve => setTimeout(resolve, 900));
     navigate("/HomePage", { replace: true });
   };
 
@@ -884,88 +631,53 @@ export default function Login() {
 
   return (
     <>
-      <style>{GLOBAL_STYLES}</style>
-      <TransitionOverlay visible={transitioning} displayName={authedName} />
+      {/* Slim top progress bar — shows during sign-in AND during the transition */}
+      <TopProgressBar active={signingIn || transitioning} completing={transitioning} />
 
-      {/* Page */}
-      <div className="auth-page min-h-screen flex items-center justify-center relative transition-colors duration-300"
-        style={{ background: K.bg }}>
+      <DesignPage className="flex items-center justify-center relative">
 
         {/* Aurora wash */}
         <div className="fixed inset-0 pointer-events-none z-0"
           style={{
             backgroundImage: `
-              radial-gradient(700px circle at 8% 0%, ${APPLE.blue}${isDark ? "26" : "30"}, transparent 55%),
-              radial-gradient(650px circle at 92% 10%, ${APPLE.purple}${isDark ? "1a" : "20"}, transparent 55%),
-              radial-gradient(900px circle at 50% 100%, ${APPLE.blue}${isDark ? "14" : "1a"}, transparent 60%)
+              radial-gradient(700px circle at 8% 0%, ${PALETTE.blue}${isDark ? "26" : "30"}, transparent 55%),
+              radial-gradient(650px circle at 92% 10%, ${PALETTE.purple}${isDark ? "1a" : "20"}, transparent 55%),
+              radial-gradient(900px circle at 50% 100%, ${PALETTE.blue}${isDark ? "14" : "1a"}, transparent 60%)
             `,
           }} />
 
         {/* Theme toggle */}
-        <div className="fixed top-4 right-4 z-[100] flex items-center gap-2">
-          {themeSaveStatus.saving && (
-            <span className="text-[11px] flex items-center gap-1" style={{ color: APPLE.blue }}>
-              <Loader2 size={11} style={{ animation: "spinSlow .8s linear infinite" }} /> Saving…
-            </span>
-          )}
-          {themeSaveStatus.saved && (
-            <span className="text-[11px] flex items-center gap-1" style={{ color: APPLE.green }}>
-              <CheckCircle size={11} /> Saved
-            </span>
-          )}
-          {themeSaveStatus.error && (
-            <span className="text-[11px] flex items-center gap-1" style={{ color: APPLE.red }}>
-              <X size={11} /> Error
-            </span>
-          )}
-          <button
-            onClick={handleThemeToggle}
-            title={isDark ? "Switch to Light" : "Switch to Dark"}
-            className="auth-glass w-9 h-9 rounded-[12px] flex items-center justify-center cursor-pointer transition-all duration-200"
-            style={{
-              border: `1px solid ${K.hairline}`,
-              background: K.glass,
-              boxShadow: K.shadow,
-              color: K.muted,
-            }}>
-            {isDark
-              ? <Sun  size={14} color={APPLE.orange} />
-              : <Moon size={14} color={K.muted} />
-            }
-          </button>
-        </div>
+        <ThemeToggle onToggle={handleThemeToggle} status={themeSaveStatus} />
 
         {/* ══ SPLIT CARD ══ */}
-        <div
-          className="auth-glass relative z-10 flex rounded-[22px] overflow-hidden transition-all duration-[550ms]"
+        <GlassCard
+          className="relative z-10 flex overflow-hidden transition-all duration-[550ms]"
           style={{
             width: "min(880px, calc(100vw - 32px))",
             minHeight: "520px",
-            border: `1px solid ${K.hairline}`,
-            boxShadow: K.shadow,
             opacity:   mounted ? 1 : 0,
             transform: mounted ? "translateY(0) scale(1)" : "translateY(22px) scale(.98)",
           }}>
 
           {/* LEFT panel */}
-          <div className="brand-panel flex-shrink-0 min-h-[520px]" style={{ width: "42%" }}>
-            <BrandPanel isDark={isDark} />
+          <div className="hidden sm:block flex-shrink-0 min-h-[520px]" style={{ width: "42%" }}>
+            <BrandPanel />
           </div>
 
           {/* RIGHT: login form */}
-          <div className="flex-1 flex flex-col relative overflow-hidden auth-scroll"
+          <div className="flex-1 flex flex-col relative overflow-hidden ds-scroll"
             style={{ background: K.panel, padding: "48px 44px" }}>
 
             {/* Top accent line */}
             <div className="absolute top-0 left-0 right-0 h-px pointer-events-none"
-              style={{ background: `linear-gradient(90deg, transparent, ${APPLE.blue}55, transparent)` }} />
+              style={{ background: `linear-gradient(90deg, transparent, ${PALETTE.blue}55, transparent)` }} />
 
             {/* Mobile logo row */}
-            <div className="mobile-logo-row hidden items-center gap-3 mb-6">
+            <div className="flex sm:hidden items-center gap-3 mb-6">
               <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 border"
                 style={{
-                  background: `${APPLE.blue}14`,
-                  borderColor: `${APPLE.blue}33`,
+                  background: `${PALETTE.blue}14`,
+                  borderColor: `${PALETTE.blue}33`,
                 }}>
                 <img src={Rebate} alt="Logo" className="w-6 h-6 object-contain" />
               </div>
@@ -975,7 +687,7 @@ export default function Login() {
                 </div>
                 <div className="flex items-center gap-[5px] mt-1">
                   <span className="w-1.5 h-1.5 rounded-full inline-block"
-                    style={{ background: APPLE.green, animation: "pulse2 2s ease-in-out infinite" }} />
+                    style={{ background: PALETTE.green, animation: "pulse2 2s ease-in-out infinite" }} />
                   <span className="text-[10px]" style={{ color: K.muted }}>Secure portal · v1.0</span>
                 </div>
               </div>
@@ -1003,9 +715,9 @@ export default function Login() {
               {error && (
                 <div className="flex items-start gap-2.5 px-3.5 py-2.5 rounded-xl mb-[18px] border text-xs"
                   style={{
-                    background: `${APPLE.red}14`,
-                    borderColor: `${APPLE.red}33`,
-                    color: APPLE.red,
+                    background: `${PALETTE.red}14`,
+                    borderColor: `${PALETTE.red}33`,
+                    color: PALETTE.red,
                     animation: "slideIn .25s ease",
                   }}>
                   <AlertCircle size={13} className="flex-shrink-0 mt-px" />
@@ -1021,12 +733,12 @@ export default function Login() {
               {/* Form */}
               <form onSubmit={handleSubmit} className="flex flex-col gap-3.5">
                 <Field
-                  label="Username" icon={User} isDark={isDark}
+                  label="Username" icon={User}
                   value={userCode} onChange={e => setUserCode(e.target.value)}
                   disabled={signingIn} placeholder="Enter your user ID" autoComplete="username"
                 />
                 <Field
-                  label="Password" icon={Lock} isDark={isDark}
+                  label="Password" icon={Lock}
                   type={showPwd ? "text" : "password"}
                   value={password} onChange={e => setPassword(e.target.value)}
                   disabled={signingIn} placeholder="••••••••" autoComplete="current-password"
@@ -1045,8 +757,8 @@ export default function Login() {
                     className="flex items-center justify-center flex-shrink-0 cursor-pointer transition-all duration-150 p-0 border-0"
                     style={{
                       width: "16px", height: "16px", borderRadius: "4px",
-                      border: `1.5px solid ${rememberMe ? APPLE.blue : K.hairline}`,
-                      background: rememberMe ? APPLE.blue : "transparent",
+                      border: `1.5px solid ${rememberMe ? PALETTE.blue : K.hairline}`,
+                      background: rememberMe ? PALETTE.blue : "transparent",
                     }}>
                     {rememberMe && <CheckCircle size={9} color="#fff" />}
                   </button>
@@ -1054,21 +766,9 @@ export default function Login() {
                 </label>
 
                 {/* Sign In button */}
-                <button type="submit" disabled={signingIn}
-                  className="h-[52px] rounded-[12px] border-none text-white text-sm font-semibold tracking-[0.2px] flex items-center justify-center gap-2 transition-all duration-200 mt-1"
-                  style={{
-                    background: signingIn
-                      ? APPLE.blue
-                      : `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
-                    cursor: signingIn ? "not-allowed" : "pointer",
-                    boxShadow: signingIn ? "none" : `0 8px 24px -8px ${APPLE.blue}88`,
-                    opacity: signingIn ? 0.80 : 1,
-                  }}>
-                  {signingIn
-                    ? <><Loader2 size={15} style={{ animation: "spinSlow .8s linear infinite" }} />Signing in…</>
-                    : <>Sign In <ArrowRight size={14} /></>
-                  }
-                </button>
+                <PrimaryButton type="submit" loading={signingIn} className="mt-1">
+                  {signingIn ? "Signing in…" : (<>Sign In <ArrowRight size={14} /></>)}
+                </PrimaryButton>
               </form>
             </div>
 
@@ -1081,25 +781,12 @@ export default function Login() {
               </span>
             </div>
           </div>
-        </div>
-
-        {/* Responsive breakpoints */}
-        <style>{`
-          @media (min-width: 640px) {
-            .brand-panel     { display: block !important; }
-            .mobile-logo-row { display: none  !important; }
-          }
-          @media (max-width: 639px) {
-            .brand-panel     { display: none  !important; }
-            .mobile-logo-row { display: flex  !important; }
-          }
-        `}</style>
-      </div>
+        </GlassCard>
+      </DesignPage>
 
       {/* Password-change modal */}
       {showModal && tempResult && (
         <PasswordChangeModal
-          isDark={isDark}
           tempResult={tempResult}
           userCode={userCode}
           newPwd={newPwd} setNewPwd={setNewPwd}

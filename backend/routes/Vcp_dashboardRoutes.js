@@ -4259,27 +4259,58 @@ router.get('/metrics', async (req, res) => {
       console.log('❌ PayoutHistory table check/query failed:', tableError.message);
     }
 
-    // Get active customers count - FIXED QUERY
-    let activeCustomers = 0;
-    try {
-      console.log('🔍 Fetching active customers count...');
-      const activeCustomersQuery = `
-        SELECT COUNT(DISTINCT CardCode) as activeCustomers
-        FROM (
-          SELECT CardCode FROM FixCustRebate WHERE CardCode IS NOT NULL AND LTRIM(RTRIM(CardCode)) != ''
-          UNION 
-          SELECT CardCode FROM IncCustRebate WHERE CardCode IS NOT NULL AND LTRIM(RTRIM(CardCode)) != ''
-          UNION 
-          SELECT CardCode FROM PerCustRebate WHERE CardCode IS NOT NULL AND LTRIM(RTRIM(CardCode)) != ''
-        ) AS Customers
-      `;
+// Get active customers count - EXCLUDE INACTIVE REBATE PROGRAMS
+let activeCustomers = 0;
 
-      const activeResult = await pool.request().query(activeCustomersQuery);
-      activeCustomers = activeResult.recordset[0]?.activeCustomers || 0;
-      console.log(`Active customers found: ${activeCustomers}`);
-    } catch (activeError) {
-      console.log('Active customers query failed:', activeError.message);
-    }
+try {
+  console.log('🔍 Fetching active customers from active rebate programs...');
+
+  const activeCustomersQuery = `
+    SELECT COUNT(DISTINCT Customers.CardCode) AS activeCustomers
+    FROM (
+      SELECT F.CardCode
+      FROM FixCustRebate F
+      INNER JOIN RebateProgram RP
+        ON RP.RebateCode = F.RebateCode
+      WHERE F.CardCode IS NOT NULL
+        AND LTRIM(RTRIM(F.CardCode)) <> ''
+        AND RP.IsActive = 1
+
+      UNION
+
+      SELECT I.CardCode
+      FROM IncCustRebate I
+      INNER JOIN RebateProgram RP
+        ON RP.RebateCode = I.RebateCode
+      WHERE I.CardCode IS NOT NULL
+        AND LTRIM(RTRIM(I.CardCode)) <> ''
+        AND RP.IsActive = 1
+
+      UNION
+
+      SELECT P.CardCode
+      FROM PerCustRebate P
+      INNER JOIN RebateProgram RP
+        ON RP.RebateCode = P.RebateCode
+      WHERE P.CardCode IS NOT NULL
+        AND LTRIM(RTRIM(P.CardCode)) <> ''
+        AND RP.IsActive = 1
+    ) AS Customers;
+  `;
+
+  const activeResult = await pool.request().query(activeCustomersQuery);
+
+  activeCustomers =
+    Number(activeResult.recordset[0]?.activeCustomers) || 0;
+
+  console.log(`Active customers found: ${activeCustomers}`);
+
+} catch (activeError) {
+  console.log(
+    'Active customers query failed:',
+    activeError.message
+  );
+}
 
     // Get new customers this month
     let newCustomersThisMonth = 0;

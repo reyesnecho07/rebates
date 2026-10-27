@@ -8,7 +8,7 @@ const RebatePeriodSelector = ({ customerCode, theme, onSelectRebate }) => {
 
   useEffect(() => {
     if (!customerCode) return;
-    fetch(`http://192.168.100.193:3009/api/van/dashboard/customer/${customerCode}/rebate-periods?db=VAN`)
+    fetch(`/api/van/dashboard/customer/${customerCode}/rebate-periods?db=VAN`)
       .then(r => r.json())
       .then(res => { if (res.success) setData(res.data); });
   }, [customerCode]);

@@ -1,7 +1,7 @@
 // frontend/utils/componentRegistry.js
 import axios from 'axios';
+import { API_BASE } from '../config/appConfig';
 
-const API_BASE = 'http://192.168.100.193:3009/api';
 
 /**
  * Register a component with its metadata

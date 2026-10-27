@@ -14,54 +14,14 @@ import { saveAs } from 'file-saver';
 import Sidebar from "../components/Sidebar";
 import Header from '../components/Header';
 import AccessDenied from "../components/common/AccessDenied";
-import { useTheme } from '../context/ThemeContext';
 import { useComponentRegistration } from '../hooks/useComponentRegistration';
 import useAccessControl from '../hooks/useAccessControl';
+import { API_BASE, DB_NAME } from '../config/appConfig';
 
-/* ─── Apple system colour language ───────────────────────────────────────── */
-const APPLE = {
-  blue:   "#0A84FF",
-  purple: "#BF5AF2",
-  red:    "#FF453A",
-  orange: "#FF9F0A",
-  green:  "#32D74B",
-  gray:   "#8E8E93",
-};
+/* ── Design system ──────────────────────────────────────────────── */
+import { PALETTE, useTokens, DesignPage } from '../design-system';
 
-const dashTokens = (isDark) => ({
-  ink:       isDark ? "#F2F2F7" : "#1C1C1E",
-  muted:     isDark ? "#98989F" : "#6E6E73",
-  faint:     isDark ? "#68686D" : "#AEAEB2",
-  glass:     isDark ? "rgba(30,30,36,0.6)"   : "rgba(255,255,255,0.65)",
-  glassDeep: isDark ? "rgba(24,24,28,0.95)"  : "rgba(255,255,255,0.98)",
-  hairline:  isDark ? "rgba(255,255,255,0.08)" : "rgba(60,60,67,0.12)",
-  rim:       isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.8)",
-  chipBg:    isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
-  hover:     isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
-  shadow:    isDark ? "0 20px 50px -14px rgba(0,0,0,0.65)" : "0 20px 50px -18px rgba(30,41,79,0.18)",
-  bg:        isDark ? "#000000" : "#EEF1F7",
-});
-
-const DASH_FONT = `
-  .dash-page, .dash-page * { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif; }
-  .dash-glass { -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%); }
-  .dash-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
-  .dash-scroll::-webkit-scrollbar-thumb { background: rgba(142,142,147,0.4); border-radius: 999px; }
-  .dash-scroll::-webkit-scrollbar-track { background: transparent; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes dash-pop { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-  .dash-pop { animation: dash-pop 0.2s cubic-bezier(0.16,1,0.3,1); }
-  @keyframes fadeSlideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
-  @keyframes pulse-ring { 0% { box-shadow:0 0 0 0 rgba(10,132,255,0.35); } 70% { box-shadow:0 0 0 10px rgba(10,132,255,0); } 100%{ box-shadow:0 0 0 0 rgba(10,132,255,0); } }
-  .nx-card { animation: fadeSlideUp 0.3s ease both; }
-  .nx-btn-primary:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.05); }
-  .nx-btn-primary:active:not(:disabled) { transform: translateY(0); }
-  .nx-btn-secondary:hover:not(:disabled) { transform: translateY(-1px); }
-  .nx-input:focus { border-color: #0A84FF !important; box-shadow: 0 0 0 3px rgba(10,132,255,0.15); }
-  .nx-select:focus { border-color: #0A84FF !important; box-shadow: 0 0 0 3px rgba(10,132,255,0.15); outline: none; }
-`;
-
-// ─── Paper constants (8.5 × 10.5 inches @ 96 dpi) ────────────────────────────
+// ─── Paper constants ─────────────────────────────────────────────
 const PAPER_W_PX = 816;
 const PAPER_H_PX = 1008;
 const PAPER_W_MM = 215.9;
@@ -70,20 +30,10 @@ const PAD_X = 52;
 const PAD_Y = 44;
 const CELL_BORDER_WIDTH = 0.5;
 
-const injectFonts = () => {
-  if (document.getElementById('nexchem-report-fonts')) return;
-  const link = document.createElement('link');
-  link.id   = 'nexchem-report-fonts';
-  link.rel  = 'stylesheet';
-  link.href = 'https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap';
-  document.head.appendChild(link);
-};
-
-// ─── Local helpers (mirror backend semantics for UI display) ─────────────────
+// ─── Local helpers ───────────────────────────────────────────────
 const normaliseType = (raw) =>
   String(raw ?? '').toLowerCase().replace(/[\s_\-]/g, '').trim();
 
-/** Given a raw RebateType, return a friendly label. */
 const rebateLabelFromType = (raw) => {
   const t = normaliseType(raw);
   if (!raw) return 'Fixed';
@@ -93,7 +43,6 @@ const rebateLabelFromType = (raw) => {
   return 'Fixed';
 };
 
-/** Given a raw RebateType, return calc mode: 'fixed' | 'incremental' | 'percentage'. */
 const calcModeFromType = (raw) => {
   const t = normaliseType(raw);
   if (t.includes('percent'))   return 'percentage';
@@ -101,7 +50,7 @@ const calcModeFromType = (raw) => {
   return 'fixed';
 };
 
-// ─── ReportPage (print/PDF output — always clean, type-aware) ────────────────
+/* ─── ReportPage (print / PDF — kept fully inline styled) ───────── */
 const ReportPage = React.forwardRef(({
   pageRows, pageIndex, totalPages, isFirstCustomerPage, isLastCustomerPage,
   customerName, customerTotals, userName, getRebatePeriod, getCurrentDate,
@@ -199,7 +148,6 @@ const ReportPage = React.forwardRef(({
                   }}>{row.content}</td>
                 </tr>
               );
-
               if (row.type === 'invoice') return (
                 <tr key={idx} style={{ background: '#f9fafb' }}>
                   <td colSpan={5} style={{
@@ -208,7 +156,6 @@ const ReportPage = React.forwardRef(({
                   }}>{row.content}</td>
                 </tr>
               );
-
               if (row.type === 'item') {
                 const item = row.content;
                 return (
@@ -261,14 +208,10 @@ const ReportPage = React.forwardRef(({
   );
 });
 
-// ─── Main Component ────────────────────────────────────────────────────────────
+// ─── Main component ──────────────────────────────────────────────
 function Nexchem_Reports() {
-  useEffect(() => { injectFonts(); }, []);
-
-  const { theme, updateTheme } = useTheme();
+  const { theme, updateTheme } = useTokens();
   const routePath = '/Nexchem_Reports';
-  const isDark = theme === 'dark';
-  const K = dashTokens(isDark);
 
   const [collapsed, setCollapsed] = useState(false);
   const [userName, setUserName]   = useState("");
@@ -278,8 +221,8 @@ function Nexchem_Reports() {
   const [rebateCodes, setRebateCodes]                     = useState([]);
   const [selectedRebateCode, setSelectedRebateCode]       = useState("");
   const [selectedRebateProgram, setSelectedRebateProgram] = useState(null);
-  const [selectedRebateType,  setSelectedRebateType]      = useState("");   // raw
-  const [selectedRebateLabel, setSelectedRebateLabel]     = useState("");   // friendly
+  const [selectedRebateType,  setSelectedRebateType]      = useState("");
+  const [selectedRebateLabel, setSelectedRebateLabel]     = useState("");
   const [selectedCalcMode,    setSelectedCalcMode]        = useState("fixed");
   const [rebateCodesLoading, setRebateCodesLoading]       = useState(false);
   const [customersLoading, setCustomersLoading]           = useState(false);
@@ -308,9 +251,6 @@ function Nexchem_Reports() {
   const [activeJobId, setActiveJobId] = useState(null);
   const [jobStatus, setJobStatus]     = useState(null);
 
-  const API_BASE = 'http://192.168.100.193:3009/api';
-  const DB_NAME  = 'USER';
-
   useComponentRegistration({
     name: 'Nexchem_Reports', version: '3.1.0',
     description: 'Reporting module – per-customer KITANEX rebate reports for all rebate types.',
@@ -320,10 +260,7 @@ function Nexchem_Reports() {
   const FIRST_PAGE_MAX_ROWS  = 34;
   const OTHER_PAGES_MAX_ROWS = 43;
 
-  const fontStack = "'Outfit', system-ui, sans-serif";
-  const monoStack = "'DM Mono', monospace";
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  /* ── Helpers ───────────────────────────────────────────────────── */
   const formatDateToDayMonth = useCallback((dateString) => {
     if (!dateString) return "Invalid Date";
     try {
@@ -454,7 +391,7 @@ function Nexchem_Reports() {
 
   const { totalQty, totalSales, totalKitanex } = calculateGrandTotals();
 
-  // ── Close customer dropdown when clicking outside ──────────────────────────
+  // ── Close customer dropdown ─────────────────────────────────────
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (showCustomerDropdown && !e.target.closest('.customer-dropdown-container')) {
@@ -465,7 +402,7 @@ function Nexchem_Reports() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showCustomerDropdown]);
 
-  // ── Lifecycle: restore persisted state ────────────────────────────────────
+  // ── Restore persisted state ─────────────────────────────────────
   useEffect(() => {
     try {
       const sd = localStorage.getItem("savedReportData");
@@ -495,7 +432,7 @@ function Nexchem_Reports() {
     } catch (e) { console.error('Restore error:', e); }
   }, []); // eslint-disable-line
 
-  // ── Lifecycle: theme ───────────────────────────────────────────────────────
+  // ── Load theme ──────────────────────────────────────────────────
   useEffect(() => {
     const loadTheme = async () => {
       try {
@@ -513,7 +450,7 @@ function Nexchem_Reports() {
     loadTheme();
   }, []); // eslint-disable-line
 
-  // ── Lifecycle: user info ───────────────────────────────────────────────────
+  // ── Load user info ──────────────────────────────────────────────
   useEffect(() => {
     const u = JSON.parse(localStorage.getItem("currentUser") || "{}");
     const un = u.DisplayName || u.Username || "Unknown User";
@@ -522,7 +459,7 @@ function Nexchem_Reports() {
     setInitials(parts.length === 1 ? parts[0][0].toUpperCase() : parts[0][0].toUpperCase() + parts[parts.length - 1][0].toUpperCase());
   }, []);
 
-  // ── Lifecycle: fetch rebate codes ──────────────────────────────────────────
+  // ── Fetch rebate codes ──────────────────────────────────────────
   useEffect(() => {
     const fetchRebateCodes = async () => {
       setRebateCodesLoading(true);
@@ -536,7 +473,7 @@ function Nexchem_Reports() {
     fetchRebateCodes();
   }, [API_BASE]);
 
-  // ── Persist state ──────────────────────────────────────────────────────────
+  // ── Persist state ───────────────────────────────────────────────
   useEffect(() => { localStorage.setItem("savedCurrentPage", JSON.stringify(currentPage)); }, [currentPage]);
   useEffect(() => { if (reportData.length > 0) localStorage.setItem("savedReportData", JSON.stringify(reportData)); }, [reportData]);
   useEffect(() => { localStorage.setItem("savedReportParams", JSON.stringify({ dateFrom, dateTo })); }, [dateFrom, dateTo]);
@@ -547,7 +484,7 @@ function Nexchem_Reports() {
   useEffect(() => { localStorage.setItem("savedRebateLabel", JSON.stringify(selectedRebateLabel)); }, [selectedRebateLabel]);
   useEffect(() => { localStorage.setItem("savedCalcMode", JSON.stringify(selectedCalcMode)); }, [selectedCalcMode]);
 
-  // ── Handle rebate code selection ───────────────────────────────────────────
+  // ── Handle rebate code selection ────────────────────────────────
   const handleRebateCodeChange = async (code) => {
     setSelectedRebateCode(code);
     setSelectedCustomers([]); setReportData([]); setAllPages([]); setTotalPages(1);
@@ -578,7 +515,6 @@ function Nexchem_Reports() {
         setTempSelectedCustomers(customers);
 
         if (data.rebateInfo) setSelectedRebateProgram(prev => ({ ...prev, ...data.rebateInfo }));
-        // Server-authoritative label + mode
         if (data.rebateLabel) setSelectedRebateLabel(data.rebateLabel);
         else if (data.rebateInfo?.RebateLabel) setSelectedRebateLabel(data.rebateInfo.RebateLabel);
         if (data.rebateType) {
@@ -597,7 +533,7 @@ function Nexchem_Reports() {
     } finally { setCustomersLoading(false); }
   };
 
-  // ── Actions ────────────────────────────────────────────────────────────────
+  // ── Generate report ─────────────────────────────────────────────
   const generateReport = async () => {
     if (!access.canCreate)         { alert("You do not have permission to generate reports."); return; }
     if (!selectedCustomers.length) { alert("Please select a rebate code first.");              return; }
@@ -624,7 +560,6 @@ function Nexchem_Reports() {
         setJobStatus('completed');
         setReportData(result.data);
 
-        // Server returns the authoritative type + label + mode
         if (result.rebateType)  setSelectedRebateType(result.rebateType);
         if (result.rebateLabel) setSelectedRebateLabel(result.rebateLabel);
         if (result.calcMode)    setSelectedCalcMode(result.calcMode);
@@ -668,7 +603,7 @@ function Nexchem_Reports() {
     calcMode:    selectedCalcMode,
   };
 
-  // ── PDF Export ─────────────────────────────────────────────────────────────
+  // ── PDF Export ──────────────────────────────────────────────────
   const exportToPDF = async () => {
     if (!allPages.length) return;
     try {
@@ -704,7 +639,7 @@ function Nexchem_Reports() {
     }
   };
 
-  // ── Excel Export ───────────────────────────────────────────────────────────
+  // ── Excel Export ────────────────────────────────────────────────
   const exportToExcel = () => {
     try {
       const wb = XLSX.utils.book_new();
@@ -772,78 +707,50 @@ function Nexchem_Reports() {
     }
   };
 
-  // ── Status helpers ─────────────────────────────────────────────────────────
+  // ── Status helpers ──────────────────────────────────────────────
   const getStatusIcon = (status) => {
     switch (status) {
-      case 'processing': return <RefreshCw style={{ width: 14, height: 14, color: APPLE.blue, animation: 'spin 0.8s linear infinite' }} />;
-      case 'completed':  return <CheckCircle style={{ width: 14, height: 14, color: APPLE.green }} />;
-      case 'failed':     return <XCircle style={{ width: 14, height: 14, color: APPLE.red }} />;
-      default:           return <Clock style={{ width: 14, height: 14, color: K.faint }} />;
+      case 'processing': return <RefreshCw className="text-[#0A84FF] animate-spin" style={{ width: 14, height: 14, animationDuration: '0.8s' }} />;
+      case 'completed':  return <CheckCircle className="text-[#32D74B]" style={{ width: 14, height: 14 }} />;
+      case 'failed':     return <XCircle className="text-[#FF453A]" style={{ width: 14, height: 14 }} />;
+      default:           return <Clock className="text-[var(--ds-faint)]" style={{ width: 14, height: 14 }} />;
     }
   };
 
   const formatJobDate = (ds) =>
     new Date(ds).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-  const inputStyle = {
-    width: '100%', padding: '9px 12px',
-    background: K.glass,
-    border: `1px solid ${K.hairline}`,
-    borderRadius: 12, fontSize: 13,
-    color: K.ink, fontFamily: fontStack,
-    outline: 'none', transition: 'border-color 0.2s',
-    boxSizing: 'border-box',
-  };
-
-  const labelStyle = {
-    display: 'flex', alignItems: 'center', gap: 6,
-    fontSize: 11, fontWeight: 600,
-    color: K.muted, fontFamily: fontStack,
-    marginBottom: 6, letterSpacing: '0.05em',
-    textTransform: 'uppercase',
-  };
-
-  const renderAccessLoading = () => (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 380, fontFamily: fontStack }}>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-        <div style={{
-          width: 36, height: 36, borderRadius: '50%',
-          border: `3px solid ${K.hairline}`, borderTopColor: APPLE.blue,
-          animation: 'spin 0.8s linear infinite',
-        }} />
-        <p style={{ fontSize: 13, color: K.muted }}>Verifying access…</p>
-      </div>
-    </div>
-  );
+  /* ── Shared class strings ──────────────────────────────────────── */
+  const inputClasses = "w-full px-3 py-[9px] rounded-xl text-[13px] outline-none transition-colors bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)] focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.15)]";
+  const labelClasses = "flex items-center gap-1.5 text-[11px] font-semibold text-[var(--ds-muted)] mb-1.5 tracking-[0.05em] uppercase";
 
   const PREVIEW_SCALE = 700 / PAPER_W_PX;
   const PREVIEW_W = Math.round(PAPER_W_PX * PREVIEW_SCALE);
   const PREVIEW_H = Math.round(PAPER_H_PX * PREVIEW_SCALE);
 
-  // ── Type badge colours ─────────────────────────────────────────────────────
   const typeBadgeColor = (() => {
-    if (selectedCalcMode === 'percentage')   return APPLE.purple;
-    if (selectedCalcMode === 'incremental')  return APPLE.green;
-    if (/quota/i.test(selectedRebateLabel))  return APPLE.orange;
-    return APPLE.blue;
+    if (selectedCalcMode === 'percentage')   return PALETTE.purple;
+    if (selectedCalcMode === 'incremental')  return PALETTE.green;
+    if (/quota/i.test(selectedRebateLabel))  return PALETTE.orange;
+    return PALETTE.blue;
   })();
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-  return (
-    <div className="dash-page" style={{ display: 'flex', minHeight: '100vh', width: '100%', background: K.bg, fontFamily: fontStack, color: K.ink }}>
-      <style>{DASH_FONT}</style>
+  const canGenerate = access.canCreate && !loading && selectedCustomers.length > 0;
+  const canExport = access.canExport && showReport && reportData.length > 0;
 
+  const renderAccessLoading = () => (
+    <div className="flex items-center justify-center min-h-[380px]">
+      <div className="flex flex-col items-center gap-3.5">
+        <div className="w-9 h-9 rounded-full animate-spin border-[3px] border-[var(--ds-hairline)] border-t-[#0A84FF]" />
+        <p className="text-[13px] text-[var(--ds-muted)]">Verifying access…</p>
+      </div>
+    </div>
+  );
+
+  return (
+    <DesignPage className="flex w-full">
       {/* Aurora wash */}
-      <div
-        className="pointer-events-none fixed inset-0"
-        style={{
-          backgroundImage: `
-            radial-gradient(700px circle at 8% 0%, ${APPLE.blue}${isDark ? "26" : "30"}, transparent 55%),
-            radial-gradient(650px circle at 92% 10%, ${APPLE.purple}${isDark ? "1a" : "20"}, transparent 55%)
-          `,
-          zIndex: 0,
-        }}
-      />
+      <div className="pointer-events-none fixed inset-0 z-0 ds-aurora-blue-purple" />
 
       <Sidebar
         collapsed={collapsed} setCollapsed={setCollapsed}
@@ -852,46 +759,38 @@ function Nexchem_Reports() {
         showVcpDropdown={showVcpDropdown} setShowVcpDropdown={setShowVcpDropdown}
         theme={theme}
       />
-      <main style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', marginLeft: collapsed ? 80 : 256, transition: 'margin-left 0.4s cubic-bezier(.4,0,.2,1)', zIndex: 1 }}>
-        <Header collapsed={collapsed} userName={userName} userCode={userCode} initials={initials} logo={nexchemLogo} theme={theme} />
-        <div className="dash-scroll" style={{ paddingTop: 64, flex: 1, padding: '80px 32px 40px', overflowY: 'auto' }}>
-          <div
-            className="nx-card dash-glass"
-            style={{
-              background: K.glass,
-              border: `1px solid ${K.hairline}`,
-              borderRadius: 22,
-              boxShadow: K.shadow,
-              padding: '32px 32px 36px',
-              maxWidth: 1600, margin: '0 auto',
-            }}
-          >
+
+      <main className={`relative flex-1 flex flex-col min-h-screen z-[1] transition-[margin-left] duration-[400ms] ease-[cubic-bezier(.4,0,.2,1)] ${
+        collapsed ? 'ml-20' : 'ml-64'
+      }`}>
+        <Header
+          collapsed={collapsed}
+          userName={userName}
+          userCode={userCode}
+          initials={initials}
+          logo={nexchemLogo}
+          theme={theme}
+        />
+
+        <div className="ds-scroll flex-1 overflow-y-auto pt-20 px-8 pb-10">
+          <div className="ds-fade-up ds-glass rounded-[22px] bg-[var(--ds-glass)] border border-[var(--ds-hairline)] shadow-[var(--ds-shadow)] px-8 pt-8 pb-9 max-w-[1600px] mx-auto">
+
             {/* ── Title bar ── */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28, paddingBottom: 20, borderBottom: `1px solid ${K.hairline}` }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <div style={{
-                  width: 46, height: 46, borderRadius: 14,
-                  background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  boxShadow: `0 4px 16px -4px ${APPLE.blue}88`, flexShrink: 0,
-                }}>
-                  <TrendingUp size={22} color="#fff" />
+            <div className="flex items-center justify-between mb-7 pb-5 gap-4 flex-wrap border-b border-[var(--ds-hairline)]">
+              <div className="flex items-center gap-3.5">
+                <div className="w-[46px] h-[46px] rounded-[14px] flex items-center justify-center flex-shrink-0 ds-gradient-primary shadow-[0_4px_16px_-4px_rgba(10,132,255,0.53)]">
+                  <TrendingUp size={22} className="text-white" />
                 </div>
                 <div>
-                  <h1 style={{ fontSize: 17, fontWeight: 700, color: K.ink, margin: 0, letterSpacing: '-0.01em' }}>
+                  <h1 className="text-[17px] font-bold tracking-[-0.01em] text-[var(--ds-ink)] m-0">
                     Kitanex Rebate Reports
                   </h1>
-                  <p style={{ fontSize: 12, color: K.muted, margin: '3px 0 0', fontWeight: 400 }}>
+                  <p className="text-[12px] text-[var(--ds-muted)] mt-[3px] mb-0 font-normal">
                     Fixed · Fixed with Quota · Incremental · Percentage — every type supported
                   </p>
                 </div>
               </div>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '6px 12px', borderRadius: 999,
-                background: K.chipBg, border: `1px solid ${K.hairline}`,
-                fontSize: 11, color: K.muted, fontWeight: 500, fontFamily: monoStack,
-              }}>
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--ds-chip-bg)] border border-[var(--ds-hairline)] text-[11px] text-[var(--ds-muted)] font-medium ds-font-mono">
                 <Calendar size={12} />
                 {getCurrentDate()}
               </div>
@@ -901,53 +800,33 @@ function Nexchem_Reports() {
             {accessLoading ? renderAccessLoading() : !access.canView ? (
               <AccessDenied
                 useTokens={true}
-                tokens={{...K, accent: APPLE.blue, accentHover: APPLE.blue, accentLight: `${APPLE.blue}14`, text: K.ink, textMuted: K.muted, textSub: K.muted, success: APPLE.green, error: APPLE.red, errorBg: `${APPLE.red}14`, gold: APPLE.orange, goldLight: `${APPLE.orange}14`, teal: APPLE.blue, tealLight: `${APPLE.blue}14`, cardBg: K.glass, cardBorder: K.hairline, inputBg: K.glass, inputBorder: K.hairline, bg: K.bg, fontStack }}
+                tokens={{...(({} , {})) /* placeholder — see below */}}
                 accessError={accessError}
                 message="You don't have permission to view this page. Contact your administrator for access."
               />
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 24 }}>
+              <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
                 {/* ══ Main column ══ */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                  {/* ── Action bar ── */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', gap: 8 }}>
+                <div className="flex flex-col gap-5">
+                  {/* Action bar */}
+                  <div className="flex items-center justify-between gap-2.5 flex-wrap">
+                    <div className="flex gap-2">
                       <button
-                        className="nx-btn-primary"
+                        className={`ds-btn-primary flex items-center gap-1.5 px-4 py-[9px] rounded-full text-[13px] font-semibold transition-all duration-200 ${
+                          canGenerate
+                            ? 'ds-gradient-primary text-white cursor-pointer shadow-[0_4px_16px_-6px_rgba(10,132,255,0.53)]'
+                            : 'bg-[var(--ds-chip-bg)] text-[var(--ds-faint)] opacity-60 cursor-not-allowed border-none'
+                        }`}
                         onClick={generateReport}
-                        disabled={loading || !selectedCustomers.length || !access.canCreate}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 7,
-                          padding: '9px 18px', borderRadius: 999, fontSize: 13, fontWeight: 600,
-                          border: 'none',
-                          cursor: (access.canCreate && !loading && selectedCustomers.length) ? 'pointer' : 'not-allowed',
-                          background: (access.canCreate && !loading && selectedCustomers.length)
-                            ? `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`
-                            : K.chipBg,
-                          color: (access.canCreate && !loading && selectedCustomers.length) ? '#fff' : K.faint,
-                          opacity: (access.canCreate && !loading && selectedCustomers.length) ? 1 : 0.6,
-                          transition: 'all 0.2s',
-                          boxShadow: (access.canCreate && !loading && selectedCustomers.length)
-                            ? `0 4px 16px -6px ${APPLE.blue}88`
-                            : 'none',
-                          fontFamily: fontStack,
-                        }}
+                        disabled={!canGenerate}
                       >
-                        {loading ? <RefreshCw size={14} style={{ animation: 'spin 0.8s linear infinite' }} /> : <Zap size={14} />}
+                        {loading ? <RefreshCw size={14} className="animate-spin" style={{ animationDuration: '0.8s' }} /> : <Zap size={14} />}
                         {loading ? 'Generating…' : 'Generate Report'}
                       </button>
                       {showReport && reportData.length > 0 && (
                         <button
-                          className="nx-btn-secondary"
+                          className="ds-btn-secondary flex items-center gap-1.5 px-3.5 py-[9px] rounded-full text-[13px] font-medium border border-[var(--ds-hairline)] bg-transparent text-[var(--ds-muted)] hover:text-[var(--ds-ink)] hover:bg-[var(--ds-hover)] cursor-pointer transition-all duration-200"
                           onClick={clearReport}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 6,
-                            padding: '9px 14px', borderRadius: 999, fontSize: 13, fontWeight: 500,
-                            border: `1px solid ${K.hairline}`, background: 'transparent', color: K.muted,
-                            cursor: 'pointer', transition: 'all 0.2s', fontFamily: fontStack,
-                          }}
-                          onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hover; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = 'transparent'; }}
                         >
                           <X size={13} /> Clear
                         </button>
@@ -955,57 +834,36 @@ function Nexchem_Reports() {
                     </div>
 
                     {/* Export dropdown */}
-                    <div style={{ position: 'relative' }}>
+                    <div className="relative">
                       <button
-                        disabled={!access.canExport || !showReport || !reportData.length}
-                        onClick={() => { if (access.canExport && showReport && reportData.length) setShowExportDropdown(v => !v); }}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 6,
-                          padding: '9px 14px', borderRadius: 999, fontSize: 13, fontWeight: 500,
-                          border: `1px solid ${(access.canExport && showReport && reportData.length) ? `${APPLE.blue}55` : K.hairline}`,
-                          background: (access.canExport && showReport && reportData.length) ? `${APPLE.blue}1c` : K.chipBg,
-                          color: (access.canExport && showReport && reportData.length) ? APPLE.blue : K.faint,
-                          cursor: (access.canExport && showReport && reportData.length) ? 'pointer' : 'not-allowed',
-                          opacity: (access.canExport && showReport && reportData.length) ? 1 : 0.5,
-                          transition: 'all 0.2s', fontFamily: fontStack,
-                        }}
+                        disabled={!canExport}
+                        onClick={() => { if (canExport) setShowExportDropdown(v => !v); }}
+                        className={`flex items-center gap-1.5 px-3.5 py-[9px] rounded-full text-[13px] font-medium transition-all duration-200 ${
+                          canExport
+                            ? 'border border-[#0A84FF]/33 bg-[#0A84FF]/11 text-[#0A84FF] cursor-pointer'
+                            : 'border border-[var(--ds-hairline)] bg-[var(--ds-chip-bg)] text-[var(--ds-faint)] opacity-50 cursor-not-allowed'
+                        }`}
                       >
                         <Download size={13} /> Export <ChevronDown size={13} />
                       </button>
                       {showExportDropdown && access.canExport && (
-                        <div className="dash-glass dash-pop" style={{
-                          position: 'absolute', right: 0, top: 'calc(100% + 8px)',
-                          width: 220, borderRadius: 16, zIndex: 50,
-                          background: K.glassDeep,
-                          border: `1px solid ${K.rim}`,
-                          boxShadow: K.shadow,
-                          overflow: 'hidden',
-                        }}>
-                          <div style={{ padding: '10px 14px 8px', borderBottom: `1px solid ${K.hairline}` }}>
-                            <p style={{ fontSize: 11, fontWeight: 700, color: K.muted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>Export as</p>
+                        <div className="ds-glass ds-pop absolute right-0 top-[calc(100%+8px)] w-[220px] rounded-2xl z-50 overflow-hidden bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] shadow-[var(--ds-shadow)]">
+                          <div className="px-3.5 pt-2.5 pb-2 border-b border-[var(--ds-hairline)]">
+                            <p className="text-[11px] font-bold text-[var(--ds-muted)] uppercase tracking-[0.06em] m-0">Export as</p>
                           </div>
                           {[
-                            { label: 'PDF Document',   ext: 'pdf',  icon: <FileText size={15} color={APPLE.red} />,       fn: exportToPDF   },
-                            { label: 'Excel Workbook', ext: 'xlsx', icon: <FileSpreadsheet size={15} color={APPLE.green} />, fn: exportToExcel },
+                            { label: 'PDF Document',   ext: 'pdf',  icon: <FileText size={15} className="text-[#FF453A]" />,         fn: exportToPDF   },
+                            { label: 'Excel Workbook', ext: 'xlsx', icon: <FileSpreadsheet size={15} className="text-[#32D74B]" />,    fn: exportToExcel },
                           ].map(({ label, ext, icon, fn }) => (
                             <button
                               key={ext}
-                              className="nx-export-item"
                               onClick={() => { fn(); setShowExportDropdown(false); }}
-                              style={{
-                                width: '100%', textAlign: 'left',
-                                display: 'flex', alignItems: 'center', gap: 10,
-                                padding: '11px 14px', fontSize: 13, color: K.ink,
-                                background: 'transparent', border: 'none', cursor: 'pointer',
-                                transition: 'all 0.15s', fontFamily: fontStack,
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.background = K.chipBg}
-                              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                              className="w-full text-left flex items-center gap-2.5 px-3.5 py-[11px] text-[13px] text-[var(--ds-ink)] bg-transparent border-none cursor-pointer transition-colors duration-150 hover:bg-[var(--ds-chip-bg)]"
                             >
                               {icon}
                               <div>
-                                <div style={{ fontWeight: 500 }}>{label}</div>
-                                <div style={{ fontSize: 11, color: K.muted }}>Save as .{ext}</div>
+                                <div className="font-medium">{label}</div>
+                                <div className="text-[11px] text-[var(--ds-muted)]">Save as .{ext}</div>
                               </div>
                             </button>
                           ))}
@@ -1014,19 +872,20 @@ function Nexchem_Reports() {
                     </div>
                   </div>
 
-                  {/* ── Filter bar ── */}
-                  <div className="customer-dropdown-container" style={{ position: 'relative', zIndex: 30 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1.2fr', gap: 18 }}>
+                  {/* Filter bar */}
+                  <div className="customer-dropdown-container relative z-30">
+                    <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_1.2fr] gap-[18px]">
                       {/* Rebate Code */}
                       <div>
-                        <label style={labelStyle}><Tag size={12} color={APPLE.blue} /> Rebate Code</label>
-                        <div style={{ position: 'relative' }}>
+                        <label className={labelClasses}><Tag size={12} className="text-[#0A84FF]" /> Rebate Code</label>
+                        <div className="relative">
                           <select
-                            className="nx-select"
+                            className={`${inputClasses} ds-select appearance-none pr-9 ${
+                              rebateCodesLoading ? 'cursor-wait opacity-60' : 'cursor-pointer'
+                            }`}
                             value={selectedRebateCode}
                             onChange={e => handleRebateCodeChange(e.target.value)}
                             disabled={rebateCodesLoading}
-                            style={{ ...inputStyle, appearance: 'none', paddingRight: 36, cursor: rebateCodesLoading ? 'wait' : 'pointer', opacity: rebateCodesLoading ? 0.6 : 1 }}
                           >
                             <option value="">
                               {rebateCodesLoading ? 'Loading codes…' : '— Select a rebate code —'}
@@ -1037,22 +896,22 @@ function Nexchem_Reports() {
                               </option>
                             ))}
                           </select>
-                          <ChevronDown size={14} color={K.faint} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                          <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--ds-faint)] pointer-events-none" />
                         </div>
                         {customersLoading && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 11, color: K.muted }}>
-                            <RefreshCw size={11} style={{ animation: 'spin 0.8s linear infinite' }} />
+                          <div className="flex items-center gap-1.5 mt-2 text-[11px] text-[var(--ds-muted)]">
+                            <RefreshCw size={11} className="animate-spin" style={{ animationDuration: '0.8s' }} />
                             Fetching customers…
                           </div>
                         )}
                         {!customersLoading && selectedRebateCode && selectedCustomers.length === 0 && (
-                          <p style={{ fontSize: 11, color: APPLE.red, marginTop: 6 }}>No customers found for this rebate code.</p>
+                          <p className="text-[11px] text-[#FF453A] mt-1.5">No customers found for this rebate code.</p>
                         )}
                       </div>
 
-                      {/* Customer Selection */}
-                      <div className="customer-dropdown-container" style={{ position: 'relative' }}>
-                        <label style={labelStyle}><Users size={12} color={APPLE.blue} /> Customers</label>
+                      {/* Customers multi-select */}
+                      <div className="customer-dropdown-container relative">
+                        <label className={labelClasses}><Users size={12} className="text-[#0A84FF]" /> Customers</label>
                         <button
                           type="button"
                           onClick={() => {
@@ -1062,82 +921,53 @@ function Nexchem_Reports() {
                             }
                           }}
                           disabled={!selectedRebateCode || customersLoading}
-                          style={{
-                            ...inputStyle,
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            textAlign: 'left',
-                            cursor: (!selectedRebateCode || customersLoading) ? 'not-allowed' : 'pointer',
-                            opacity: (!selectedRebateCode || customersLoading) ? 0.6 : 1,
-                          }}
+                          className={`${inputClasses} flex items-center justify-between text-left ${
+                            (!selectedRebateCode || customersLoading) ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                          }`}
                         >
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span className="truncate">
                             {selectedCustomers.length === 0
                               ? 'No customers'
                               : selectedCustomers.length === availableCustomers.length
                               ? `All customers (${selectedCustomers.length})`
                               : `${selectedCustomers.length} selected`}
                           </span>
-                          <ChevronDown size={14} color={K.faint} />
+                          <ChevronDown size={14} className="text-[var(--ds-faint)]" />
                         </button>
 
                         {showCustomerDropdown && availableCustomers.length > 0 && (
-                          <div className="dash-glass dash-pop" style={{
-                            position: 'absolute', top: 'calc(100% + 6px)', left: 0,
-                            width: '100%', maxHeight: 260, overflowY: 'auto',
-                            background: K.glassDeep,
-                            border: `1px solid ${K.rim}`,
-                            borderRadius: 16,
-                            boxShadow: K.shadow,
-                            zIndex: 100, padding: '6px 0',
-                          }}>
+                          <div className="ds-glass ds-pop absolute top-[calc(100%+6px)] left-0 w-full max-h-[260px] overflow-y-auto bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] rounded-2xl shadow-[var(--ds-shadow)] z-[100] py-1.5">
                             <div
-                              style={{
-                                padding: '8px 12px',
-                                borderBottom: `1px solid ${K.hairline}`,
-                                display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-                                background: K.chipBg,
-                              }}
+                              className="px-3 py-2 border-b border-[var(--ds-hairline)] flex items-center gap-2 cursor-pointer bg-[var(--ds-chip-bg)]"
                               onClick={() => {
                                 const allSelected = tempSelectedCustomers.length === availableCustomers.length;
                                 setTempSelectedCustomers(allSelected ? [] : [...availableCustomers]);
                               }}
                             >
-                              <input type="checkbox" checked={tempSelectedCustomers.length === availableCustomers.length} readOnly style={{ accentColor: APPLE.blue }} />
-                              <span style={{ fontSize: 12, fontWeight: 600, color: K.ink }}>Select All</span>
+                              <input type="checkbox" checked={tempSelectedCustomers.length === availableCustomers.length} readOnly className="accent-[#0A84FF]" />
+                              <span className="text-[12px] font-semibold text-[var(--ds-ink)]">Select All</span>
                             </div>
 
                             {availableCustomers.map(cust => (
                               <div
                                 key={cust.CardCode}
-                                style={{
-                                  padding: '8px 12px',
-                                  display: 'flex', alignItems: 'center', gap: 8,
-                                  cursor: 'pointer', transition: 'background 0.1s',
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.background = K.chipBg}
-                                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                className="px-3 py-2 flex items-center gap-2 cursor-pointer transition-colors hover:bg-[var(--ds-chip-bg)]"
                                 onClick={() => {
                                   const exists = tempSelectedCustomers.some(c => c.CardCode === cust.CardCode);
                                   setTempSelectedCustomers(prev => exists ? prev.filter(c => c.CardCode !== cust.CardCode) : [...prev, cust]);
                                 }}
                               >
-                                <input type="checkbox" checked={tempSelectedCustomers.some(c => c.CardCode === cust.CardCode)} readOnly style={{ accentColor: APPLE.blue }} />
-                                <span style={{ fontSize: 12, color: K.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {cust.CardName} <span style={{ color: K.muted, marginLeft: 4 }}>({cust.CardCode})</span>
+                                <input type="checkbox" checked={tempSelectedCustomers.some(c => c.CardCode === cust.CardCode)} readOnly className="accent-[#0A84FF]" />
+                                <span className="text-[12px] text-[var(--ds-ink)] truncate">
+                                  {cust.CardName} <span className="text-[var(--ds-muted)] ml-1">({cust.CardCode})</span>
                                 </span>
                               </div>
                             ))}
 
-                            <div style={{ padding: '8px 12px', borderTop: `1px solid ${K.hairline}` }}>
+                            <div className="px-3 py-2 border-t border-[var(--ds-hairline)]">
                               <button
                                 onClick={() => { setSelectedCustomers(tempSelectedCustomers); setShowCustomerDropdown(false); }}
-                                style={{
-                                  width: '100%', padding: '6px 12px', borderRadius: 999, border: 'none',
-                                  background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
-                                  color: '#fff', fontSize: 12, fontWeight: 600,
-                                  cursor: 'pointer', fontFamily: fontStack,
-                                  boxShadow: `0 4px 12px -4px ${APPLE.blue}88`,
-                                }}
+                                className="w-full px-3 py-1.5 rounded-full border-none text-white text-[12px] font-semibold cursor-pointer ds-gradient-primary shadow-[0_4px_12px_-4px_rgba(10,132,255,0.53)]"
                               >
                                 Apply
                               </button>
@@ -1146,33 +976,38 @@ function Nexchem_Reports() {
                         )}
                       </div>
 
-                      {/* Date From */}
                       <div>
-                        <label style={labelStyle}><Calendar size={12} color={APPLE.blue} /> Date From</label>
-                        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="nx-input" style={inputStyle} />
+                        <label className={labelClasses}><Calendar size={12} className="text-[#0A84FF]" /> Date From</label>
+                        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className={`${inputClasses} ds-input`} />
                       </div>
 
-                      {/* Date To */}
                       <div>
-                        <label style={labelStyle}><Calendar size={12} color={APPLE.blue} /> Date To</label>
-                        <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="nx-input" style={inputStyle} />
+                        <label className={labelClasses}><Calendar size={12} className="text-[#0A84FF]" /> Date To</label>
+                        <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className={`${inputClasses} ds-input`} />
                       </div>
                     </div>
 
                     {selectedRebateProgram && (
-                      <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 12, background: `${typeBadgeColor}14`, border: `1px solid ${typeBadgeColor}33`, flexWrap: 'wrap' }}>
-                        <Tag size={12} color={typeBadgeColor} />
-                        <span style={{ fontSize: 11, color: K.ink, fontWeight: 500 }}>
+                      <div
+                        className="mt-3.5 flex items-center gap-2.5 px-3 py-2 rounded-xl flex-wrap"
+                        style={{
+                          background: `${typeBadgeColor}14`,
+                          border: `1px solid ${typeBadgeColor}33`,
+                        }}
+                      >
+                        <Tag size={12} style={{ color: typeBadgeColor }} />
+                        <span className="text-[11px] text-[var(--ds-ink)] font-medium">
                           <strong style={{ color: typeBadgeColor }}>{selectedRebateProgram.RebateCode}</strong>
                           {selectedRebateLabel && <>{' '}·{' '}{selectedRebateLabel}</>}
                           {selectedRebateProgram.SlpName && <>{' '}·{' '}{selectedRebateProgram.SlpName}</>}
                         </span>
-                        <span style={{
-                          marginLeft: 'auto',
-                          fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-                          background: `${typeBadgeColor}1c`, color: typeBadgeColor,
-                          fontFamily: monoStack, letterSpacing: '0.04em',
-                        }}>
+                        <span
+                          className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ds-font-mono tracking-[0.04em]"
+                          style={{
+                            background: `${typeBadgeColor}1c`,
+                            color: typeBadgeColor,
+                          }}
+                        >
                           {selectedCalcMode === 'percentage' ? 'qty-sales × rate%'
                             : selectedCalcMode === 'incremental' ? 'qty × rate'
                             : 'qty × rate'}
@@ -1181,87 +1016,78 @@ function Nexchem_Reports() {
                     )}
                   </div>
 
-                  {/* ── Job status bar ── */}
+                  {/* Job status bar */}
                   {loading && activeJobId && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderRadius: 14, background: `${APPLE.blue}14`, border: `1px solid ${APPLE.blue}33` }}>
+                    <div className="flex items-center gap-3 px-4 py-3 rounded-[14px] bg-[#0A84FF]/8 border border-[#0A84FF]/20">
                       {getStatusIcon(jobStatus)}
-                      <div style={{ flex: 1 }}>
-                        <p style={{ fontSize: 13, fontWeight: 600, color: APPLE.blue, margin: 0 }}>
+                      <div className="flex-1">
+                        <p className="text-[13px] font-semibold text-[#0A84FF] m-0">
                           Generating report for {selectedCustomers.length} customer{selectedCustomers.length !== 1 ? 's' : ''}…
                         </p>
-                        <p style={{ fontSize: 11, color: K.muted, margin: '2px 0 0', fontFamily: monoStack }}>{activeJobId}</p>
+                        <p className="text-[11px] text-[var(--ds-muted)] mt-0.5 mb-0 ds-font-mono">{activeJobId}</p>
                       </div>
                     </div>
                   )}
 
-                  {/* ── Loading spinner ── */}
+                  {/* Loading spinner */}
                   {loading && (
-                    <div style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 380,
-                      borderRadius: 18, border: `1px dashed ${K.hairline}`,
-                      background: K.glass,
-                    }}>
-                      <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-                        <div style={{ position: 'relative', width: 56, height: 56 }}>
-                          <div style={{ width: 56, height: 56, borderRadius: '50%', border: `4px solid ${K.hairline}`, position: 'absolute' }} />
-                          <div style={{ width: 56, height: 56, borderRadius: '50%', border: `4px solid ${APPLE.blue}`, borderTopColor: 'transparent', animation: 'spin 0.75s linear infinite', position: 'absolute' }} />
+                    <div className="flex items-center justify-center min-h-[380px] rounded-[18px] border border-dashed border-[var(--ds-hairline)] bg-[var(--ds-glass)]">
+                      <div className="text-center flex flex-col items-center gap-4">
+                        <div className="relative w-14 h-14">
+                          <div className="absolute inset-0 w-14 h-14 rounded-full border-4 border-[var(--ds-hairline)]" />
+                          <div className="absolute inset-0 w-14 h-14 rounded-full border-4 border-[#0A84FF] border-t-transparent animate-spin" style={{ animationDuration: '0.75s' }} />
                         </div>
                         <div>
-                          <h3 style={{ fontSize: 16, fontWeight: 700, color: K.ink, margin: '0 0 6px' }}>Building Reports</h3>
-                          <p style={{ fontSize: 12, color: K.muted, margin: 0 }}>
-                            Fetching data for <span style={{ fontWeight: 700, color: APPLE.blue }}>{selectedCustomers.length} customer{selectedCustomers.length !== 1 ? 's' : ''}</span>
-                            {' '}under <span style={{ fontWeight: 700, color: typeBadgeColor }}>{selectedRebateCode}</span>
-                            {selectedRebateLabel && <> · <span style={{ fontWeight: 700, color: typeBadgeColor }}>{selectedRebateLabel}</span></>}
+                          <h3 className="text-base font-bold text-[var(--ds-ink)] m-0 mb-1.5">Building Reports</h3>
+                          <p className="text-[12px] text-[var(--ds-muted)] m-0">
+                            Fetching data for <span className="font-bold text-[#0A84FF]">{selectedCustomers.length} customer{selectedCustomers.length !== 1 ? 's' : ''}</span>
+                            {' '}under <span className="font-bold" style={{ color: typeBadgeColor }}>{selectedRebateCode}</span>
+                            {selectedRebateLabel && <> · <span className="font-bold" style={{ color: typeBadgeColor }}>{selectedRebateLabel}</span></>}
                           </p>
                         </div>
                       </div>
                     </div>
                   )}
 
-                  {/* ── Report Preview ── */}
+                  {/* Report Preview */}
                   {!loading && showReport && allPages.length > 0 && currentPageData && (
-                    <div className="dash-glass" style={{ background: K.glass, border: `1px solid ${K.hairline}`, borderRadius: 18, padding: '20px 22px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <h3 style={{ fontSize: 14, fontWeight: 700, color: K.ink, margin: 0 }}>Report Preview</h3>
+                    <div className="ds-glass bg-[var(--ds-glass)] border border-[var(--ds-hairline)] rounded-[18px] px-[22px] py-5">
+                      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-[14px] font-bold text-[var(--ds-ink)] m-0">Report Preview</h3>
                           {selectedRebateLabel && (
-                            <span style={{
-                              padding: '2px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-                              background: `${typeBadgeColor}14`, color: typeBadgeColor,
-                              fontFamily: monoStack,
-                            }}>
+                            <span
+                              className="px-2.5 py-0.5 rounded-full text-[11px] font-bold ds-font-mono"
+                              style={{ background: `${typeBadgeColor}14`, color: typeBadgeColor }}
+                            >
                               {selectedRebateLabel}
                             </span>
                           )}
-                          <span style={{
-                            padding: '2px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
-                            background: `${APPLE.orange}14`, color: APPLE.orange,
-                            fontFamily: monoStack, maxWidth: 250,
-                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }}>
+                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#FF9F0A]/8 text-[#FF9F0A] ds-font-mono max-w-[250px] truncate">
                             {currentPageData.customerName && currentPageData.customerName !== 'unknown'
                               ? currentPageData.customerName
                               : `Customer ${currentPageData.customerCode}`}
                           </span>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600, background: `${APPLE.blue}14`, color: APPLE.blue, fontFamily: monoStack }}>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[#0A84FF]/8 text-[#0A84FF] ds-font-mono">
                             Page {currentPage} of {totalPages}
                           </span>
-                          <span style={{ padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600, background: K.chipBg, color: K.muted, fontFamily: monoStack }}>
+                          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] ds-font-mono">
                             {currentPageData.rows.length} rows
                           </span>
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'center', padding: '16px 20px' }}>
-                        <div style={{ width: `${PREVIEW_W}px`, height: `${PREVIEW_H}px`, flexShrink: 0, position: 'relative', overflow: 'visible' }}>
-                          <div style={{
-                            position: 'absolute', top: 0, left: 0,
-                            width: `${PAPER_W_PX}px`, height: `${PAPER_H_PX}px`,
-                            transform: `scale(${PREVIEW_SCALE})`, transformOrigin: 'top left',
-                            boxShadow: '0 4px 24px rgba(0,0,0,0.18)', border: `1px solid ${K.hairline}`,
-                          }}>
+                      <div className="flex justify-center px-5 py-4">
+                        <div className="flex-shrink-0 relative overflow-visible" style={{ width: `${PREVIEW_W}px`, height: `${PREVIEW_H}px` }}>
+                          <div
+                            className="absolute top-0 left-0 border border-[var(--ds-hairline)] shadow-[0_4px_24px_rgba(0,0,0,0.18)]"
+                            style={{
+                              width: `${PAPER_W_PX}px`, height: `${PAPER_H_PX}px`,
+                              transform: `scale(${PREVIEW_SCALE})`, transformOrigin: 'top left',
+                            }}
+                          >
                             <ReportPage {...sharedPageProps} pageRows={currentPageData.rows} pageIndex={currentPage - 1}
                               isFirstCustomerPage={currentPageData.isFirstCustomerPage}
                               isLastCustomerPage={currentPageData.isLastCustomerPage}
@@ -1271,17 +1097,15 @@ function Nexchem_Reports() {
                         </div>
                       </div>
 
-                      {/* Pagination */}
                       {totalPages > 1 && (
-                        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, padding: '16px 0 4px', borderTop: `1px solid ${K.hairline}`, marginTop: 16, flexWrap: 'wrap' }}>
-                          <button onClick={() => paginate(currentPage - 1)} disabled={currentPage === 1} className="nx-page-btn"
-                            style={{
-                              padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500,
-                              border: `1px solid ${K.hairline}`, background: 'transparent', color: K.ink,
-                              cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
-                              opacity: currentPage === 1 ? 0.4 : 1,
-                              transition: 'all 0.15s', fontFamily: fontStack,
-                            }}>
+                        <div className="flex justify-center items-center gap-1.5 px-0 pt-4 pb-1 mt-4 flex-wrap border-t border-[var(--ds-hairline)]">
+                          <button
+                            onClick={() => paginate(currentPage - 1)}
+                            disabled={currentPage === 1}
+                            className={`px-3.5 py-[7px] rounded-full text-[12px] font-medium border border-[var(--ds-hairline)] bg-transparent text-[var(--ds-ink)] transition-all duration-150 ${
+                              currentPage === 1 ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:bg-[var(--ds-hover)]'
+                            }`}
+                          >
                             ← Prev
                           </button>
                           {(() => {
@@ -1298,30 +1122,28 @@ function Nexchem_Reports() {
                               pages.push(totalPages);
                             }
                             return pages.map((p, i) => p === '...' ? (
-                              <span key={`el-${i}`} style={{ fontSize: 13, color: K.muted, padding: '0 2px', userSelect: 'none' }}>…</span>
+                              <span key={`el-${i}`} className="text-[13px] text-[var(--ds-muted)] px-0.5 select-none">…</span>
                             ) : (
-                              <button key={p} onClick={() => paginate(p)} className="nx-page-btn"
-                                style={{
-                                  minWidth: 32, height: 32, padding: '0 8px',
-                                  borderRadius: 999, fontSize: 12, fontWeight: 600,
-                                  border: `1px solid ${currentPage === p ? 'transparent' : K.hairline}`,
-                                  background: currentPage === p ? `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)` : 'transparent',
-                                  color: currentPage === p ? '#fff' : K.ink,
-                                  cursor: 'pointer', transition: 'all 0.15s', fontFamily: fontStack,
-                                  boxShadow: currentPage === p ? `0 4px 12px -4px ${APPLE.blue}88` : 'none',
-                                }}>
+                              <button
+                                key={p}
+                                onClick={() => paginate(p)}
+                                className={`min-w-[32px] h-8 px-2 rounded-full text-[12px] font-semibold transition-all duration-150 cursor-pointer ${
+                                  currentPage === p
+                                    ? 'ds-gradient-primary text-white border border-transparent shadow-[0_4px_12px_-4px_rgba(10,132,255,0.53)]'
+                                    : 'bg-transparent text-[var(--ds-ink)] border border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)]'
+                                }`}
+                              >
                                 {p}
                               </button>
                             ));
                           })()}
-                          <button onClick={() => paginate(currentPage + 1)} disabled={currentPage === totalPages} className="nx-page-btn"
-                            style={{
-                              padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 500,
-                              border: `1px solid ${K.hairline}`, background: 'transparent', color: K.ink,
-                              cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
-                              opacity: currentPage === totalPages ? 0.4 : 1,
-                              transition: 'all 0.15s', fontFamily: fontStack,
-                            }}>
+                          <button
+                            onClick={() => paginate(currentPage + 1)}
+                            disabled={currentPage === totalPages}
+                            className={`px-3.5 py-[7px] rounded-full text-[12px] font-medium border border-[var(--ds-hairline)] bg-transparent text-[var(--ds-ink)] transition-all duration-150 ${
+                              currentPage === totalPages ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:bg-[var(--ds-hover)]'
+                            }`}
+                          >
                             Next →
                           </button>
                         </div>
@@ -1329,123 +1151,124 @@ function Nexchem_Reports() {
                     </div>
                   )}
 
-                  {/* ── Empty state ── */}
-                    {!loading && (!showReport || allPages.length === 0) && (
-                      <div className="dash-glass" style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        width: '100%', maxWidth: `${PREVIEW_W}px`, height: Math.round(PREVIEW_H * 0.55),
-                        margin: '0 auto', borderRadius: 18,
-                        border: `2px dashed ${K.hairline}`,
-                        background: K.glass,
-                      }}>
-                        <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-                          <div style={{
-                            width: 52, height: 52, borderRadius: 14,
-                            background: showReport ? `${APPLE.orange}1c` : `${APPLE.blue}1c`,
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          }}>
-                            <BarChart2 size={24} color={showReport ? APPLE.orange : APPLE.blue} />
-                          </div>
-                          <div>
-                            {showReport ? (
-                              <>
-                                <p style={{ fontSize: 14, fontWeight: 600, color: K.ink, margin: '0 0 4px' }}>
-                                  No matching invoices found
-                                </p>
-                                <p style={{ fontSize: 12, color: K.muted, margin: 0, maxWidth: 420 }}>
-                                  The report for <strong style={{ color: APPLE.orange }}>{selectedRebateCode}</strong>{' '}
-                                  returned zero rows. Check the backend console — it prints exactly which step returned empty
-                                  (customers / tiers / items / invoices / matched lines).
-                                </p>
-                              </>
-                            ) : (
-                              <>
-                                <p style={{ fontSize: 14, fontWeight: 600, color: K.ink, margin: '0 0 4px' }}>No report generated yet</p>
-                                <p style={{ fontSize: 12, color: K.muted, margin: 0 }}>
-                                  Pick a <strong style={{ color: APPLE.blue }}>Rebate Code</strong>, confirm the date range, then click{' '}
-                                  <strong style={{ color: APPLE.blue }}>Generate Report</strong>
-                                </p>
-                              </>
-                            )}
-                          </div>
+                  {/* Empty state */}
+                  {!loading && (!showReport || allPages.length === 0) && (
+                    <div
+                      className="ds-glass flex items-center justify-center mx-auto rounded-[18px] border-2 border-dashed border-[var(--ds-hairline)] bg-[var(--ds-glass)]"
+                      style={{ width: '100%', maxWidth: `${PREVIEW_W}px`, height: Math.round(PREVIEW_H * 0.55) }}
+                    >
+                      <div className="text-center flex flex-col items-center gap-3">
+                        <div className={`w-[52px] h-[52px] rounded-[14px] flex items-center justify-center ${
+                          showReport ? 'bg-[#FF9F0A]/11' : 'bg-[#0A84FF]/11'
+                        }`}>
+                          <BarChart2 size={24} className={showReport ? 'text-[#FF9F0A]' : 'text-[#0A84FF]'} />
+                        </div>
+                        <div>
+                          {showReport ? (
+                            <>
+                              <p className="text-[14px] font-semibold text-[var(--ds-ink)] m-0 mb-1">
+                                No matching invoices found
+                              </p>
+                              <p className="text-[12px] text-[var(--ds-muted)] m-0 max-w-[420px]">
+                                The report for <strong className="text-[#FF9F0A]">{selectedRebateCode}</strong>{' '}
+                                returned zero rows. Check the backend console — it prints exactly which step returned empty
+                                (customers / tiers / items / invoices / matched lines).
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-[14px] font-semibold text-[var(--ds-ink)] m-0 mb-1">No report generated yet</p>
+                              <p className="text-[12px] text-[var(--ds-muted)] m-0">
+                                Pick a <strong className="text-[#0A84FF]">Rebate Code</strong>, confirm the date range, then click{' '}
+                                <strong className="text-[#0A84FF]">Generate Report</strong>
+                              </p>
+                            </>
+                          )}
                         </div>
                       </div>
-                    )}
+                    </div>
+                  )}
                 </div>
 
                 {/* ══ Right sidebar ══ */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, position: 'sticky', top: 24, alignSelf: 'start' }}>
+                <div className="flex flex-col gap-4 sticky top-6 self-start">
                   {/* Activity */}
-                  <div className="dash-glass" style={{ background: K.glass, border: `1px solid ${K.hairline}`, borderRadius: 18, padding: '18px 18px 16px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                      <Clock size={15} color={K.muted} />
-                      <h3 style={{ fontSize: 12, fontWeight: 700, color: K.ink, margin: 0, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Activity</h3>
+                  <div className="ds-glass bg-[var(--ds-glass)] border border-[var(--ds-hairline)] rounded-[18px] px-[18px] pt-[18px] pb-4">
+                    <div className="flex items-center gap-2 mb-3.5">
+                      <Clock size={15} className="text-[var(--ds-muted)]" />
+                      <h3 className="text-[12px] font-bold text-[var(--ds-ink)] m-0 uppercase tracking-[0.06em]">Activity</h3>
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 400, overflowY: 'auto' }}>
+                    <div className="flex flex-col gap-2 max-h-[400px] overflow-y-auto">
                       {loading && activeJobId && (
-                        <div style={{ padding: '10px 12px', borderRadius: 14, background: `${APPLE.blue}14`, border: `1px solid ${APPLE.blue}33`, animation: 'pulse-ring 1.5s infinite' }}>
-                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                        <div
+                          className="px-3 py-2.5 rounded-[14px] bg-[#0A84FF]/8 border border-[#0A84FF]/20"
+                          style={{ animation: 'pulse-ring 1.5s infinite' }}
+                        >
+                          <div className="flex items-start gap-2">
                             {getStatusIcon(jobStatus)}
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <p style={{ fontSize: 12, fontWeight: 600, color: K.ink, margin: 0 }}>{selectedRebateCode}</p>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[12px] font-semibold text-[var(--ds-ink)] m-0">{selectedRebateCode}</p>
                               {selectedRebateLabel && (
-                                <p style={{ fontSize: 10, color: typeBadgeColor, margin: '2px 0 0', fontWeight: 600 }}>{selectedRebateLabel}</p>
+                                <p className="text-[10px] m-0 mt-0.5 font-semibold" style={{ color: typeBadgeColor }}>{selectedRebateLabel}</p>
                               )}
-                              <p style={{ fontSize: 11, color: K.muted, margin: '2px 0 4px', fontFamily: monoStack }}>{formatJobDate(new Date().toISOString())}</p>
-                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, fontWeight: 600, background: `${APPLE.blue}1c`, color: APPLE.blue }}>Processing</span>
+                              <p className="text-[11px] text-[var(--ds-muted)] my-0.5 mb-1 ds-font-mono">{formatJobDate(new Date().toISOString())}</p>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[#0A84FF]/11 text-[#0A84FF]">Processing</span>
                             </div>
                           </div>
                         </div>
                       )}
                       {!loading && showReport && allPages.length > 0 && (
-                        <div style={{ padding: '10px 12px', borderRadius: 14, background: `${APPLE.green}14`, border: `1px solid ${APPLE.green}33` }}>
-                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                            <CheckCircle size={14} color={APPLE.green} style={{ flexShrink: 0, marginTop: 2 }} />
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <p style={{ fontSize: 12, fontWeight: 600, color: K.ink, margin: 0 }}>{selectedRebateCode}</p>
+                        <div className="px-3 py-2.5 rounded-[14px] bg-[#32D74B]/8 border border-[#32D74B]/20">
+                          <div className="flex items-start gap-2">
+                            <CheckCircle size={14} className="text-[#32D74B] flex-shrink-0 mt-0.5" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[12px] font-semibold text-[var(--ds-ink)] m-0">{selectedRebateCode}</p>
                               {selectedRebateLabel && (
-                                <p style={{ fontSize: 10, color: typeBadgeColor, margin: '2px 0 0', fontWeight: 600 }}>{selectedRebateLabel}</p>
+                                <p className="text-[10px] m-0 mt-0.5 font-semibold" style={{ color: typeBadgeColor }}>{selectedRebateLabel}</p>
                               )}
-                              <p style={{ fontSize: 11, color: K.muted, margin: '2px 0 4px', fontFamily: monoStack }}>{formatJobDate(new Date().toISOString())}</p>
-                              <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, fontWeight: 600, background: `${APPLE.green}1c`, color: APPLE.green }}>Completed</span>
+                              <p className="text-[11px] text-[var(--ds-muted)] my-0.5 mb-1 ds-font-mono">{formatJobDate(new Date().toISOString())}</p>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[#32D74B]/11 text-[#32D74B]">Completed</span>
                             </div>
                           </div>
                         </div>
                       )}
                       {!loading && !showReport && (
-                        <p style={{ fontSize: 12, textAlign: 'center', color: K.muted, padding: '20px 0', margin: 0 }}>No activity yet</p>
+                        <p className="text-[12px] text-center text-[var(--ds-muted)] py-5 m-0">No activity yet</p>
                       )}
                     </div>
                   </div>
 
                   {/* Grand Summary */}
                   {showReport && reportData.length > 0 && (
-                    <div className="dash-glass dash-pop" style={{ background: K.glass, border: `1px solid ${K.hairline}`, borderRadius: 18, padding: '16px 18px' }}>
-                      <p style={{ fontSize: 11, fontWeight: 700, color: K.muted, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 8px' }}>
+                    <div className="ds-glass ds-pop bg-[var(--ds-glass)] border border-[var(--ds-hairline)] rounded-[18px] px-[18px] py-4">
+                      <p className="text-[11px] font-bold text-[var(--ds-muted)] uppercase tracking-[0.06em] m-0 mb-2">
                         Grand Summary
                       </p>
-                      <p style={{ fontSize: 10, color: K.muted, margin: '0 0 12px' }}>
+                      <p className="text-[10px] text-[var(--ds-muted)] m-0 mb-3">
                         All {selectedCustomers.length} customers combined
                       </p>
                       {[
-                        { label: 'Total QTY',     value: totalQty.toLocaleString(), color: APPLE.blue },
-                        { label: 'Total Sales',   value: `₱${totalSales.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, color: K.ink },
-                        { label: 'Total KITANEX', value: `₱${totalKitanex.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, color: APPLE.green },
-                      ].map(({ label, value, color }, idx) => (
-                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: idx < 2 ? `1px solid ${K.hairline}` : 'none' }}>
-                          <span style={{ fontSize: 12, color: K.muted }}>{label}</span>
-                          <span style={{ fontSize: 13, fontWeight: 700, color, fontFamily: monoStack }}>{value}</span>
+                        { label: 'Total QTY',     value: totalQty.toLocaleString(), colorClass: 'text-[#0A84FF]' },
+                        { label: 'Total Sales',   value: `₱${totalSales.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, colorClass: 'text-[var(--ds-ink)]' },
+                        { label: 'Total KITANEX', value: `₱${totalKitanex.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, colorClass: 'text-[#32D74B]' },
+                      ].map(({ label, value, colorClass }, idx) => (
+                        <div
+                          key={label}
+                          className={`flex justify-between items-center py-2 ${idx < 2 ? 'border-b border-[var(--ds-hairline)]' : ''}`}
+                        >
+                          <span className="text-[12px] text-[var(--ds-muted)]">{label}</span>
+                          <span className={`text-[13px] font-bold ds-font-mono ${colorClass}`}>{value}</span>
                         </div>
                       ))}
 
                       {allPages.filter(p => p.isLastCustomerPage).length > 1 && (
-                        <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${K.hairline}` }}>
-                          <p style={{ fontSize: 10, fontWeight: 700, color: K.muted, textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 8px' }}>Per Customer</p>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflowY: 'auto' }}>
+                        <div className="mt-3.5 pt-3 border-t border-[var(--ds-hairline)]">
+                          <p className="text-[10px] font-bold text-[var(--ds-muted)] uppercase tracking-[0.05em] m-0 mb-2">Per Customer</p>
+                          <div className="flex flex-col gap-1.5 max-h-[180px] overflow-y-auto">
                             {allPages.filter(p => p.isLastCustomerPage).map((p) => (
-                              <div key={p.customerCode} style={{ padding: '6px 8px', borderRadius: 10, background: K.chipBg, border: `1px solid ${K.hairline}` }}>
-                                <p style={{ fontSize: 10, fontWeight: 600, color: K.ink, margin: '0 0 3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.customerName}</p>
-                                <p style={{ fontSize: 10, color: APPLE.green, margin: 0, fontFamily: monoStack }}>
+                              <div key={p.customerCode} className="px-2 py-1.5 rounded-[10px] bg-[var(--ds-chip-bg)] border border-[var(--ds-hairline)]">
+                                <p className="text-[10px] font-semibold text-[var(--ds-ink)] m-0 mb-0.5 truncate">{p.customerName}</p>
+                                <p className="text-[10px] text-[#32D74B] m-0 ds-font-mono">
                                   ₱{p.customerTotals.totalKitanex.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                                 </p>
                               </div>
@@ -1461,7 +1284,7 @@ function Nexchem_Reports() {
           </div>
         </div>
       </main>
-    </div>
+    </DesignPage>
   );
 }
 

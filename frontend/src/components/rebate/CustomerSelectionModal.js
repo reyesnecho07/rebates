@@ -4,39 +4,8 @@ import { createPortal } from 'react-dom';
 import { X, Search, CheckSquare, Square, Check, Users, Filter } from 'lucide-react';
 import Loading from "../../components/common/Loading";
 
-/* ─── Apple system colour language ───────────────────────────────────────── */
-const APPLE = {
-  blue:   "#0A84FF",
-  purple: "#BF5AF2",
-  red:    "#FF453A",
-  orange: "#FF9F0A",
-  green:  "#32D74B",
-  gray:   "#8E8E93",
-};
-
-const dashTokens = (isDark) => ({
-  ink:       isDark ? "#F2F2F7" : "#1C1C1E",
-  muted:     isDark ? "#98989F" : "#6E6E73",
-  faint:     isDark ? "#68686D" : "#AEAEB2",
-  glass:     isDark ? "rgba(30,30,36,0.6)"   : "rgba(255,255,255,0.65)",
-  glassDeep: isDark ? "rgba(24,24,28,0.95)"  : "rgba(255,255,255,0.98)",
-  hairline:  isDark ? "rgba(255,255,255,0.08)" : "rgba(60,60,67,0.12)",
-  rim:       isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.8)",
-  chipBg:    isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
-  hover:     isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
-  shadow:    isDark ? "0 20px 50px -14px rgba(0,0,0,0.65)" : "0 20px 50px -18px rgba(30,41,79,0.18)",
-  bg:        isDark ? "#000000" : "#EEF1F7",
-});
-
-const DASH_FONT = `
-  .dash-page, .dash-page * { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif; }
-  .dash-glass { -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%); }
-  .dash-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
-  .dash-scroll::-webkit-scrollbar-thumb { background: rgba(142,142,147,0.4); border-radius: 999px; }
-  .dash-scroll::-webkit-scrollbar-track { background: transparent; }
-  @keyframes dash-pop { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-  .dash-pop { animation: dash-pop 0.2s cubic-bezier(0.16,1,0.3,1); }
-`;
+/* ── Design system ──────────────────────────────────────────────── */
+import { PALETTE, useTokens } from '../../design-system';
 
 const POPUP_WIDTH = 320;
 const POPUP_EST_HEIGHT = 380;
@@ -48,10 +17,8 @@ const CustomerSelectionModal = ({
   customers = [],
   selectedCustomers = [],
   onConfirm,
-  theme
 }) => {
-  const isDark = theme === 'dark';
-  const K = dashTokens(isDark);
+  const { theme, isDark, K } = useTokens();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -216,7 +183,7 @@ const CustomerSelectionModal = ({
     };
   }, []);
 
-  /* ─── Filter popup positioning (portal + smart flip) ─────────────────── */
+  /* ─── Filter popup positioning (portal + smart flip) ──────────────── */
   const computeFilterPopupPosition = useCallback(() => {
     if (!filterRef.current) return null;
     const rect = filterRef.current.getBoundingClientRect();
@@ -226,7 +193,6 @@ const CustomerSelectionModal = ({
     const modalRect = modalRef.current?.getBoundingClientRect();
     const modalSpaceBelow = modalRect ? modalRect.bottom - rect.bottom - POPUP_GAP : Infinity;
 
-    // If the modal can't fit the popup below, open ABOVE the button so it's never cut.
     const openAbove = modalSpaceBelow < POPUP_EST_HEIGHT && spaceAbove > spaceBelow;
 
     const left = Math.max(8, Math.min(rect.right - POPUP_WIDTH, window.innerWidth - POPUP_WIDTH - 8));
@@ -261,7 +227,6 @@ const CustomerSelectionModal = ({
     };
   }, [isFilterOpen, computeFilterPopupPosition]);
 
-  // Click outside — checks the button AND the portaled popup
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (
@@ -335,8 +300,8 @@ const CustomerSelectionModal = ({
               onClick={() => toggleCustomer(customer._id)}
               className="flex items-center px-4 py-2 border-b cursor-pointer transition-all"
               style={{
-                background: isSelected ? `${APPLE.blue}14` : "transparent",
-                borderColor: isSelected ? `${APPLE.blue}33` : K.hairline,
+                background: isSelected ? `${PALETTE.blue}14` : "transparent",
+                borderColor: isSelected ? `${PALETTE.blue}33` : K.hairline,
               }}
               onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = K.chipBg; }}
               onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
@@ -344,7 +309,7 @@ const CustomerSelectionModal = ({
               <div className="w-8 flex-shrink-0">
                 {isSelected ? (
                   <div className="w-4 h-4 rounded flex items-center justify-center"
-                    style={{ background: APPLE.blue }}>
+                    style={{ background: PALETTE.blue }}>
                     <Check className="w-3 h-3 text-white" />
                   </div>
                 ) : (
@@ -366,7 +331,7 @@ const CustomerSelectionModal = ({
             {isLoadingMore ? (
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 rounded-full border-2 animate-spin"
-                  style={{ borderColor: `${APPLE.blue}33`, borderTopColor: APPLE.blue }} />
+                  style={{ borderColor: `${PALETTE.blue}33`, borderTopColor: PALETTE.blue }} />
                 <span className="text-xs" style={{ color: K.muted }}>Loading more…</span>
               </div>
             ) : (
@@ -385,32 +350,26 @@ const CustomerSelectionModal = ({
   if (!isOpen) return null;
 
   return (
-    <div className="dash-page fixed inset-0 flex items-center justify-center z-[9999] p-4"
-      style={{ backgroundColor: isDark ? "rgba(10,10,14,0.65)" : "rgba(0,0,0,0.4)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}>
-      <style>{DASH_FONT}</style>
-
+    <div
+      className={`fixed inset-0 flex items-center justify-center z-[9999] p-4 backdrop-blur-2xl ${
+        isDark ? 'bg-[rgba(10,10,14,0.65)]' : 'bg-black/40'
+      }`}
+    >
       {isConfirming && (
-        <div className="absolute inset-0 rounded-[28px] z-50 flex items-center justify-center"
-          style={{ backgroundColor: "rgba(0,0,0,0.3)", backdropFilter: "blur(6px)" }}>
+        <div className="absolute inset-0 rounded-[28px] z-50 flex items-center justify-center bg-black/30 backdrop-blur-md">
           <Loading theme={theme} />
         </div>
       )}
 
       <div
         ref={modalRef}
-        className="dash-glass dash-pop rounded-[28px] w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden"
-        style={{
-          background: K.glassDeep,
-          border: `1px solid ${K.rim}`,
-          boxShadow: K.shadow,
-          opacity: isConfirming ? 0.75 : 1,
-        }}
+        className="ds-glass ds-pop rounded-[28px] w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] shadow-[var(--ds-shadow)]"
+        style={{ opacity: isConfirming ? 0.75 : 1 }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b flex-shrink-0" style={{ borderColor: K.hairline }}>
+        <div className="flex items-center justify-between p-4 border-b flex-shrink-0 border-[var(--ds-hairline)]">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl flex items-center justify-center"
-              style={{ background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`, boxShadow: `0 4px 12px -4px ${APPLE.blue}88` }}>
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-gradient-to-br from-[#0A84FF] to-[#BF5AF2] shadow-[0_4px_12px_-4px_rgba(10,132,255,0.53)]">
               <Users className="w-4 h-4 text-white" />
             </div>
             <div>
@@ -421,38 +380,24 @@ const CustomerSelectionModal = ({
           <button
             onClick={onClose}
             disabled={isConfirming}
-            className="w-8 h-8 rounded-full flex items-center justify-center transition-colors"
-            style={{
-              background: K.chipBg,
-              color: K.muted,
-              opacity: isConfirming ? 0.5 : 1,
-              cursor: isConfirming ? 'not-allowed' : 'pointer',
-            }}
-            onMouseEnter={(e) => { if (!isConfirming) { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hairline; } }}
-            onMouseLeave={(e) => { if (!isConfirming) { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = K.chipBg; } }}
+            className="w-8 h-8 rounded-full flex items-center justify-center transition-colors bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] hover:bg-[var(--ds-hairline)] hover:text-[var(--ds-ink)] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Search and Filter Bar */}
-        <div className="p-4 border-b flex-shrink-0" style={{ borderColor: K.hairline }}>
+        <div className="p-4 border-b flex-shrink-0 border-[var(--ds-hairline)]">
           <div className="flex items-center gap-3">
             <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4" style={{ color: K.faint }} />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-[var(--ds-faint)]" />
               <input
                 type="text"
                 placeholder="Search by customer code or name…"
                 onChange={handleSearchChange}
                 defaultValue={searchTerm}
                 disabled={isConfirming}
-                className="w-full pl-10 pr-4 py-2.5 rounded-full text-xs focus:outline-none transition-all dash-glass"
-                style={{
-                  background: K.glass,
-                  border: `1px solid ${K.hairline}`,
-                  color: K.ink,
-                  opacity: isConfirming ? 0.5 : 1,
-                }}
+                className="ds-glass w-full pl-10 pr-4 py-2.5 rounded-full text-xs focus:outline-none focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.15)] transition-all bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)] disabled:opacity-50"
                 autoFocus
               />
             </div>
@@ -461,17 +406,16 @@ const CustomerSelectionModal = ({
               <button
                 onClick={handleFilterToggle}
                 disabled={isConfirming}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-full text-xs transition-all dash-glass"
-                style={isFilterOpen || selectedGroup || selectedSlp || selectedArea
-                  ? { background: `${APPLE.blue}1c`, border: `1px solid ${APPLE.blue}55`, color: APPLE.blue }
-                  : { background: K.chipBg, border: `1px solid ${K.hairline}`, color: K.muted }
-                }
+                className={`ds-glass flex items-center gap-2 px-4 py-2.5 rounded-full text-xs transition-all ${
+                  isFilterOpen || selectedGroup || selectedSlp || selectedArea
+                    ? 'bg-[#0A84FF]/11 border border-[#0A84FF]/33 text-[#0A84FF]'
+                    : 'bg-[var(--ds-chip-bg)] border border-[var(--ds-hairline)] text-[var(--ds-muted)] hover:bg-[var(--ds-hover)]'
+                }`}
               >
                 <Filter className="w-3.5 h-3.5" />
                 <span>Filter</span>
                 {(selectedGroup || selectedSlp || selectedArea) && (
-                  <span className="ml-1 px-1.5 py-0.5 rounded-full text-xs font-semibold"
-                    style={{ background: `${APPLE.blue}1c`, color: APPLE.blue }}>
+                  <span className="ml-1 px-1.5 py-0.5 rounded-full text-xs font-semibold bg-[#0A84FF]/11 text-[#0A84FF]">
                     {(selectedGroup ? 1 : 0) + (selectedSlp ? 1 : 0) + (selectedArea ? 1 : 0)}
                   </span>
                 )}
@@ -481,10 +425,7 @@ const CustomerSelectionModal = ({
         </div>
 
         {/* Select All Header */}
-        <div
-          className="px-4 py-2 flex items-center justify-between border-b flex-shrink-0"
-          style={{ borderColor: K.hairline, background: K.chipBg }}
-        >
+        <div className="px-4 py-2 flex items-center justify-between border-b flex-shrink-0 border-[var(--ds-hairline)] bg-[var(--ds-chip-bg)]">
           <div className="flex items-center gap-2">
             <button
               onClick={toggleSelectAll}
@@ -493,8 +434,8 @@ const CustomerSelectionModal = ({
               type="button"
             >
               {isSelectAllChecked
-                ? <CheckSquare className="w-4 h-4" style={{ color: APPLE.blue }} />
-                : <Square className="w-4 h-4" style={{ color: K.faint }} />}
+                ? <CheckSquare className="w-4 h-4 text-[#0A84FF]" />
+                : <Square className="w-4 h-4 text-[var(--ds-faint)]" />}
               <span style={{ color: K.ink }}>
                 Select All ({filteredCustomers.length.toLocaleString()})
               </span>
@@ -502,30 +443,27 @@ const CustomerSelectionModal = ({
 
             {(selectedGroup || selectedSlp || selectedArea) && (
               <div className="flex items-center gap-1.5">
-                <span className="text-xs" style={{ color: K.faint }}>|</span>
+                <span className="text-xs text-[var(--ds-faint)]">|</span>
                 {selectedGroup && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs"
-                    style={{ background: K.chipBg, color: K.muted }}>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-[var(--ds-chip-bg)] text-[var(--ds-muted)]">
                     Group: {selectedGroup}
-                    <button onClick={(e) => { e.stopPropagation(); setSelectedGroup(''); }} className="ml-1" style={{ color: K.faint }}>
+                    <button onClick={(e) => { e.stopPropagation(); setSelectedGroup(''); }} className="ml-1 text-[var(--ds-faint)]">
                       <X className="w-3 h-3" />
                     </button>
                   </span>
                 )}
                 {selectedArea && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs"
-                    style={{ background: K.chipBg, color: K.muted }}>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-[var(--ds-chip-bg)] text-[var(--ds-muted)]">
                     Area: {selectedArea}
-                    <button onClick={(e) => { e.stopPropagation(); setSelectedArea(''); }} className="ml-1" style={{ color: K.faint }}>
+                    <button onClick={(e) => { e.stopPropagation(); setSelectedArea(''); }} className="ml-1 text-[var(--ds-faint)]">
                       <X className="w-3 h-3" />
                     </button>
                   </span>
                 )}
                 {selectedSlp && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs"
-                    style={{ background: K.chipBg, color: K.muted }}>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-[var(--ds-chip-bg)] text-[var(--ds-muted)]">
                     Sales: {selectedSlp}
-                    <button onClick={(e) => { e.stopPropagation(); setSelectedSlp(''); }} className="ml-1" style={{ color: K.faint }}>
+                    <button onClick={(e) => { e.stopPropagation(); setSelectedSlp(''); }} className="ml-1 text-[var(--ds-faint)]">
                       <X className="w-3 h-3" />
                     </button>
                   </span>
@@ -539,40 +477,31 @@ const CustomerSelectionModal = ({
         </div>
 
         {/* Table Header */}
-        <div className="px-4 py-2 flex border-b flex-shrink-0" style={{ borderColor: K.hairline, background: K.glass }}>
+        <div className="px-4 py-2 flex border-b flex-shrink-0 border-[var(--ds-hairline)] bg-[var(--ds-glass)]">
           <div className="w-8 flex-shrink-0"></div>
-          <div className="w-32 text-xs font-semibold" style={{ color: K.muted }}>Customer Code</div>
-          <div className="flex-1 text-xs font-semibold" style={{ color: K.muted }}>Customer Name</div>
+          <div className="w-32 text-xs font-semibold text-[var(--ds-muted)]">Customer Code</div>
+          <div className="flex-1 text-xs font-semibold text-[var(--ds-muted)]">Customer Name</div>
         </div>
 
         {/* Customer List */}
-        <div className="flex-1 overflow-y-auto relative dash-scroll" style={{ maxHeight: '50vh' }}>
+        <div className="flex-1 overflow-y-auto relative ds-scroll" style={{ maxHeight: '50vh' }}>
           {renderCustomerList()}
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t flex-shrink-0" style={{ borderColor: K.hairline, background: K.chipBg }}>
+        <div className="p-4 border-t flex-shrink-0 border-[var(--ds-hairline)] bg-[var(--ds-chip-bg)]">
           <div className="flex justify-end gap-2">
             <button
               onClick={onClose}
               disabled={isConfirming}
-              className="px-4 py-1.5 rounded-full text-xs font-medium transition-all"
-              style={{ border: `1px solid ${K.hairline}`, color: K.muted }}
-              onMouseEnter={(e) => { if (!isConfirming) { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hover; } }}
-              onMouseLeave={(e) => { if (!isConfirming) { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = 'transparent'; } }}
+              className="px-4 py-1.5 rounded-full text-xs font-medium transition-colors border border-[var(--ds-hairline)] text-[var(--ds-muted)] hover:text-[var(--ds-ink)] hover:bg-[var(--ds-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Cancel
             </button>
             <button
               onClick={handleConfirm}
               disabled={selectedCount === 0 || isConfirming}
-              className="px-4 py-1.5 text-xs font-medium text-white rounded-full transition-all flex items-center gap-2 min-w-[120px] justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{
-                background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
-                boxShadow: `0 4px 16px -6px ${APPLE.blue}88`,
-              }}
-              onMouseEnter={(e) => { if (selectedCount > 0 && !isConfirming) e.currentTarget.style.opacity = '0.9'; }}
-              onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+              className="px-4 py-1.5 text-xs font-medium text-white rounded-full transition-all flex items-center gap-2 min-w-[120px] justify-center disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-br from-[#0A84FF] to-[#BF5AF2] shadow-[0_4px_16px_-6px_rgba(10,132,255,0.53)] hover:brightness-110"
             >
               {isConfirming ? (
                 <>
@@ -587,17 +516,18 @@ const CustomerSelectionModal = ({
         </div>
       </div>
 
-      {/* ── Filter popup — rendered via portal so it never gets clipped ── */}
+      {/* ── Filter popup — portaled to document.body to avoid clipping ──── */}
       {isFilterOpen && createPortal(
         <div
           ref={filterPopupRef}
-          className="dash-page dash-glass dash-pop rounded-2xl p-4 dash-scroll"
+          data-ds-theme={isDark ? 'dark' : 'light'}
+          className="ds-page ds-glass ds-pop ds-scroll rounded-2xl p-4"
           style={{
             position: 'fixed',
             top: filterPopupPos.top,
             left: filterPopupPos.left,
             width: POPUP_WIDTH,
-            maxHeight: `calc(100vh - 16px)`,
+            maxHeight: 'calc(100vh - 16px)',
             overflowY: 'auto',
             zIndex: 10000,
             background: K.glassDeep,
@@ -610,23 +540,19 @@ const CustomerSelectionModal = ({
               <h3 className="text-sm font-semibold" style={{ color: K.ink }}>Filter Customers</h3>
               <button
                 onClick={() => setIsFilterOpen(false)}
-                className="w-7 h-7 rounded-full flex items-center justify-center transition-colors"
-                style={{ background: K.chipBg, color: K.muted }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.hairline; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = K.chipBg; }}
+                className="w-7 h-7 rounded-full flex items-center justify-center transition-colors bg-[var(--ds-chip-bg)] text-[var(--ds-muted)] hover:bg-[var(--ds-hairline)] hover:text-[var(--ds-ink)]"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <div>
-              <label className="block text-xs font-medium mb-1.5" style={{ color: K.muted }}>Customer Group</label>
+              <label className="block text-xs font-medium mb-1.5 text-[var(--ds-muted)]">Customer Group</label>
               <select
                 value={selectedGroup}
                 onChange={handleGroupChange}
                 disabled={isConfirming}
-                className="w-full px-3 py-2 rounded-xl text-xs focus:outline-none dash-glass"
-                style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}
+                className="ds-glass w-full px-3 py-2 rounded-xl text-xs focus:outline-none focus:border-[#0A84FF] bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)]"
               >
                 <option value="">All Groups</option>
                 {uniqueGroups.map(group => <option key={group} value={group}>{group}</option>)}
@@ -634,13 +560,12 @@ const CustomerSelectionModal = ({
             </div>
 
             <div>
-              <label className="block text-xs font-medium mb-1.5" style={{ color: K.muted }}>Area</label>
+              <label className="block text-xs font-medium mb-1.5 text-[var(--ds-muted)]">Area</label>
               <select
                 value={selectedArea}
                 onChange={handleAreaChange}
                 disabled={isConfirming}
-                className="w-full px-3 py-2 rounded-xl text-xs focus:outline-none dash-glass"
-                style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}
+                className="ds-glass w-full px-3 py-2 rounded-xl text-xs focus:outline-none focus:border-[#0A84FF] bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)]"
               >
                 <option value="">All Areas</option>
                 {uniqueAreas.map(area => <option key={area} value={area}>{area}</option>)}
@@ -648,36 +573,29 @@ const CustomerSelectionModal = ({
             </div>
 
             <div>
-              <label className="block text-xs font-medium mb-1.5" style={{ color: K.muted }}>Sales Person</label>
+              <label className="block text-xs font-medium mb-1.5 text-[var(--ds-muted)]">Sales Person</label>
               <select
                 value={selectedSlp}
                 onChange={handleSlpChange}
                 disabled={isConfirming}
-                className="w-full px-3 py-2 rounded-xl text-xs focus:outline-none dash-glass"
-                style={{ background: K.glass, border: `1px solid ${K.hairline}`, color: K.ink }}
+                className="ds-glass w-full px-3 py-2 rounded-xl text-xs focus:outline-none focus:border-[#0A84FF] bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)]"
               >
                 <option value="">All Sales Persons</option>
                 {uniqueSlps.map(slp => <option key={slp} value={slp}>{slp}</option>)}
               </select>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: K.hairline }}>
+            <div className="flex justify-end gap-2 pt-2 border-t border-[var(--ds-hairline)]">
               <button
                 onClick={clearFilters}
                 disabled={isConfirming}
-                className="px-3 py-1.5 text-xs rounded-full transition-all"
-                style={{ color: K.muted }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = K.ink; e.currentTarget.style.background = K.chipBg; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = K.muted; e.currentTarget.style.background = 'transparent'; }}
+                className="px-3 py-1.5 text-xs rounded-full transition-colors text-[var(--ds-muted)] hover:text-[var(--ds-ink)] hover:bg-[var(--ds-chip-bg)]"
               >
                 Clear All
               </button>
               <button
                 onClick={applyFilters}
-                className="px-4 py-1.5 text-xs rounded-full text-white font-medium transition-all"
-                style={{ background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`, boxShadow: `0 4px 12px -4px ${APPLE.blue}88` }}
-                onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
-                onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+                className="px-4 py-1.5 text-xs rounded-full text-white font-medium bg-gradient-to-br from-[#0A84FF] to-[#BF5AF2] shadow-[0_4px_12px_-4px_rgba(10,132,255,0.53)] hover:brightness-110 transition-all"
               >
                 Apply Filters
               </button>

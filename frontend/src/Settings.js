@@ -19,9 +19,8 @@ import Sidebar from "./components/Sidebar";
 import Header from './components/Header';
 import { useTheme } from './context/ThemeContext';
 import axios from 'axios';
+import { API_BASE, DB_NAME } from './config/appConfig';
 
-const API_BASE            = 'http://192.168.100.193:3009/api';
-const DB_NAME             = 'USER';
 const USER_DB_ORDER_PREFIX = 'databaseOrder_';
 
 // ── Shared profile-sync constants ────────────────────────────────────────

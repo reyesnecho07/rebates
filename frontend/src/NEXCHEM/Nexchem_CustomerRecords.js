@@ -1,14 +1,17 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import axios from 'axios';
-import { Users, Search, Filter, X, Check, Lock } from "lucide-react";
-import { useLocation, Link } from 'react-router-dom';
+import { Users, Search, Filter, X, Check } from "lucide-react";
+import { useLocation } from 'react-router-dom';
 import nexchemLogo from "../assets/nexchem.png";
 import Sidebar from "../components/Sidebar";
 import Header from '../components/Header';
 import AccessDenied from "../components/common/AccessDenied";
-import { useTheme } from '../context/ThemeContext';
 import { useComponentRegistration } from '../hooks/useComponentRegistration';
 import useAccessControl from '../hooks/useAccessControl';
+import { API_BASE, DB_NAME } from '../config/appConfig';
+
+/* ── Design system ──────────────────────────────────────────────── */
+import { PALETTE, useTokens, DesignPage } from '../design-system';
 
 const componentMetadata = {
   name: 'Nexchem_CustomerRecords',
@@ -17,67 +20,13 @@ const componentMetadata = {
   routePath: '/Nexchem_CustomerRecords',
 };
 
-/* ─── Apple system colour language (Nexchem / VAN / VCP) ─────────────────── */
-const APPLE = {
-  blue:   "#0A84FF",
-  purple: "#BF5AF2",
-  red:    "#FF453A",
-  orange: "#FF9F0A",
-  green:  "#32D74B",
-  gray:   "#8E8E93",
-};
-
-const dashTokens = (isDark) => ({
-  ink:       isDark ? "#F2F2F7" : "#1C1C1E",
-  muted:     isDark ? "#98989F" : "#6E6E73",
-  faint:     isDark ? "#68686D" : "#AEAEB2",
-  glass:     isDark ? "rgba(30,30,36,0.6)"   : "rgba(255,255,255,0.65)",
-  glassDeep: isDark ? "rgba(24,24,28,0.95)"  : "rgba(255,255,255,0.98)",
-  hairline:  isDark ? "rgba(255,255,255,0.08)" : "rgba(60,60,67,0.12)",
-  rim:       isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.8)",
-  chipBg:    isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
-  hover:     isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
-  shadow:    isDark ? "0 20px 50px -14px rgba(0,0,0,0.65)" : "0 20px 50px -18px rgba(30,41,79,0.18)",
-  bg:        isDark ? "#000000" : "#EEF1F7",
-});
-
-const DASH_FONT = `
-  .dash-page, .dash-page * { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", sans-serif; }
-  .dash-glass { -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%); }
-  .dash-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
-  .dash-scroll::-webkit-scrollbar-thumb { background: rgba(142,142,147,0.4); border-radius: 999px; }
-  .dash-scroll::-webkit-scrollbar-track { background: transparent; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes dash-pop { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-  .dash-pop { animation: dash-pop 0.2s cubic-bezier(0.16,1,0.3,1); }
-  @keyframes fadeSlideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
-  @keyframes pulse-ring { 0% { box-shadow:0 0 0 0 rgba(10,132,255,0.35); } 70% { box-shadow:0 0 0 10px rgba(10,132,255,0); } 100%{ box-shadow:0 0 0 0 rgba(10,132,255,0); } }
-  .nx-card { animation: fadeSlideUp 0.3s ease both; }
-  .nx-btn-secondary:hover:not(:disabled) { transform: translateY(-1px); }
-  .nx-input:focus { border-color: #0A84FF !important; box-shadow: 0 0 0 3px rgba(10,132,255,0.15); }
-`;
-
-const injectFonts = () => {
-  if (document.getElementById('nexchem-records-fonts')) return;
-  const link = document.createElement('link');
-  link.id   = 'nexchem-records-fonts';
-  link.rel  = 'stylesheet';
-  link.href = 'https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap';
-  document.head.appendChild(link);
-};
-
 function Nexchem_CustomerRecords() {
-  useEffect(() => { injectFonts(); }, []);
-
-  const { theme, updateTheme } = useTheme();
-  const location = useLocation();
+  const { theme, updateTheme, K } = useTokens();
+  useLocation(); // preserve hook order (unused)
   const routePath = '/Nexchem_CustomerRecords';
   const { access, accessLoading, accessError } = useAccessControl(routePath);
 
-  const isDark = theme === 'dark';
-  const K = dashTokens(isDark);
   const fontStack = "'Outfit', system-ui, sans-serif";
-  const monoStack = "'DM Mono', monospace";
 
   const [showVanDropdown, setShowVanDropdown] = useState(false);
   const [showNexchemDropdown, setShowNexchemDropdown] = useState(true);
@@ -89,18 +38,13 @@ function Nexchem_CustomerRecords() {
   const [customers, setCustomers] = useState([]);
   const [search, setSearch] = useState("");
 
-  // ── Multi-select filter state ─────────────────────────────────────────────
   const [selectedGroups, setSelectedGroups] = useState(new Set());
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [groupSearch, setGroupSearch] = useState("");
   const filterRef = useRef(null);
 
-  const API_BASE = 'http://192.168.100.193:3009/api';
-  const DB_NAME = 'USER';
-
   useComponentRegistration(componentMetadata);
 
-  // ── User init ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const storedUser = JSON.parse(localStorage.getItem("currentUser")) || {};
     const username = storedUser.DisplayName || storedUser.Username || "Unknown User";
@@ -117,7 +61,6 @@ function Nexchem_CustomerRecords() {
     setInitials(getInitials(username));
   }, []);
 
-  // ── Theme loader ──────────────────────────────────────────────────────────
   useEffect(() => {
     const loadTheme = async () => {
       try {
@@ -137,12 +80,11 @@ function Nexchem_CustomerRecords() {
     loadTheme();
   }, []); // eslint-disable-line
 
-  // ── Fetch customers ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!access.canView) return;
     const fetchCustomers = async () => {
       try {
-        const res = await fetch("http://192.168.100.193:3009/api/nexchem/customer?db=NEXCHEM");
+        const res = await fetch("/api/nexchem/customer?db=NEXCHEM");
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const list = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
@@ -154,7 +96,6 @@ function Nexchem_CustomerRecords() {
     fetchCustomers();
   }, [access.canView]);
 
-  // ── Click-outside closes filter panel ────────────────────────────────────
   useEffect(() => {
     const handler = (e) => {
       if (filterRef.current && !filterRef.current.contains(e.target))
@@ -164,7 +105,6 @@ function Nexchem_CustomerRecords() {
     return () => document.removeEventListener('mousedown', handler);
   }, [isFilterOpen]);
 
-  // ── Unique customer groups ────────────────────────────────────────────────
   const uniqueGroups = useMemo(() => {
     const s = new Set();
     customers.forEach(c => {
@@ -174,24 +114,20 @@ function Nexchem_CustomerRecords() {
     return Array.from(s).sort();
   }, [customers]);
 
-  // ── Groups visible inside dropdown (respects inner search) ───────────────
   const visibleGroups = useMemo(() => {
     if (!groupSearch.trim()) return uniqueGroups;
     const t = groupSearch.toLowerCase();
     return uniqueGroups.filter(g => g.toLowerCase().includes(t));
   }, [uniqueGroups, groupSearch]);
 
-  // ── Main filtered list ────────────────────────────────────────────────────
   const filteredCustomers = useMemo(() => {
     let result = customers;
-
     if (selectedGroups.size > 0) {
       result = result.filter(c => {
         const g = c.GroupName || c.CardGroup || c.groupName || c.custGroup || '';
         return selectedGroups.has(g);
       });
     }
-
     if (search.trim()) {
       const s = search.toLowerCase();
       result = result.filter(c =>
@@ -200,11 +136,9 @@ function Nexchem_CustomerRecords() {
         Object.values(c).join(' ').toLowerCase().includes(s)
       );
     }
-
     return result;
   }, [customers, search, selectedGroups]);
 
-  // ── Toggle helpers ────────────────────────────────────────────────────────
   const toggleGroup = (g) => {
     setSelectedGroups(prev => {
       const next = new Set(prev);
@@ -212,12 +146,7 @@ function Nexchem_CustomerRecords() {
       return next;
     });
   };
-
-  const clearAllGroups = () => {
-    setSelectedGroups(new Set());
-    setGroupSearch('');
-  };
-
+  const clearAllGroups = () => { setSelectedGroups(new Set()); setGroupSearch(''); };
   const selectAllVisible = () => {
     setSelectedGroups(prev => {
       const next = new Set(prev);
@@ -228,56 +157,22 @@ function Nexchem_CustomerRecords() {
 
   const hasFilters = selectedGroups.size > 0 || search.trim();
   const activeGroupCount = selectedGroups.size;
+  const filterActive = isFilterOpen || activeGroupCount > 0;
 
-  // ── Shared styles ─────────────────────────────────────────────────────────
-  const inputStyle = {
-    width: '100%', padding: '9px 12px',
-    background: K.glass,
-    border: `1px solid ${K.hairline}`,
-    borderRadius: 12, fontSize: 13,
-    color: K.ink, fontFamily: fontStack,
-    outline: 'none', transition: 'border-color 0.2s',
-    boxSizing: 'border-box',
-  };
-
-  const labelStyle = {
-    display: 'flex', alignItems: 'center', gap: 6,
-    fontSize: 11, fontWeight: 600,
-    color: K.muted, fontFamily: fontStack,
-    marginBottom: 6, letterSpacing: '0.05em',
-    textTransform: 'uppercase',
-  };
-
-  // ── Loading spinner ───────────────────────────────────────────────────────
   const renderLoading = () => (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 380, fontFamily: fontStack }}>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-        <div style={{
-          width: 36, height: 36, borderRadius: '50%',
-          border: `3px solid ${K.hairline}`, borderTopColor: APPLE.blue,
-          animation: 'spin 0.8s linear infinite',
-        }} />
-        <p style={{ fontSize: 13, color: K.muted }}>Verifying access…</p>
+    <div className="flex items-center justify-center min-h-[380px]">
+      <div className="flex flex-col items-center gap-3.5">
+        <div className="w-9 h-9 rounded-full animate-spin border-[3px] border-[var(--ds-hairline)] border-t-[#0A84FF]" />
+        <p className="text-[13px] text-[var(--ds-muted)]">Verifying access…</p>
       </div>
     </div>
   );
 
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="dash-page" style={{ display: 'flex', height: '100vh', width: '100%', background: K.bg, fontFamily: fontStack, color: K.ink, overflow: 'hidden' }}>
-      <style>{DASH_FONT}</style>
+    <DesignPage className="flex w-full h-screen overflow-hidden">
 
       {/* Aurora wash */}
-      <div
-        className="pointer-events-none fixed inset-0"
-        style={{
-          backgroundImage: `
-            radial-gradient(700px circle at 8% 0%, ${APPLE.blue}${isDark ? "26" : "30"}, transparent 55%),
-            radial-gradient(650px circle at 92% 10%, ${APPLE.purple}${isDark ? "1a" : "20"}, transparent 55%)
-          `,
-          zIndex: 0,
-        }}
-      />
+      <div className="pointer-events-none fixed inset-0 z-0 ds-aurora-blue-purple" />
 
       <Sidebar
         collapsed={collapsed} setCollapsed={setCollapsed}
@@ -287,12 +182,11 @@ function Nexchem_CustomerRecords() {
         theme={theme}
       />
 
-      <main style={{
-        position: 'relative', flex: 1, display: 'flex', flexDirection: 'column',
-        height: '100vh', overflow: 'hidden',
-        marginLeft: collapsed ? 80 : 256,
-        transition: 'margin-left 0.4s cubic-bezier(.4,0,.2,1)', zIndex: 1,
-      }}>
+      <main
+        className={`relative flex-1 flex flex-col h-screen overflow-hidden z-[1] transition-[margin-left] duration-[400ms] ease-[cubic-bezier(.4,0,.2,1)] ${
+          collapsed ? 'ml-20' : 'ml-64'
+        }`}
+      >
         <Header
           collapsed={collapsed}
           userName={userName}
@@ -302,198 +196,115 @@ function Nexchem_CustomerRecords() {
           theme={theme}
         />
 
-        {/* ── Scrollable area — becomes the flex parent for the card ── */}
-        <div
-          className="dash-scroll"
-          style={{
-            flex: 1,
-            minHeight: 0,
-            padding: '80px 32px 40px',
-            overflowY: 'auto',
-            display: 'flex',
-          }}
-        >
-        <div
-          className="nx-card dash-glass"
-          style={{
-            marginTop: 90,
-            background: K.glass,
-            border: `1px solid ${K.hairline}`,
-            borderRadius: 22,
-            boxShadow: K.shadow,
-            padding: '32px 32px 36px',
-            maxWidth: 1600,
-            width: '100%',
-            margin: '0 auto',
-            height: 'calc(100vh - 152px)',   // ← was minHeight — fixed height now
-            overflow: 'hidden',             // ← new — clips overflow so inner areas scroll
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-            {/* ── Access guard ─────────────────────────────────────────── */}
+        {/* Scroll area */}
+        <div className="ds-scroll flex-1 min-h-0 overflow-y-auto flex pt-20 px-8 pb-10">
+          <div className="ds-fade-up ds-glass flex flex-col w-full max-w-[1600px] mx-auto overflow-hidden rounded-[22px] bg-[var(--ds-glass)] border border-[var(--ds-hairline)] shadow-[var(--ds-shadow)] mt-[90px] px-8 pt-8 pb-9 h-[calc(100vh-152px)]">
+
+            {/* Access guard */}
             {accessLoading ? (
               renderLoading()
             ) : !access.canView ? (
               <AccessDenied
                 useTokens={true}
-                tokens={{...K, accent: APPLE.blue, accentHover: APPLE.blue, accentLight: `${APPLE.blue}14`, text: K.ink, textMuted: K.muted, textSub: K.muted, success: APPLE.green, error: APPLE.red, errorBg: `${APPLE.red}14`, gold: APPLE.orange, goldLight: `${APPLE.orange}14`, teal: APPLE.blue, tealLight: `${APPLE.blue}14`, cardBg: K.glass, cardBorder: K.hairline, inputBg: K.glass, inputBorder: K.hairline, bg: K.bg, fontStack }}
+                tokens={{...K, accent: PALETTE.blue, accentHover: PALETTE.blue, accentLight: `${PALETTE.blue}14`, text: K.ink, textMuted: K.muted, textSub: K.muted, success: PALETTE.green, error: PALETTE.red, errorBg: `${PALETTE.red}14`, gold: PALETTE.orange, goldLight: `${PALETTE.orange}14`, teal: PALETTE.blue, tealLight: `${PALETTE.blue}14`, cardBg: K.glass, cardBorder: K.hairline, inputBg: K.glass, inputBorder: K.hairline, bg: K.bg, fontStack }}
                 accessError={accessError}
                 message="You don't have permission to view customer records."
               />
             ) : (
               <>
-                {/* ── Title bar ────────────────────────────────────────── */}
-                <div style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  marginBottom: 28, paddingBottom: 20, borderBottom: `1px solid ${K.hairline}`,
-                  gap: 16, flexWrap: 'wrap',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
-                    <div style={{
-                      width: 46, height: 46, borderRadius: 14,
-                      background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      boxShadow: `0 4px 16px -4px ${APPLE.blue}88`, flexShrink: 0,
-                    }}>
-                      <Users size={22} color="#fff" strokeWidth={1.8} />
+                {/* ── Title bar ──────────────────────────────────────── */}
+                <div className="flex items-center justify-between mb-7 pb-5 gap-4 flex-wrap border-b border-[var(--ds-hairline)]">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="w-[46px] h-[46px] rounded-[14px] flex items-center justify-center flex-shrink-0 ds-gradient-primary shadow-[0_4px_16px_-4px_rgba(10,132,255,0.53)]">
+                      <Users size={22} className="text-white" strokeWidth={1.8} />
                     </div>
-                    <div style={{ minWidth: 0 }}>
-                      <h1 style={{ fontSize: 17, fontWeight: 700, color: K.ink, margin: 0, letterSpacing: '-0.01em' }}>
+                    <div className="min-w-0">
+                      <h1 className="text-[17px] font-bold tracking-[-0.01em] text-[var(--ds-ink)] m-0">
                         Customer Records
                       </h1>
-                      <p style={{ fontSize: 12, color: K.muted, margin: '3px 0 0', fontWeight: 400 }}>
+                      <p className="text-[12px] text-[var(--ds-muted)] mt-[3px] mb-0 font-normal">
                         Manage and view all customer records
                       </p>
                     </div>
                   </div>
 
                   {/* Filter + Search */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap' }}>
+                  <div className="flex items-center gap-2.5 flex-shrink-0 flex-wrap">
 
-                    {/* ── Filter button + dropdown ──────────────────────── */}
-                    <div style={{ position: 'relative' }} ref={filterRef}>
+                    {/* Filter button + dropdown */}
+                    <div className="relative" ref={filterRef}>
                       <button
-                        className="nx-btn-secondary"
                         onClick={() => setIsFilterOpen(o => !o)}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 7,
-                          padding: '9px 14px', borderRadius: 999, fontSize: 13, fontWeight: 500,
-                          border: `1px solid ${(isFilterOpen || activeGroupCount > 0) ? `${APPLE.blue}55` : K.hairline}`,
-                          background: (isFilterOpen || activeGroupCount > 0) ? `${APPLE.blue}1c` : K.chipBg,
-                          color: (isFilterOpen || activeGroupCount > 0) ? APPLE.blue : K.muted,
-                          cursor: 'pointer', transition: 'all 0.2s', fontFamily: fontStack,
-                        }}
+                        className={`ds-btn-lift flex items-center gap-1.5 px-3.5 py-[9px] rounded-full text-[13px] font-medium cursor-pointer transition-all duration-200 border ${
+                          filterActive
+                            ? 'border-[#0A84FF]/33 bg-[#0A84FF]/11 text-[#0A84FF]'
+                            : 'border-[var(--ds-hairline)] bg-[var(--ds-chip-bg)] text-[var(--ds-muted)]'
+                        }`}
                       >
                         <Filter size={13} strokeWidth={2} />
                         <span>Filter</span>
                         {activeGroupCount > 0 && (
-                          <span style={{
-                            minWidth: 18, height: 18, padding: '0 5px',
-                            borderRadius: 999, fontSize: 10, fontWeight: 700,
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            background: APPLE.blue, color: '#fff', fontFamily: monoStack,
-                          }}>
+                          <span className="min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center bg-[#0A84FF] text-white ds-font-mono">
                             {activeGroupCount}
                           </span>
                         )}
                       </button>
 
-                      {/* ── Filter dropdown ─────────────────────────────── */}
+                      {/* Filter dropdown */}
                       {isFilterOpen && (
                         <div
-                          className="dash-glass dash-pop"
-                          style={{
-                            position: 'absolute', right: 0, top: 'calc(100% + 8px)',
-                            width: 340, borderRadius: 18, zIndex: 50,
-                            background: K.glassDeep,
-                            border: `1px solid ${K.rim}`,
-                            boxShadow: K.shadow,
-                            overflow: 'hidden',
-                          }}
+                          className="ds-glass ds-pop absolute right-0 top-[calc(100%+8px)] w-[340px] rounded-[18px] z-50 overflow-hidden bg-[var(--ds-glass-deep)] border border-[var(--ds-rim)] shadow-[var(--ds-shadow)]"
                         >
                           {/* Header */}
-                          <div style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            padding: '14px 16px', borderBottom: `1px solid ${K.hairline}`,
-                          }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <Filter size={12} color={K.muted} />
-                              <span style={{
-                                fontSize: 11, fontWeight: 700, color: K.muted,
-                                textTransform: 'uppercase', letterSpacing: '0.06em',
-                              }}>
+                          <div className="flex items-center justify-between px-4 py-3.5 border-b border-[var(--ds-hairline)]">
+                            <div className="flex items-center gap-2">
+                              <Filter size={12} className="text-[var(--ds-muted)]" />
+                              <span className="text-[11px] font-bold text-[var(--ds-muted)] uppercase tracking-[0.06em]">
                                 Customer Group
                               </span>
                               {activeGroupCount > 0 && (
-                                <span style={{ fontSize: 10, fontWeight: 600, color: APPLE.blue, fontFamily: monoStack }}>
+                                <span className="text-[10px] font-semibold text-[#0A84FF] ds-font-mono">
                                   {activeGroupCount} selected
                                 </span>
                               )}
                             </div>
                             <button
                               onClick={() => setIsFilterOpen(false)}
-                              style={{
-                                padding: 4, borderRadius: 8, border: 'none',
-                                background: 'transparent', color: K.muted, cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              }}
-                              onMouseEnter={(e) => { e.currentTarget.style.background = K.chipBg; e.currentTarget.style.color = K.ink; }}
-                              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = K.muted; }}
+                              className="p-1 rounded-lg border-none bg-transparent cursor-pointer flex items-center justify-center text-[var(--ds-muted)] hover:bg-[var(--ds-chip-bg)] hover:text-[var(--ds-ink)] transition-colors"
                             >
                               <X size={13} />
                             </button>
                           </div>
 
                           {/* Inner search */}
-                          <div style={{ padding: '10px 12px', borderBottom: `1px solid ${K.hairline}` }}>
-                            <div style={{ position: 'relative' }}>
-                              <Search size={11} color={K.faint} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+                          <div className="px-3 py-2.5 border-b border-[var(--ds-hairline)]">
+                            <div className="relative">
+                              <Search
+                                size={11}
+                                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--ds-faint)]"
+                              />
                               <input
                                 type="text"
                                 placeholder="Search groups…"
                                 value={groupSearch}
                                 onChange={e => setGroupSearch(e.target.value)}
-                                style={{
-                                  width: '100%', padding: '7px 10px 7px 28px',
-                                  background: K.chipBg,
-                                  border: `1px solid ${K.hairline}`,
-                                  borderRadius: 10, fontSize: 12,
-                                  color: K.ink, fontFamily: fontStack,
-                                  outline: 'none', boxSizing: 'border-box',
-                                }}
-                                onFocus={(e) => { e.target.style.borderColor = APPLE.blue; e.target.style.boxShadow = `0 0 0 3px ${APPLE.blue}22`; }}
-                                onBlur={(e) => { e.target.style.borderColor = K.hairline; e.target.style.boxShadow = 'none'; }}
+                                className="w-full pl-7 pr-2.5 py-[7px] rounded-[10px] text-[12px] outline-none bg-[var(--ds-chip-bg)] border border-[var(--ds-hairline)] text-[var(--ds-ink)] focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.13)] transition-colors"
                               />
                             </div>
                           </div>
 
                           {/* Select all / clear */}
-                          <div style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            padding: '8px 14px', borderBottom: `1px solid ${K.hairline}`,
-                            background: K.chipBg,
-                          }}>
+                          <div className="flex items-center justify-between px-3.5 py-2 border-b border-[var(--ds-hairline)] bg-[var(--ds-chip-bg)]">
                             <button
                               onClick={selectAllVisible}
-                              style={{
-                                fontSize: 11, fontWeight: 600, color: APPLE.blue,
-                                background: 'transparent', border: 'none', cursor: 'pointer',
-                                fontFamily: fontStack, padding: 0,
-                              }}
+                              className="text-[11px] font-semibold bg-transparent border-none cursor-pointer p-0 text-[#0A84FF]"
                             >
                               Select all{groupSearch ? ' visible' : ''}
                             </button>
                             {activeGroupCount > 0 && (
                               <button
                                 onClick={clearAllGroups}
-                                style={{
-                                  fontSize: 11, fontWeight: 500, color: K.muted,
-                                  background: 'transparent', border: 'none', cursor: 'pointer',
-                                  fontFamily: fontStack, padding: 0,
-                                }}
-                                onMouseEnter={(e) => e.currentTarget.style.color = K.ink}
-                                onMouseLeave={(e) => e.currentTarget.style.color = K.muted}
+                                className="text-[11px] font-medium bg-transparent border-none cursor-pointer p-0 text-[var(--ds-muted)] hover:text-[var(--ds-ink)] transition-colors"
                               >
                                 Clear all
                               </button>
@@ -501,9 +312,9 @@ function Nexchem_CustomerRecords() {
                           </div>
 
                           {/* Group list */}
-                          <div className="dash-scroll" style={{ maxHeight: 224, overflowY: 'auto', padding: '4px 0' }}>
+                          <div className="ds-scroll max-h-[224px] overflow-y-auto py-1">
                             {visibleGroups.length === 0 ? (
-                              <p style={{ textAlign: 'center', padding: '24px 0', fontSize: 11, color: K.faint, margin: 0 }}>
+                              <p className="text-center py-6 text-[11px] text-[var(--ds-faint)] m-0">
                                 No groups found
                               </p>
                             ) : (
@@ -513,30 +324,18 @@ function Nexchem_CustomerRecords() {
                                   <button
                                     key={g}
                                     onClick={() => toggleGroup(g)}
-                                    style={{
-                                      width: '100%', display: 'flex', alignItems: 'center', gap: 12,
-                                      padding: '8px 14px', textAlign: 'left',
-                                      background: checked ? `${APPLE.blue}14` : 'transparent',
-                                      border: 'none', cursor: 'pointer', transition: 'background 0.15s',
-                                      fontFamily: fontStack,
-                                    }}
-                                    onMouseEnter={(e) => { if (!checked) e.currentTarget.style.background = K.chipBg; }}
-                                    onMouseLeave={(e) => { if (!checked) e.currentTarget.style.background = 'transparent'; }}
+                                    className={`w-full flex items-center gap-3 px-3.5 py-2 text-left border-none cursor-pointer transition-colors ${
+                                      checked ? 'bg-[#0A84FF]/8' : 'hover:bg-[var(--ds-chip-bg)]'
+                                    }`}
                                   >
-                                    <div style={{
-                                      width: 16, height: 16, flexShrink: 0,
-                                      border: `1.5px solid ${checked ? APPLE.blue : K.hairline}`,
-                                      borderRadius: 5,
-                                      background: checked ? APPLE.blue : 'transparent',
-                                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    }}>
-                                      {checked && <Check size={10} color="#fff" strokeWidth={3} />}
+                                    <div className={`w-4 h-4 flex-shrink-0 rounded-[5px] flex items-center justify-center border-[1.5px] ${
+                                      checked ? 'bg-[#0A84FF] border-[#0A84FF]' : 'bg-transparent border-[var(--ds-hairline)]'
+                                    }`}>
+                                      {checked && <Check size={10} className="text-white" strokeWidth={3} />}
                                     </div>
-                                    <span style={{
-                                      fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                                      color: checked ? APPLE.blue : K.ink,
-                                      fontWeight: checked ? 600 : 400,
-                                    }}>
+                                    <span className={`text-[12px] truncate ${
+                                      checked ? 'text-[#0A84FF] font-semibold' : 'text-[var(--ds-ink)]'
+                                    }`}>
                                       {g}
                                     </span>
                                   </button>
@@ -546,22 +345,13 @@ function Nexchem_CustomerRecords() {
                           </div>
 
                           {/* Footer */}
-                          <div style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            padding: '10px 14px', borderTop: `1px solid ${K.hairline}`,
-                          }}>
-                            <span style={{ fontSize: 10, color: K.faint, fontFamily: monoStack }}>
+                          <div className="flex items-center justify-between px-3.5 py-2.5 border-t border-[var(--ds-hairline)]">
+                            <span className="text-[10px] text-[var(--ds-faint)] ds-font-mono">
                               {uniqueGroups.length} group{uniqueGroups.length !== 1 ? 's' : ''} total
                             </span>
                             <button
                               onClick={() => setIsFilterOpen(false)}
-                              style={{
-                                padding: '6px 16px', borderRadius: 999, border: 'none',
-                                background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
-                                color: '#fff', fontSize: 11, fontWeight: 600,
-                                cursor: 'pointer', fontFamily: fontStack,
-                                boxShadow: `0 4px 12px -4px ${APPLE.blue}88`,
-                              }}
+                              className="px-4 py-1.5 rounded-full border-none text-white text-[11px] font-semibold cursor-pointer ds-gradient-primary shadow-[0_4px_12px_-4px_rgba(10,132,255,0.53)]"
                             >
                               Apply
                             </button>
@@ -570,29 +360,25 @@ function Nexchem_CustomerRecords() {
                       )}
                     </div>
 
-                    {/* ── Search input ──────────────────────────────────────── */}
-                    <div style={{ position: 'relative', width: 260 }}>
-                      <Search size={13} color={K.faint} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                    {/* Search input */}
+                    <div className="relative w-[260px]">
+                      <Search
+                        size={13}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--ds-faint)]"
+                      />
                       <input
                         type="text"
                         placeholder="Search customers…"
                         value={search}
                         onChange={e => setSearch(e.target.value)}
-                        style={{ ...inputStyle, paddingLeft: 34, paddingRight: search ? 34 : 12, borderRadius: 999 }}
-                        onFocus={(e) => { e.target.style.borderColor = APPLE.blue; e.target.style.boxShadow = `0 0 0 3px ${APPLE.blue}22`; }}
-                        onBlur={(e) => { e.target.style.borderColor = K.hairline; e.target.style.boxShadow = 'none'; }}
+                        className={`w-full py-[9px] rounded-full text-[13px] outline-none transition-colors bg-[var(--ds-glass)] border border-[var(--ds-hairline)] text-[var(--ds-ink)] focus:border-[#0A84FF] focus:shadow-[0_0_0_3px_rgba(10,132,255,0.15)] ${
+                          search ? 'pl-[34px] pr-[34px]' : 'pl-[34px] pr-3'
+                        }`}
                       />
                       {search && (
                         <button
                           onClick={() => setSearch('')}
-                          style={{
-                            position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
-                            padding: 3, borderRadius: 999, border: 'none',
-                            background: 'transparent', color: K.muted, cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          }}
-                          onMouseEnter={(e) => e.currentTarget.style.color = K.ink}
-                          onMouseLeave={(e) => e.currentTarget.style.color = K.muted}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-full border-none bg-transparent cursor-pointer flex items-center justify-center text-[var(--ds-muted)] hover:text-[var(--ds-ink)] transition-colors"
                         >
                           <X size={11} />
                         </button>
@@ -601,33 +387,18 @@ function Nexchem_CustomerRecords() {
                   </div>
                 </div>
 
-                {/* ── Sub-header: active filter chips ───────────────────── */}
+                {/* Active filter chips */}
                 {hasFilters && (
-                  <div style={{
-                    display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8,
-                    marginBottom: 18,
-                  }}>
+                  <div className="flex flex-wrap items-center gap-2 mb-[18px]">
                     {selectedGroups.size > 0 && Array.from(selectedGroups).map(g => (
                       <span
                         key={g}
-                        style={{
-                          display: 'inline-flex', alignItems: 'center', gap: 5,
-                          paddingLeft: 10, paddingRight: 4, paddingTop: 3, paddingBottom: 3,
-                          borderRadius: 999, fontSize: 11, fontWeight: 600,
-                          background: `${APPLE.blue}14`, color: APPLE.blue,
-                          border: `1px solid ${APPLE.blue}33`,
-                        }}
+                        className="inline-flex items-center gap-1.5 pl-2.5 pr-1 py-[3px] rounded-full text-[11px] font-semibold bg-[#0A84FF]/8 text-[#0A84FF] border border-[#0A84FF]/20"
                       >
                         {g}
                         <button
                           onClick={() => toggleGroup(g)}
-                          style={{
-                            padding: 2, borderRadius: 999, border: 'none',
-                            background: 'transparent', color: APPLE.blue, cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          }}
-                          onMouseEnter={(e) => e.currentTarget.style.background = `${APPLE.blue}22`}
-                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                          className="p-0.5 rounded-full border-none bg-transparent cursor-pointer flex items-center justify-center text-[#0A84FF] hover:bg-[#0A84FF]/13 transition-colors"
                         >
                           <X size={10} />
                         </button>
@@ -636,52 +407,28 @@ function Nexchem_CustomerRecords() {
 
                     <button
                       onClick={() => { setSearch(''); clearAllGroups(); }}
-                      style={{
-                        marginLeft: 'auto', fontSize: 11, fontWeight: 500,
-                        color: K.muted, background: 'transparent', border: 'none',
-                        cursor: 'pointer', fontFamily: fontStack, padding: 0,
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.color = K.ink}
-                      onMouseLeave={(e) => e.currentTarget.style.color = K.muted}
+                      className="ml-auto text-[11px] font-medium bg-transparent border-none cursor-pointer p-0 text-[var(--ds-muted)] hover:text-[var(--ds-ink)] transition-colors"
                     >
                       Clear all
                     </button>
                   </div>
                 )}
 
-                {/* ── Table card ───────────────────────────────────────── */}
-                <div className="dash-glass" style={{
-                  background: K.glass,
-                  border: `1px solid ${K.hairline}`,
-                  borderRadius: 18,
-                  overflow: 'hidden',
-                  flex: 1,
-                  minHeight: 0,
-                  display: 'flex',
-                  flexDirection: 'column',
-                }}>
-                  <div className="dash-scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-                    <table style={{
-                      width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed',
-                      fontSize: 13, fontFamily: fontStack,
-                    }}>
+                {/* Table card */}
+                <div className="ds-glass flex-1 min-h-0 flex flex-col rounded-[18px] overflow-hidden bg-[var(--ds-glass)] border border-[var(--ds-hairline)]">
+                  <div className="ds-scroll flex-1 min-h-0 overflow-y-auto">
+                    <table className="w-full border-collapse table-fixed text-[13px]">
                       <colgroup>
-                        <col style={{ width: '32%' }} />
-                        <col style={{ width: '68%' }} />
+                        <col className="w-[32%]" />
+                        <col className="w-[68%]" />
                       </colgroup>
-                      <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
+                      <thead className="sticky top-0 z-10">
                         <tr>
                           {['Card Code', 'Card Name'].map(label => (
-                            <th key={label} style={{
-                              padding: '12px 22px', textAlign: 'left',
-                              fontSize: 10, fontWeight: 700,
-                              textTransform: 'uppercase', letterSpacing: '0.08em',
-                              color: K.muted,
-                              background: K.glassDeep,
-                              backdropFilter: 'blur(28px) saturate(180%)',
-                              WebkitBackdropFilter: 'blur(28px) saturate(180%)',
-                              borderBottom: `1px solid ${K.hairline}`,
-                            }}>
+                            <th
+                              key={label}
+                              className="text-left text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--ds-muted)] bg-[var(--ds-glass-deep)] border-b border-[var(--ds-hairline)] px-[22px] py-3 backdrop-blur-[28px]"
+                            >
                               {label}
                             </th>
                           ))}
@@ -692,23 +439,14 @@ function Nexchem_CustomerRecords() {
                           filteredCustomers.map((row, i) => (
                             <tr
                               key={row.CardCode || i}
-                              style={{ borderBottom: `1px solid ${K.hairline}` }}
-                              onMouseEnter={(e) => e.currentTarget.style.background = K.hover}
-                              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                              className="border-b border-[var(--ds-hairline)] hover:bg-[var(--ds-hover)] transition-colors"
                             >
-                              <td style={{ padding: '12px 22px' }}>
-                                <code style={{
-                                  fontSize: 12, padding: '3px 9px', borderRadius: 7,
-                                  border: `1px solid ${K.hairline}`,
-                                  background: K.chipBg,
-                                  color: K.muted,
-                                  fontWeight: 600,
-                                  fontFamily: monoStack,
-                                }}>
+                              <td className="px-[22px] py-3">
+                                <code className="text-[12px] px-[9px] py-[3px] rounded-[7px] font-semibold bg-[var(--ds-chip-bg)] border border-[var(--ds-hairline)] text-[var(--ds-muted)] ds-font-mono">
                                   {row.CardCode || '—'}
                                 </code>
                               </td>
-                              <td style={{ padding: '12px 22px', fontWeight: 500, color: K.ink }}>
+                              <td className="px-[22px] py-3 font-medium text-[var(--ds-ink)]">
                                 {row.CardName || '—'}
                               </td>
                             </tr>
@@ -716,22 +454,15 @@ function Nexchem_CustomerRecords() {
                         ) : (
                           <tr>
                             <td colSpan={2}>
-                              <div style={{
-                                display: 'flex', flexDirection: 'column', alignItems: 'center',
-                                justifyContent: 'center', padding: '72px 0', gap: 14,
-                              }}>
-                                <div style={{
-                                  width: 52, height: 52, borderRadius: 14,
-                                  background: `${APPLE.blue}1c`,
-                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                }}>
-                                  <Users size={24} color={APPLE.blue} strokeWidth={1.6} />
+                              <div className="flex flex-col items-center justify-center py-[72px] gap-3.5">
+                                <div className="w-[52px] h-[52px] rounded-[14px] flex items-center justify-center bg-[#0A84FF]/11">
+                                  <Users size={24} className="text-[#0A84FF]" strokeWidth={1.6} />
                                 </div>
-                                <div style={{ textAlign: 'center' }}>
-                                  <p style={{ fontSize: 14, fontWeight: 600, color: K.ink, margin: '0 0 4px' }}>
+                                <div className="text-center">
+                                  <p className="text-[14px] font-semibold text-[var(--ds-ink)] m-0 mb-1">
                                     {customers.length === 0 ? 'No Customers' : 'No Results Found'}
                                   </p>
-                                  <p style={{ fontSize: 12, color: K.muted, margin: 0 }}>
+                                  <p className="text-[12px] text-[var(--ds-muted)] m-0">
                                     {customers.length === 0
                                       ? 'No customers found in the database.'
                                       : 'No customers match your current filters.'}
@@ -740,13 +471,7 @@ function Nexchem_CustomerRecords() {
                                 {hasFilters && (
                                   <button
                                     onClick={() => { setSearch(''); clearAllGroups(); }}
-                                    style={{
-                                      padding: '7px 16px', borderRadius: 999, border: 'none',
-                                      background: `linear-gradient(155deg, ${APPLE.blue} 0%, ${APPLE.purple} 100%)`,
-                                      color: '#fff', fontSize: 12, fontWeight: 600,
-                                      cursor: 'pointer', fontFamily: fontStack,
-                                      boxShadow: `0 4px 12px -4px ${APPLE.blue}88`,
-                                    }}
+                                    className="px-4 py-[7px] rounded-full border-none text-white text-[12px] font-semibold cursor-pointer ds-gradient-primary shadow-[0_4px_12px_-4px_rgba(10,132,255,0.53)]"
                                   >
                                     Clear All Filters
                                   </button>
@@ -759,27 +484,22 @@ function Nexchem_CustomerRecords() {
                     </table>
                   </div>
 
-                  {/* ── Footer ─────────────────────────────────────────── */}
+                  {/* Footer */}
                   {filteredCustomers.length > 0 && (
-                    <div style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '14px 22px', borderTop: `1px solid ${K.hairline}`,
-                      background: K.chipBg,
-                      gap: 10, flexWrap: 'wrap',
-                    }}>
-                      <p style={{ fontSize: 12, color: K.muted, margin: 0 }}>
+                    <div className="flex items-center justify-between gap-2.5 flex-wrap px-[22px] py-3.5 bg-[var(--ds-chip-bg)] border-t border-[var(--ds-hairline)]">
+                      <p className="text-[12px] text-[var(--ds-muted)] m-0">
                         Showing all{' '}
-                        <span style={{ fontWeight: 700, color: K.ink, fontFamily: monoStack }}>
+                        <span className="font-bold text-[var(--ds-ink)] ds-font-mono">
                           {filteredCustomers.length.toLocaleString()}
                         </span>{' '}
                         customer{filteredCustomers.length !== 1 ? 's' : ''}
                         {selectedGroups.size > 0 && (
-                          <span style={{ color: K.faint }}>
+                          <span className="text-[var(--ds-faint)]">
                             {' '}across {selectedGroups.size} group{selectedGroups.size > 1 ? 's' : ''}
                           </span>
                         )}
                       </p>
-                      <p style={{ fontSize: 11, color: K.faint, margin: 0, fontFamily: monoStack }}>
+                      <p className="text-[11px] text-[var(--ds-faint)] m-0 ds-font-mono">
                         {customers.length.toLocaleString()} total in database
                       </p>
                     </div>
@@ -790,7 +510,7 @@ function Nexchem_CustomerRecords() {
           </div>
         </div>
       </main>
-    </div>
+    </DesignPage>
   );
 }
 

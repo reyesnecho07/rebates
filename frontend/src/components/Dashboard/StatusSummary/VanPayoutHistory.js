@@ -45,7 +45,7 @@ const VanPayoutHistory = ({
     setIsLoading(true);
     setLoadError(null);
     try {
-      const url = `http://192.168.100.193:3009/api/van/payouts/customer/${customerCardCode}/payout-summary?db=VAN`;
+      const url = `/api/van/payouts/customer/${customerCardCode}/payout-summary?db=VAN`;
       const response = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
       const result = await response.json();
@@ -99,7 +99,7 @@ const VanPayoutHistory = ({
     setIsDetailLoading(true);
     setDetailLoadError(null);
     try {
-      const url = `http://192.168.100.193:3009/api/van/payouts/customer/${customerCardCode}/payouts` +
+      const url = `/api/van/payouts/customer/${customerCardCode}/payouts` +
         `?db=VAN&rebateCode=${selectedRebateCode}&rebateType=${selectedRebateType}&useRebatePeriod=true`;
       const response = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
@@ -135,7 +135,7 @@ const VanPayoutHistory = ({
     setSapSyncMessage('Syncing with SAP…');
     try {
       const response = await fetch(
-        `http://192.168.100.193:3009/api/van/customer/${customerCardCode}/sync-sap`,
+        `/api/van/customer/${customerCardCode}/sync-sap`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
