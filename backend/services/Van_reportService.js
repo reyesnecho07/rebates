@@ -2,7 +2,7 @@
 import sql from 'mssql';
 import { getPool } from '../services/databaseService.js';
 
-const FALLBACK_API_BASE = (process.env.INTERNAL_API_BASE || 'http://localhost:3009').replace(/\/api\/?$/, '');
+const FALLBACK_API_BASE = (process.env.INTERNAL_API_BASE || 'http://localhost:3011').replace(/\/api\/?$/, '');
 const DASHBOARD_TIMEOUT = 180_000;   // 3 min per customer — SAP can be slow
 const DEBUG = process.env.DEBUG_VAN === '1';
 

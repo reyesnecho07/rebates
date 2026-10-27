@@ -23,7 +23,7 @@
 import { getPool } from './databaseService.js';
 import sql         from 'mssql';
 
-const INTERNAL_API_BASE = process.env.INTERNAL_API_BASE || 'http://localhost:3009/api';
+const INTERNAL_API_BASE = process.env.INTERNAL_API_BASE || 'http://localhost:3011/api';
 
 const MONTH_NAMES = [
   'January','February','March','April','May','June',

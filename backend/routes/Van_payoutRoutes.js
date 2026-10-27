@@ -142,7 +142,7 @@ router.get('/customer/:customerCode/payouts', async (req, res) => {
     if (rebateCode) {
       try {
         const txRes = await fetch(
-          `http://localhost:3009/api/van/dashboard/customer/${customerCode}/transactions?` +
+          `http://localhost:3011/api/van/dashboard/customer/${customerCode}/transactions?` +
           `db=${databaseToUse}&rebateCode=${rebateCode}&rebateType=${rebateType}&` +
           `periodFrom=${startDate}&periodTo=${endDate}&useRebatePeriod=${useRebatePeriod}`
         );
@@ -1171,7 +1171,7 @@ router.get('/payouts/calculate/:customerCode/:rebateCode/:monthKey', async (req,
 
     let transactions = [];
     try {
-      const u = `http://localhost:3009/api/van/dashboard/customer/${customerCode}/transactions?db=${db || 'VAN'}&rebateCode=${rebateCode}&rebateType=${rebateType}&periodFrom=${startDate}&periodTo=${endDate}`;
+      const u = `http://localhost:3011/api/van/dashboard/customer/${customerCode}/transactions?db=${db || 'VAN'}&rebateCode=${rebateCode}&rebateType=${rebateType}&periodFrom=${startDate}&periodTo=${endDate}`;
       const tr = await fetch(u);
       if (tr.ok) { const j = await tr.json(); if (j.success && j.data.transactions) transactions = j.data.transactions; }
     } catch (e) { console.error('❌ tx:', e.message); }
@@ -1267,7 +1267,7 @@ router.get('/customer/:customerCode/payout-summary', async (req, res) => {
 
     for (const program of programs) {
       try {
-        await fetch(`http://localhost:3009/api/van/payouts/customer/${customerCode}/payouts?db=${req.query.db || 'VAN'}&rebateCode=${program.RebateCode}&rebateType=${program.RebateType}&useRebatePeriod=true`);
+        await fetch(`http://localhost:3011/api/van/payouts/customer/${customerCode}/payouts?db=${req.query.db || 'VAN'}&rebateCode=${program.RebateCode}&rebateType=${program.RebateType}&useRebatePeriod=true`);
       } catch (e) { console.log('⚠️ calc:', e.message); }
     }
 

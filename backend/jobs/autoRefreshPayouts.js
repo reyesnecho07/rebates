@@ -6,7 +6,7 @@ const DATABASES = [
   { db: 'NEXCHEM', prefix: '/api/nexchem/payouts' },
 ];
 
-const BASE_URL = process.env.INTERNAL_API_URL || `http://localhost:${process.env.PORT || 3009}`;
+const BASE_URL = process.env.INTERNAL_API_URL || `http://localhost:${process.env.PORT || 3011}`;
 
 const CONCURRENCY             = Number(process.env.PAYOUT_CONCURRENCY) || 8;              // workers per database
 const PAUSE_BETWEEN_RUNS_MS   = Number(process.env.PAYOUT_PAUSE_MS) || 2 * 60 * 1000;     // wait AFTER a run finishes

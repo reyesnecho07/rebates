@@ -3881,7 +3881,7 @@ if (hasPayoutHistory) {
         // Fetch transactions to calculate progress
         console.log(`Fetching transactions for ${customer.code} (${customer.rebateCode})...`);
         const transResponse = await fetch(
-          `http://192.168.100.193:3009/api/dashboard/customer/${customer.code}/transactions?` +
+          `http://192.168.100.100:3011/api/dashboard/customer/${customer.code}/transactions?` +
           `db=${databaseToUse}&rebateCode=${customer.rebateCode}&rebateType=${customer.rebateType}&` +
           `useRebatePeriod=true`
         );

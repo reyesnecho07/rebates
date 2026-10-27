@@ -64,7 +64,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
 // 1. CORS (origins come from .env -> CORS_ORIGINS, comma-separated)
-const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3008').split(',');
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:3010').split(',');
 
 app.use(cors({
   origin: allowedOrigins,

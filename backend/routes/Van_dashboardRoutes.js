@@ -2847,7 +2847,7 @@ router.get('/customer/:customerCode/monthly-quota', async (req, res) => {
 
     // Get transactions to calculate monthly performance
     // FIX: Use the host from request headers
-    const host = req.headers.host || 'localhost:3009';
+    const host = req.headers.host || 'localhost:3011';
     const protocol = req.headers['x-forwarded-proto'] || 'http';
     
     const transactionsUrl = `${protocol}://${host}/api/dashboard/customer/${customerCode}/transactions?` +
@@ -3916,7 +3916,7 @@ if (hasPayoutHistory) {
         // Fetch transactions to calculate progress
         console.log(`Fetching transactions for ${customer.code} (${customer.rebateCode})...`);
         const transResponse = await fetch(
-          `http://192.168.100.193:3009/api/dashboard/customer/${customer.code}/transactions?` +
+          `http://192.168.100.100:3011/api/dashboard/customer/${customer.code}/transactions?` +
           `db=${databaseToUse}&rebateCode=${customer.rebateCode}&rebateType=${customer.rebateType}&` +
           `useRebatePeriod=true`
         );

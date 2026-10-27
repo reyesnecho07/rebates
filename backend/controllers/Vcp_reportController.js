@@ -14,7 +14,7 @@ const normaliseCodes = (rebateCode, rebateCodes) => {
 const getRequestBaseUrl = (req) => {
   const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
   const host  = req.get('x-forwarded-host')  || req.get('host');
-  if (!host) return (process.env.INTERNAL_API_BASE || 'http://localhost:3009').replace(/\/api\/?$/, '');
+  if (!host) return (process.env.INTERNAL_API_BASE || 'http://localhost:3011').replace(/\/api\/?$/, '');
   return `${proto}://${host}`;
 };
 

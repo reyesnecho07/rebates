@@ -178,7 +178,7 @@ router.get('/customer/:customerCode/payouts', async (req, res) => {
     let monthlyData = [];
     try {
       const transactionsResponse = await fetch(
-        `http://localhost:3009/api/vcp/dashboard/customer/${customerCode}/transactions?` +
+        `http://localhost:3011/api/vcp/dashboard/customer/${customerCode}/transactions?` +
         `db=${databaseToUse}&rebateCode=${rebateCode}&rebateType=${rebateType}&` +
         `periodFrom=${startDate}&periodTo=${endDate}&useRebatePeriod=${useRebatePeriod}`
       );
@@ -1508,7 +1508,7 @@ router.get('/payouts/calculate/:customerCode/:rebateCode/:monthKey', async (req,
 
     let transactions = [];
     try {
-      const transUrl = `http://localhost:3009/api/dashboard/customer/${customerCode}/transactions?` +
+      const transUrl = `http://localhost:3011/api/dashboard/customer/${customerCode}/transactions?` +
         `db=${db || 'VCP'}&rebateCode=${rebateCode}&rebateType=${rebateType}&` +
         `periodFrom=${startDate}&periodTo=${endDate}`;
       const transResponse = await fetch(transUrl);
@@ -2010,7 +2010,7 @@ router.get('/customer/:customerCode/payout-summary', async (req, res) => {
     for (const program of programs) {
       try {
         const calcUrl =
-          `http://localhost:3009/api/vcp/payouts/customer/${customerCode}/payouts` +
+          `http://localhost:3011/api/vcp/payouts/customer/${customerCode}/payouts` +
           `?db=${db || 'VCP'}&rebateCode=${program.RebateCode}&rebateType=${program.RebateType}&useRebatePeriod=true`;
         await fetch(calcUrl);
       } catch (calcErr) {

@@ -3827,7 +3827,7 @@ router.get('/rebates-summary', async (req, res) => {
       try {
         console.log(`Fetching transactions for ${customer.code} (${customer.rebateCode})...`);
         const transResponse = await fetch(
-          `http://192.168.100.193:3009/api/dashboard/customer/${customer.code}/transactions?` +
+          `http://192.168.100.100:3011/api/dashboard/customer/${customer.code}/transactions?` +
           `db=${databaseToUse}&rebateCode=${customer.rebateCode}&rebateType=${customer.rebateType}&` +
           `useRebatePeriod=true`
         );
@@ -4031,7 +4031,7 @@ router.post('/rebates-sync-all', async (req, res) => {
         const pair = queue.pop();
         try {
           const url =
-            `http://localhost:3009/api/nexchem/payouts/customer/${encodeURIComponent(pair.CardCode)}/payouts` +
+            `http://localhost:3011/api/nexchem/payouts/customer/${encodeURIComponent(pair.CardCode)}/payouts` +
             `?db=${databaseToUse}&rebateCode=${encodeURIComponent(pair.RebateCode)}` +
             `&rebateType=${encodeURIComponent(pair.RebateType)}&useRebatePeriod=true`;
 
